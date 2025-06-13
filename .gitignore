@@ -1,0 +1,7 @@
+*.lib
+*.exp
+*.obj
+*.pdb
+*.exe
+*.dxfs
+*.dxvs

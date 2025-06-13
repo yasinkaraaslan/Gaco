@@ -356,8 +356,6 @@ draw :: (indexed := false){
 present :: () {
 	hr := IDXGISwapChain_Present(D3D11.swap_chain, 1, 0);
 	check_hr("IDXGISwapChain_Present", #code {});
-	Frame_Info.num_bound_indices = 0;
-	Frame_Info.num_bound_vertices = 0;
 }
 
 resize :: (width: int, height: int) {
