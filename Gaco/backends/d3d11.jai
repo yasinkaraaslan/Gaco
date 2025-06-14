@@ -328,10 +328,10 @@ set_shader :: (shader: Shader) {
 	}
 }
 
-clear :: (r: float, g: float, b: float, a: float) {
+clear :: (r: float, g: float, b: float, a: float, depth := 1.0) {
 	color := float.[r, g, b, a];
 	ID3D11DeviceContext_ClearRenderTargetView(D3D11.device_context, D3D11.render_target_view, *color);
-	ID3D11DeviceContext_ClearDepthStencilView(D3D11.device_context, D3D11.depth_stencil_view, cast(u32) D3D11_CLEAR_FLAG.DEPTH  | D3D11_CLEAR_FLAG.STENCIL, 1.0, 0);
+	ID3D11DeviceContext_ClearDepthStencilView(D3D11.device_context, D3D11.depth_stencil_view, cast(u32) D3D11_CLEAR_FLAG.DEPTH  | D3D11_CLEAR_FLAG.STENCIL, depth, 0);
 }
 
 draw :: (indexed := false){

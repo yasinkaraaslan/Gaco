@@ -1,5 +1,6 @@
 init :: (window: Window_Type, wanted_msaa: u32 = 4) {
 	gl_create_context(window, 4, 6, false, DEBUG, cast(s32) wanted_msaa);
+	gl_load(*gl);
 	#if DEBUG gl_enable_debug_output(true);
 
 	Window = window;
@@ -10,9 +11,9 @@ Shader :: struct {
 
 Texture :: struct {}
 
-clear :: (r: float, g: float, b: float, a: float) {
+clear :: (r: float, g: float, b: float, a: float, depth := 1.0) {
 	glClearColor(r, g, b, a);
-	glClearDepth(1.0);
+	glClearDepthf(depth);
 	// glClearStencil(0);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
@@ -79,17 +80,53 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_file_na
 load_shader :: (file_name: string, type: Shader_Type) -> Shader {
 	shader: Shader;
 	bytecode := load_shader_bytecode(file_name, type);
+	program := glCreateProgram();
 
+	load :: (source: string, entry_point: string, gl_shader_type: u32) -> u32 #expand {
+		shader_id := glCreateShader(gl_shader_type);
+		glShaderBinary(1, *shader_id, GL_SHADER_BINARY_FORMAT_SPIR_V, source.data, cast(u32)source.count);
+		DumpGLErrors("glShaderBinary");
+
+		glSpecializeShader(shader_id, to_c_string(entry_point), 0, null, null);
+		DumpGLErrors("glSpecializeShader");
+		is_compiled: GLint;
+		glGetShaderiv(shader_id, GL_COMPILE_STATUS, *is_compiled);
+		if !is_compiled {
+	   	log_data: [256]u8;
+	   	glGetProgramInfoLog(program, log_data.count, null, log_data.data);
+			log_error("Couldn't load the shader % of type %: %\n", file_name, type, to_string(log_data.data));
+			glDeleteShader(shader_id);
+			`return .{};
+		}
+		glAttachShader(program, shader_id);
+	}
+	compute_id, vertex_id, fragment_id : u32;
 
 	if type & .Compute {
 		assert(type == .Compute, "Compute shader cannot be used with other shader types.");
+		compute_id := load(bytecode.cs, CS_ENTRY_POINT, GL_COMPUTE_SHADER);
 	}
+	if type & .Vertex    vertex_id   := load(bytecode.vs, VS_ENTRY_POINT, GL_VERTEX_SHADER);
+	if type & .Fragment  fragment_id := load(bytecode.fs, FS_ENTRY_POINT, GL_FRAGMENT_SHADER);
 
-	if type & .Vertex {
-	}
+	glLinkProgram(program);
 
-	if type & .Fragment {
-	}
+	success : GLint = 0;
+   glGetProgramiv(program, GL_LINK_STATUS, *success);
+
+   if !success then {
+   	log_data: [256]u8;
+		glGetProgramInfoLog(program, log_data.count, null, log_data.data);
+      log_error("Couldn't link the shader %: %\n", file_name, to_string(log_data.data));
+      return .{};
+   }
+
+	if compute_id  glDeleteShader(compute_id);
+	if vertex_id   glDeleteShader(vertex_id);
+	if fragment_id glDeleteShader(fragment_id);
+
+	shader.program = program;
+	return shader;
 }
 
 #scope_module
