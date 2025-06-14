@@ -31,11 +31,6 @@ Texture :: struct {
 	width, height: int;
 };
 
-VS_EXTENSION :: ".dxvs";
-FS_EXTENSION :: ".dxfs";
-CS_EXTENSION :: ".dxcs";
-
-
 init :: (window: HWND, wanted_msaa : u32 = 4) {
 	flags : D3D11_CREATE_DEVICE_FLAG;
 	#if DEBUG flags |= .DEBUG;
@@ -282,7 +277,7 @@ load_shader :: (file_name: string, type: Shader_Type) -> Shader {
 	return shader;
 }
 
-compile_shader_bytecode :: (source: string, type: Shader_Type) -> Shader_Bytecode, bool {
+compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_file_name: string) -> Shader_Bytecode, bool {
 	bytecode: Shader_Bytecode;
 	flags := D3DCOMPILE.ENABLE_STRICTNESS;
 	defines: []D3D_SHADER_MACRO;
@@ -303,7 +298,7 @@ compile_shader_bytecode :: (source: string, type: Shader_Type) -> Shader_Bytecod
 			entry_point = CS_ENTRY_POINT;
 			target = "cs_5_0";
 		}
-		output, errors, hr := D3DCompile(source, "source", defines, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry_point, target, xx flags, 0);
+		output, errors, hr := D3DCompile(source, shader_file_name, defines, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry_point, target, xx flags, 0);
 		defer free(errors);
 		check_hr("D3DCompile", #code {
 			// free(bytecode); @Leak
@@ -312,16 +307,10 @@ compile_shader_bytecode :: (source: string, type: Shader_Type) -> Shader_Bytecod
 		});
 		return output;
 	}
-	if type & .Vertex {
-		bytecode.vs = compile(.Vertex);
-	}
-	if type & .Fragment {
-		bytecode.fs = compile(.Fragment);
-	}
 
-	if type & .Compute {
-		bytecode.cs = compile(.Compute);
-	}
+	if type & .Vertex    bytecode.vs = compile(.Vertex);
+	if type & .Fragment  bytecode.fs = compile(.Fragment);
+	if type & .Compute   bytecode.cs = compile(.Compute);
 
 	return bytecode, true;
 }
@@ -480,6 +469,12 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
 bind_sampler :: (sampler: Sampler, slot: u32) {
 	ID3D11DeviceContext_PSSetSamplers(D3D11.device_context, slot, 1, *sampler.sampler_state);
 }
+
+#scope_module
+VS_EXTENSION :: ".dxvs";
+FS_EXTENSION :: ".dxfs";
+CS_EXTENSION :: ".dxcs";
+
 #scope_file
 // This is so ugly
 get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
@@ -614,8 +609,6 @@ D3D11 : struct {
 #import "d3d_compiler";
 #import "dxgi";
 #import "Windows";
-#import "File";
-#import "String";
 Crash_Handler :: #import "Runtime_Support_Crash_Handler";
 
 #if DEBUG {

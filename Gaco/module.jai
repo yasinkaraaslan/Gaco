@@ -36,15 +36,15 @@ Primitive_Type :: enum {
 }
 
 
-// We use HLSL naming here because we expect it to be used for
+// We use HLSL naming here since we expect it to be used for
 // both d3d11 and opengl backend.
 Buffer_Type :: enum {
 	Vertex;
 	Index;
 	Constant;
-	Copy;
 	Structured;
 	RWStructured;
+	Copy;
 }
 
 Sampler_Filtering :: enum {
@@ -62,10 +62,11 @@ Sampler_Edge_Handling :: enum {
 
 compile_shader :: (file_name: string, output_path: string, type: Shader_Type) -> bool {
 	source, read_ok := read_entire_file(file_name, zero_terminated=true);
+	defer free(source);
 	if !read_ok return false;
 
 	// SPIR-V or DXIL or something...
-	bytecode, compile_ok := compile_shader_bytecode(source, type);
+	bytecode, compile_ok := compile_shader_to_bytecode(source, type, path_filename(file_name));
 	if !compile_ok return false;
 	if type & .Vertex {
 		write_ok := write_entire_file(join(output_path, VS_EXTENSION), bytecode.vs);
@@ -130,9 +131,8 @@ case .OpenGL;
 VS_ENTRY_POINT :: "vertex_main";
 FS_ENTRY_POINT :: "fragment_main";
 CS_ENTRY_POINT :: "compute_main";
-
-#scope_file
+#import "String";
 #import "File";
-#import "stb_image";
 #import "Basic";
-#import "Compiler";
+#scope_file
+#import "stb_image";

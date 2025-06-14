@@ -1,5 +1,5 @@
 #run {
-	ok := Gaco.compile_shader("triangle.hlsl", "shaders/triangle", .Vertex | .Fragment);
+	ok := Gaco.compile_shader("triangle.hlsl", "triangle", .Vertex | .Fragment);
 	if !ok {
 		compiler_report("Couldn't compile triangle.hlsl");
 	}
@@ -9,7 +9,7 @@
 main :: () {
 	window := create_window(1280, 720,"Gaco Triangle");
 	Gaco.init(window);
-	shader := Gaco.load_shader("shaders/triangle", .Vertex | .Fragment);
+	shader := Gaco.load_shader("triangle", .Vertex | .Fragment);
 	vertices := Vector3.[
 		.{0.0, 0.5, 0},
 		.{0.5, -0.5, 0},
@@ -37,7 +37,6 @@ main :: () {
 #import "Window_Creation";
 #import "Input";
 #import "Math";
-Gaco :: #import,dir "../../Gaco"(DEBUG=true); // You should instead put Gaco into your local modules folder.
 #if OS == .WINDOWS {
 	#import "d3d11"()(INCLUDE_DEBUG_BINDINGS=true); // If you want to enable debug parameter with Gaco.
 }
