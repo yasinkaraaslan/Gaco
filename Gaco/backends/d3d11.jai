@@ -316,14 +316,15 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_file_na
 }
 
 set_shader :: (shader: Shader) {
-	if shader.type & .Vertex {
+	// Note that this is done this way be consistent with how OpenGL works.
+	// Otherwise you would be able to bind vertex and fragment shaders seperately.
+	// Sad.
+	if shader.type & .Vertex && shader.type & .Fragment {
 		ID3D11DeviceContext_IASetInputLayout(D3D11.device_context, shader.input_layout);
 		ID3D11DeviceContext_VSSetShader(D3D11.device_context, shader.vertex_shader, null, 0);
-	}
-	if shader.type & .Fragment {
 		ID3D11DeviceContext_PSSetShader(D3D11.device_context, shader.pixel_shader, null, 0);
 	}
-	if shader.type & .Compute {
+	else if shader.type & .Compute {
 		ID3D11DeviceContext_CSSetShader(D3D11.device_context, shader.compute_shader, null, 0);
 	}
 }

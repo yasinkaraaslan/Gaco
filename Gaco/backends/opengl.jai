@@ -1,3 +1,9 @@
+Shader :: struct {
+	program: u32;
+}
+
+Texture :: struct {}
+Buffer :: struct {}
 init :: (window: Window_Type, wanted_msaa: u32 = 4) {
 	gl_create_context(window, 4, 6, false, DEBUG, cast(s32) wanted_msaa);
 	gl_load(*gl);
@@ -5,16 +11,15 @@ init :: (window: Window_Type, wanted_msaa: u32 = 4) {
 
 	Window = window;
 }
-Shader :: struct {
-	program: u32;
-}
 
-Texture :: struct {}
+create_buffer :: (data: $T, type: Buffer_Type, dynamic := false) -> Buffer {
+
+}
 
 clear :: (r: float, g: float, b: float, a: float, depth := 1.0) {
 	glClearColor(r, g, b, a);
 	glClearDepthf(depth);
-	// glClearStencil(0);
+	glClearStencil(0);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
@@ -75,6 +80,10 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_file_na
 	if type & .Compute   bytecode.cs = compile(.Compute);
 
 	return bytecode, true;
+}
+
+set_shader :: (shader: Shader) {
+	glUseProgram(shader.program);
 }
 
 load_shader :: (file_name: string, type: Shader_Type) -> Shader {
