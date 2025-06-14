@@ -89,8 +89,6 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
 
 	ID3D11DeviceContext_OMSetDepthStencilState(D3D11.device_context, depth_stencil_state, 0xFF);
 	IUnknown_Release(depth_stencil_state);
-
-	set_primitive_type(.Triangle_List);
 }
 
 create_buffer :: (data: $T, type: Buffer_Type, dynamic := false) -> Buffer {
@@ -228,17 +226,6 @@ copy_buffer :: (from: Buffer, to: Buffer) {
 	ID3D11DeviceContext_CopyResource(D3D11.device_context, to.buffer, from.buffer);
 }
 
-set_primitive_type :: (type: Primitive_Type) {
-	topology: D3D11_PRIMITIVE_TOPOLOGY;
-	if type == {
-	case .Triangle_List;
-		topology = .TRIANGLELIST;
-	case .Triangle_Strip;
-		topology = .TRIANGLESTRIP;
-	}
-	ID3D11DeviceContext_IASetPrimitiveTopology(D3D11.device_context, topology);
-}
-
 load_shader :: (file_name: string, type: Shader_Type) -> Shader {
 	shader: Shader;
 
@@ -335,7 +322,16 @@ clear :: (r: float, g: float, b: float, a: float, depth := 1.0) {
 	ID3D11DeviceContext_ClearDepthStencilView(D3D11.device_context, D3D11.depth_stencil_view, cast(u32) D3D11_CLEAR_FLAG.DEPTH  | D3D11_CLEAR_FLAG.STENCIL, depth, 0);
 }
 
-draw :: (indexed := false){
+draw :: (indexed := false, primitive_type := Primitive_Type.Triangle_List){
+	topology: D3D11_PRIMITIVE_TOPOLOGY;
+	if primitive_type == {
+	case .Triangle_List;
+		topology = .TRIANGLELIST;
+	case .Triangle_Strip;
+		topology = .TRIANGLESTRIP;
+	}
+	ID3D11DeviceContext_IASetPrimitiveTopology(D3D11.device_context, topology);
+
 	if indexed {
 		ID3D11DeviceContext_DrawIndexed(D3D11.device_context, Frame_Info.num_bound_indices, 0, 0);
 	}
