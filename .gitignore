@@ -10,3 +10,6 @@
 *.glvs
 *.spfs
 *.spvs
+/spirv_reflect/.build
+*.dll
+*.ilk
