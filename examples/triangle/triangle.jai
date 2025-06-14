@@ -28,7 +28,7 @@ main :: () {
 			if it.type == .QUIT quit = true;
 		}
 
-		Gaco.clear(.[1.0, 0.5, 0.3, 1.0]);
+		Gaco.clear(1.0, 0.5, 0.3, 1.0);
 		Gaco.draw();
 		Gaco.present();
 	}
@@ -37,6 +37,7 @@ main :: () {
 #import "Window_Creation";
 #import "Input";
 #import "Math";
+Gaco :: #import,dir "../../Gaco";
 #if OS == .WINDOWS {
 	#import "d3d11"()(INCLUDE_DEBUG_BINDINGS=true); // If you want to enable debug parameter with Gaco.
 }

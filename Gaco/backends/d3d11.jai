@@ -328,7 +328,8 @@ set_shader :: (shader: Shader) {
 	}
 }
 
-clear :: (color: [4]float) {
+clear :: (r: float, g: float, b: float, a: float) {
+	color := float.[r, g, b, a];
 	ID3D11DeviceContext_ClearRenderTargetView(D3D11.device_context, D3D11.render_target_view, *color);
 	ID3D11DeviceContext_ClearDepthStencilView(D3D11.device_context, D3D11.depth_stencil_view, cast(u32) D3D11_CLEAR_FLAG.DEPTH  | D3D11_CLEAR_FLAG.STENCIL, 1.0, 0);
 }

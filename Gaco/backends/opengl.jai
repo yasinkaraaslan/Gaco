@@ -2,12 +2,35 @@ init :: (window: Window_Type, wanted_msaa: u32 = 4) {
 	gl_create_context(window, 4, 6, false, DEBUG, cast(s32) wanted_msaa);
 	#if DEBUG gl_enable_debug_output(true);
 
+	Window = window;
 }
 Shader :: struct {
 	program: u32;
 }
 
 Texture :: struct {}
+
+clear :: (r: float, g: float, b: float, a: float) {
+	glClearColor(r, g, b, a);
+	glClearDepth(1.0);
+	// glClearStencil(0);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+}
+
+resize :: (width: int, height: int) {
+	glViewport(0, 0, cast(u32)width, cast(u32) height);
+}
+
+present :: () {
+	#if OS == .WINDOWS {
+   	dc := GetDC(Window);
+   	SwapBuffers(dc);
+   }
+	else #if OS == .LINUX {
+		// Todo
+		assert(false);
+	}
+}
 
 compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_file_name: string) -> bytecode: Shader_Bytecode, ok: bool {
 	compile :: (type: Shader_Type) -> string #expand {
@@ -75,6 +98,10 @@ FS_EXTENSION :: ".spfs";
 CS_EXTENSION :: ".spcs";
 
 #scope_file
+Window : Window_Type;
 
+#import "GL"(DUMP_GL_ERRORS=DEBUG);
 #import "Window_Type";
+#if OS == .WINDOWS #import "Windows";
+else #if OS == .LINUX #import "X11";
 DXC :: #import "dxc_compiler";
