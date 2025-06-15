@@ -92,11 +92,7 @@ draw_the_cube :: (transform_cb: Gaco.Buffer) {
 	transform_buffer: Transform_Buffer;
 	transform_buffer.transformation = Proj * model;
 
-	{
-		buffer_pointer := Gaco.map_buffer(transform_cb, false, true);
-		memcpy(buffer_pointer, *transform_buffer, size_of(Transform_Buffer));
-		Gaco.unmap_buffer(transform_cb);
-	}
+	Gaco.write_buffer(*transform_cb, *transform_buffer);
 
 	Gaco.bind_buffer(transform_cb, bind_to=.Vertex);
 	Gaco.draw(true);

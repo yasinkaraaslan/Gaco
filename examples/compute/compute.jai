@@ -17,26 +17,16 @@ main :: () {
    }
 
    compute_input_buffer := Gaco.create_buffer(*init_data, .Structured);
-
-
-   out_buffer := Gaco.create_buffer(null, .RWStructured, overrided_count=SIZE, overrided_stride = size_of(float));
-   copy_buffer := Gaco.create_buffer(null, .Copy, overrided_count = SIZE, overrided_stride = size_of(float)); // We cannot directly map the output buffer, so we need a copy buffer.
+   out_buffer := Gaco.create_buffer(null, SIZE, size_of(float), .RWStructured);
 
    Gaco.bind_buffer(compute_input_buffer, bind_to=.Compute);
    Gaco.bind_buffer(out_buffer, bind_to=.Compute);
 
    Gaco.dispatch_compute(69, 105, 1);
 
-
    output : []float;
-   output.data = alloc(SIZE * size_of(float));
    output.count = SIZE;
-
-   Gaco.copy_buffer(out_buffer, copy_buffer);
-
-   out_data := Gaco.map_buffer(copy_buffer, true, false);
-   memcpy(output.data, out_data, SIZE);
-   Gaco.unmap_buffer(copy_buffer);
+   output.data = Gaco.read_buffer(*out_buffer);
 
    print("--------- INIT DATA -------\n");
    print("%\n", init_data);

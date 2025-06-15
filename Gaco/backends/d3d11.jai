@@ -93,32 +93,35 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
 	IUnknown_Release(depth_stencil_state);
 }
 
-create_buffer :: (data: *$T, type: Buffer_Type, overrided_count : u32 = 0, overrided_stride: u32 = 0, dynamic := false) -> Buffer {
-	buffer: Buffer;
-	buffer.type = type;
-	DATA_INFO :: type_info(T);
+create_buffer :: (data: *$T, type: Buffer_Type, dynamic := false) -> Buffer {
 	data_pointer := cast(*void) data;
-
+	DATA_INFO :: type_info(T);
+	count, stride: u32;
 	#if DATA_INFO.type == .ARRAY {
 		if type == .Index {
 			element_info := (cast(*Type_Info_Array)DATA_INFO).element_type;
 			assert(element_info == type_info(u32) || element_info == type_info(u16), "Index buffers can only be created with u16 or u32 arrays. Got: %\n", T);
 		}
 
-		buffer.stride = cast(u32)size_of(type_of(data.*[0]));
-		buffer.count = cast(u32)data.count;
+		stride = cast(u32)size_of(type_of(data.*[0]));
+		count = cast(u32)data.count;
 
 		data_pointer = data.data;
 	}
 	else {
 		assert(type != .Index, "Index buffers can only be created with u16 or u32 arrays. Got: %\n", T);
 
-		buffer.stride = cast(u32)size_of(type_of(data.*));
-		buffer.count = 1;
+		stride = cast(u32)size_of(type_of(data.*));
+		count = 1;
 	}
+	return create_buffer(data_pointer, count, stride, type, dynamic);
+}
 
-	if overrided_count  != 0  buffer.count  = overrided_count;
-	if overrided_stride != 0  buffer.stride = overrided_stride;
+create_buffer :: (data: *void, count: u32, stride: u32, type: Buffer_Type, dynamic := false) -> Buffer {
+	buffer: Buffer;
+	buffer.count = count;
+	buffer.stride = stride;
+	buffer.type = type;
 
 	bd := D3D11_BUFFER_DESC.{
 		ByteWidth = buffer.count * buffer.stride
@@ -152,27 +155,30 @@ create_buffer :: (data: *$T, type: Buffer_Type, overrided_count : u32 = 0, overr
 
 	if data != null {
 		init_data = * (D3D11_SUBRESOURCE_DATA.{
-			pSysMem = data_pointer
+			pSysMem = data
 		});
 	}
 
 	hr := ID3D11Device_CreateBuffer(D3D11.device, *bd, init_data, *buffer.buffer);
 	check_hr("ID3D11Device.CreateBuffer", #code `return .{});
+
 	if type == .Structured {
 		srv_desc := D3D11_SHADER_RESOURCE_VIEW_DESC.{
 			ViewDimension = .BUFFER,
-			Buffer.NumElements = buffer.count
+			Buffer.NumElements = count
 		};
 		hr = ID3D11Device_CreateShaderResourceView(D3D11.device, buffer.buffer, *srv_desc, *buffer.srv);
 		check_hr("ID3D11Device.CreateShaderResourceView", #code `return .{});
 	}
+
 	else if type == .RWStructured {
 		uav_desc := D3D11_UNORDERED_ACCESS_VIEW_DESC.{
 			ViewDimension = .BUFFER,
-			Buffer.NumElements = buffer.count
+			Buffer.NumElements = count
 		};
 		hr = ID3D11Device_CreateUnorderedAccessView(D3D11.device, buffer.buffer, *uav_desc, *buffer.uav);
 	}
+
 	return buffer;
 }
 
@@ -215,7 +221,7 @@ bind_buffer :: (buffer: Buffer, slot : u32 = 0, bind_to := Shader_Type.Unspecifi
 	}
 }
 
-map_buffer :: (buffer: Buffer, read: bool, write: bool) -> *void {
+map_buffer :: (buffer: *Buffer, read: bool, write: bool) -> *void {
 		subresource : D3D11_MAPPED_SUBRESOURCE;
 		map_flags : D3D11_MAP;
 		if read map_flags |= .READ;
@@ -225,22 +231,68 @@ map_buffer :: (buffer: Buffer, read: bool, write: bool) -> *void {
 		return subresource.pData;
 }
 
-unmap_buffer :: (buffer: Buffer) {
+unmap_buffer :: (buffer: *Buffer) {
 	ID3D11DeviceContext_Unmap(D3D11.device_context, buffer.buffer, 0);
 }
 
-update_buffer :: (buffer: Buffer, data: *void) {
+update_buffer :: (buffer: *Buffer, data: *void) {
 	ID3D11DeviceContext_UpdateSubresource(D3D11.device_context, buffer.buffer, 0, null, data, buffer.stride, buffer.count);
 }
 
-copy_buffer :: (from: Buffer, to: Buffer) {
+read_buffer :: (buffer: *Buffer) -> *void {
+	buffer_to_map : *Buffer = ---;
+	buffer_is_scary := buffer.type == .RWStructured || buffer.type == .Structured;
+
+	if buffer_is_scary {
+		buffer_to_map = * (create_buffer(null, buffer.count, buffer.stride, .Copy, false));
+		copy_buffer(buffer, buffer_to_map);
+	}
+	else {
+		buffer_to_map = buffer;
+	}
+
+	size := cast(int)(buffer.count * buffer.stride);
+	data := alloc(size); // It is the callee's responsibility to manage the memory.
+
+	mapped_data := map_buffer(buffer_to_map, true, false);
+	memcpy(data, mapped_data, size);
+	unmap_buffer(buffer_to_map);
+
+	if buffer_is_scary destroy_buffer(buffer_to_map);
+	return data;
+}
+
+write_buffer :: (buffer: *Buffer, data: *void) {
+	buffer_to_map : *Buffer = ---;
+	buffer_is_scary := buffer.type == .RWStructured || buffer.type == .Structured;
+
+	if buffer_is_scary {
+		buffer_to_map = * (create_buffer(null, buffer.count, buffer.stride, .Copy, false));
+		copy_buffer(buffer, buffer_to_map);
+	}
+	else {
+		buffer_to_map = buffer;
+	}
+
+	size := cast(int)(buffer.count * buffer.stride);
+
+	mapped_data := map_buffer(buffer_to_map, false, true);
+	memcpy(mapped_data, data, size);
+	unmap_buffer(buffer_to_map);
+
+	if buffer_is_scary destroy_buffer(buffer_to_map);
+}
+
+copy_buffer :: (from: *Buffer, to: *Buffer) {
 	ID3D11DeviceContext_CopyResource(D3D11.device_context, to.buffer, from.buffer);
 }
 
-release_buffer :: (buffer: Buffer) {
+destroy_buffer :: (buffer: *Buffer) {
 	IUnknown_Release(buffer.buffer);
-	if      buffer.type & .Structured   IUnknown_Release(buffer.srv);
-	else if buffer.type & .RWStructured IUnknown_Release(buffer.uav);
+
+	if      buffer.type == .Structured   IUnknown_Release(buffer.srv);
+	else if buffer.type == .RWStructured IUnknown_Release(buffer.uav);
+
 	buffer.count, buffer.stride = 0;
 	buffer.dynamic = false;
 }
