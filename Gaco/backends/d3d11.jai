@@ -93,30 +93,35 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
 	IUnknown_Release(depth_stencil_state);
 }
 
-create_buffer :: (data: $T, type: Buffer_Type, dynamic := false) -> Buffer {
+create_buffer :: (data: *$T, type: Buffer_Type, overrided_count : u32 = 0, overrided_stride: u32 = 0, dynamic := false) -> Buffer {
 	buffer: Buffer;
 	buffer.type = type;
-	data_pointer : *void;
 	DATA_INFO :: type_info(T);
+	data_pointer := cast(*void) data;
+
 	#if DATA_INFO.type == .ARRAY {
 		if type == .Index {
 			element_info := (cast(*Type_Info_Array)DATA_INFO).element_type;
 			assert(element_info == type_info(u32) || element_info == type_info(u16), "Index buffers can only be created with u16 or u32 arrays. Got: %\n", T);
 		}
-		buffer.stride = cast(u32)size_of(type_of(data[0]));
+
+		buffer.stride = cast(u32)size_of(type_of(data.*[0]));
 		buffer.count = cast(u32)data.count;
+
 		data_pointer = data.data;
 	}
 	else {
 		assert(type != .Index, "Index buffers can only be created with u16 or u32 arrays. Got: %\n", T);
 
-		buffer.stride = cast(u32)size_of(T);
+		buffer.stride = cast(u32)size_of(type_of(data.*));
 		buffer.count = 1;
-		data_pointer = *data;
 	}
 
+	if overrided_count  != 0  buffer.count  = overrided_count;
+	if overrided_stride != 0  buffer.stride = overrided_stride;
+
 	bd := D3D11_BUFFER_DESC.{
-		ByteWidth = buffer.count * buffer.stride,
+		ByteWidth = buffer.count * buffer.stride
 	};
 
 	if dynamic {
@@ -143,16 +148,20 @@ create_buffer :: (data: $T, type: Buffer_Type, dynamic := false) -> Buffer {
 		bd.Usage = .STAGING;
 		bd.CPUAccessFlags |= .READ;
 	}
+	init_data : *D3D11_SUBRESOURCE_DATA = null;
 
-	init_data := D3D11_SUBRESOURCE_DATA.{
-		pSysMem = data_pointer
-	};
-	hr := ID3D11Device_CreateBuffer(D3D11.device, *bd, *init_data, *buffer.buffer);
+	if data != null {
+		init_data = * (D3D11_SUBRESOURCE_DATA.{
+			pSysMem = data_pointer
+		});
+	}
+
+	hr := ID3D11Device_CreateBuffer(D3D11.device, *bd, init_data, *buffer.buffer);
 	check_hr("ID3D11Device.CreateBuffer", #code `return .{});
 	if type == .Structured {
 		srv_desc := D3D11_SHADER_RESOURCE_VIEW_DESC.{
 			ViewDimension = .BUFFER,
-			Buffer.NumElements = buffer.count,
+			Buffer.NumElements = buffer.count
 		};
 		hr = ID3D11Device_CreateShaderResourceView(D3D11.device, buffer.buffer, *srv_desc, *buffer.srv);
 		check_hr("ID3D11Device.CreateShaderResourceView", #code `return .{});
@@ -226,6 +235,14 @@ update_buffer :: (buffer: Buffer, data: *void) {
 
 copy_buffer :: (from: Buffer, to: Buffer) {
 	ID3D11DeviceContext_CopyResource(D3D11.device_context, to.buffer, from.buffer);
+}
+
+release_buffer :: (buffer: Buffer) {
+	IUnknown_Release(buffer.buffer);
+	if      buffer.type & .Structured   IUnknown_Release(buffer.srv);
+	else if buffer.type & .RWStructured IUnknown_Release(buffer.uav);
+	buffer.count, buffer.stride = 0;
+	buffer.dynamic = false;
 }
 
 load_shader :: (file_name: string, type: Shader_Type) -> Shader {

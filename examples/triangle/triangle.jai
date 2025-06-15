@@ -15,7 +15,7 @@ main :: () {
 		.{0.5, -0.5, 0},
 		.{-0.5, -0.5, 0}
 	];
-	buffer := Gaco.create_buffer(vertices, .Vertex);
+	buffer := Gaco.create_buffer(*vertices, .Vertex);
 	Gaco.bind_buffer(buffer);
 	Gaco.set_shader(shader);
 	quit := false;

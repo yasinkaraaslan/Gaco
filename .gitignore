@@ -13,3 +13,4 @@
 /spirv_reflect/.build
 *.dll
 *.ilk
+*.dxcs

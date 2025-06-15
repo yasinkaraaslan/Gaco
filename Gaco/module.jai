@@ -1,13 +1,14 @@
 #module_parameters (BACKEND := DEFAULT_BACKEND, DEBUG:=false) {
 	Backend_Type :: enum #specified {
-		OpenGL :: 0;
+		Vulkan :: 0;
 		D3D11 :: 1;
 	};
 	DEFAULT_BACKEND :: #run -> Backend_Type {
 		#if OS == .WINDOWS return .D3D11;
-		else #if OS == .LINUX | OS == .ANDROID return .OpenGL;
+		else #if OS == .LINUX | OS == .ANDROID return .Vulkan;
 		else #if OS == .MACOS | OS == .IOS  #assert false, "Metal is not supported right now.";
 	}
+
 	//
 	// Note that you have to add this to your main program to enable DEBUG while using the D3D11 backend:
 	// #if OS == .WINDOWS {
@@ -123,8 +124,8 @@ create_texture_from_file :: (file_name: string) -> Texture {
 #if BACKEND == {
 case .D3D11;
 #load "backends/d3d11.jai";
-case .OpenGL;
-#load "backends/opengl.jai";
+case .Vulkan;
+#load "backends/vulkan.jai";
 }
 
 #scope_module
