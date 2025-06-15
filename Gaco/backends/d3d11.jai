@@ -3,7 +3,7 @@ Shader :: struct {
 	union {
 		struct {
 			vertex_shader: *ID3D11VertexShader;
-			pixel_shader: *ID3D11PixelShader; // Not fragment_shader because this is structure is backend-specific.
+			pixel_shader: *ID3D11PixelShader;
 			input_layout: *ID3D11InputLayout;
 		}
 		compute_shader: *ID3D11ComputeShader;
@@ -54,6 +54,8 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
 		SampleDesc = .{Count = wanted_msaa, Quality = 0},
 	};
 
+
+	// Why use this when there is already a simpler version anyway?
 	dxgi_factory: *IDXGIFactory2;
 	{
 		dxgi_device: *IDXGIDevice2;
@@ -303,15 +305,14 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_file_na
 }
 
 set_shader :: (shader: Shader) {
-	// Note that this is done this way be consistent with how OpenGL works.
-	// Otherwise you would be able to bind vertex and fragment shaders seperately.
-	// Sad.
-	if shader.type & .Vertex && shader.type & .Fragment {
+	if shader.type & .Vertex {
 		ID3D11DeviceContext_IASetInputLayout(D3D11.device_context, shader.input_layout);
 		ID3D11DeviceContext_VSSetShader(D3D11.device_context, shader.vertex_shader, null, 0);
+	}
+	if shader.type & .Fragment {
 		ID3D11DeviceContext_PSSetShader(D3D11.device_context, shader.pixel_shader, null, 0);
 	}
-	else if shader.type & .Compute {
+	if shader.type & .Compute {
 		ID3D11DeviceContext_CSSetShader(D3D11.device_context, shader.compute_shader, null, 0);
 	}
 }
