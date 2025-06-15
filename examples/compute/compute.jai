@@ -41,4 +41,5 @@ main :: () {
 #import "Basic";
 #import "Random";
 Gaco :: #import,dir "../../Gaco"(DEBUG=true);
-#import "d3d11"()(INCLUDE_DEBUG_BINDINGS=true);
+
+#if OS == .WINDOWS #import "d3d11"()(INCLUDE_DEBUG_BINDINGS=true);

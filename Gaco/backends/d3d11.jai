@@ -28,7 +28,7 @@ Sampler :: struct {
 
 Texture :: struct {
 	resource_view: *ID3D11ShaderResourceView;
-	width, height: int;
+	width, height: u32;
 };
 
 init :: (window: HWND, wanted_msaa : u32 = 4) {
@@ -306,6 +306,7 @@ load_shader :: (file_name: string, type: Shader_Type) -> Shader {
 		hr := ID3D11Device_CreateComputeShader(D3D11.device, bytecode.cs.data, xx bytecode.cs.count, null, *shader.compute_shader);
 		check_hr("ID3D11Device.CreateComputeShader", #code `return .{});
 		free(bytecode.cs);
+
 		#if DEBUG {
 			ID3D11DeviceChild_SetPrivateData(shader.compute_shader, *uid(WKPDID_D3DDebugObjectName), CS_ENTRY_POINT.count, CS_ENTRY_POINT.data);
 		}
@@ -317,6 +318,7 @@ load_shader :: (file_name: string, type: Shader_Type) -> Shader {
 
 		shader.input_layout = get_input_layout_from_bytecode(bytecode.vs);
 		free(bytecode.vs);
+
 		#if DEBUG {
 			ID3D11DeviceChild_SetPrivateData(shader.vertex_shader, *uid(WKPDID_D3DDebugObjectName), VS_ENTRY_POINT.count, VS_ENTRY_POINT.data);
 		}
@@ -326,6 +328,7 @@ load_shader :: (file_name: string, type: Shader_Type) -> Shader {
 		hr := ID3D11Device_CreatePixelShader(D3D11.device, bytecode.fs.data, xx bytecode.fs.count, null, *shader.pixel_shader);
 		check_hr("ID3D11Device.CreatePixelShader", #code `return .{});
 		free(bytecode.fs);
+
 		#if DEBUG {
 			ID3D11DeviceChild_SetPrivateData(shader.pixel_shader,*uid(WKPDID_D3DDebugObjectName), FS_ENTRY_POINT.count, FS_ENTRY_POINT.data);
 		}
@@ -472,7 +475,7 @@ dispatch_compute :: (num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) {
 create_texture :: (data: *u8, width: u32, height: u32, channels: u32, read := false, write := false) -> Texture {
 	texture_format : DXGI_FORMAT;
 	cpu_flags: D3D11_CPU_ACCESS_FLAG;
-	if read cpu_flags |= .READ;
+	if read  cpu_flags |= .READ;
 	if write cpu_flags |= .WRITE;
 
 	if channels == 4 texture_format = .R8G8B8A8_UNORM;
@@ -499,6 +502,7 @@ create_texture :: (data: *u8, width: u32, height: u32, channels: u32, read := fa
 	d3d11_texture: *ID3D11Texture2D;
 	hr := ID3D11Device_CreateTexture2D(D3D11.device, *texture_desc, *init_data, *d3d11_texture );
 	check_hr("ID3D11Device.CreateTexture2D", #code return .{});
+
 	hr = ID3D11Device_CreateShaderResourceView(D3D11.device, d3d11_texture,null, *texture.resource_view);
 	IUnknown_Release(d3d11_texture);
 	check_hr("ID3D11Device.CreateShaderResourceView", #code return .{});
