@@ -27,8 +27,9 @@ Sampler :: struct {
 }
 
 Texture :: struct {
+    texture: *ID3D11Texture2D;
     resource_view: *ID3D11ShaderResourceView;
-    width, height: u32;
+    width, height, channels: u32;
 };
 
 init :: (window: HWND, wanted_msaa : u32 = 4) {
@@ -92,30 +93,6 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
     IUnknown_Release(depth_stencil_state);
 
     set_primitive_type(.Triangle_List);
-}
-
-create_buffer :: (data: *$T, type: Buffer_Type, dynamic := false) -> Buffer {
-    data_pointer := cast(*void) data;
-    DATA_INFO :: type_info(T);
-    count, stride: u32;
-    #if DATA_INFO.type == .ARRAY {
-        if type == .Index {
-            element_info := (cast(*Type_Info_Array)DATA_INFO).element_type;
-            assert(element_info == type_info(u32) || element_info == type_info(u16), "Index buffers can only be created with u16 or u32 arrays. Got: %\n", T);
-        }
-
-        stride = cast(u32)size_of(type_of(data.*[0]));
-        count = cast(u32)data.count;
-
-        data_pointer = data.data;
-    }
-    else {
-        assert(type != .Index, "Index buffers can only be created with u16 or u32 arrays. Got: %\n", T);
-
-        stride = cast(u32)size_of(type_of(data.*));
-        count = 1;
-    }
-    return create_buffer(data_pointer, count, stride, type, dynamic);
 }
 
 create_buffer :: (data: *void, count: u32, stride: u32, type: Buffer_Type, dynamic := false) -> Buffer {
@@ -240,6 +217,23 @@ update_buffer :: (buffer: *Buffer, data: *void) {
     ID3D11DeviceContext_UpdateSubresource(D3D11.device_context, buffer.buffer, 0, null, data, buffer.stride, buffer.count);
 }
 
+update_texture :: (texture: *Texture, data: *void, rect : Rect) {
+    rows := rect.w * texture.channels;
+
+    box: D3D11_BOX;
+    box.top = rect.y;
+    box.left = rect.x;
+    box.bottom = rect.y + rect.h;
+    box.right = rect.x + rect.w;
+    box.back = 1;
+
+    ID3D11DeviceContext_UpdateSubresource(D3D11.device_context, texture.texture, 0, *box, data, rows, rows * rect.h);
+}
+
+update_texture :: (texture: *Texture, data: *void) {
+    ID3D11DeviceContext_UpdateSubresource(D3D11.device_context, texture.texture, 0, null, data, 0,0);
+}
+
 read_buffer :: (buffer: *Buffer) -> *void {
     buffer_to_map : *Buffer = ---;
     buffer_is_scary := buffer.type == .RWStructured || buffer.type == .Structured;
@@ -258,8 +252,8 @@ read_buffer :: (buffer: *Buffer) -> *void {
     mapped_data := map_buffer(buffer_to_map, true, false);
     memcpy(data, mapped_data, size);
     unmap_buffer(buffer_to_map);
-
     if buffer_is_scary destroy_buffer(buffer_to_map);
+
     return data;
 }
 
@@ -269,7 +263,6 @@ write_buffer :: (buffer: *Buffer, data: *void) {
 
     if buffer_is_scary {
         buffer_to_map = * (create_buffer(null, buffer.count, buffer.stride, .Copy, false));
-        copy_buffer(buffer, buffer_to_map);
     }
     else {
         buffer_to_map = buffer;
@@ -281,7 +274,10 @@ write_buffer :: (buffer: *Buffer, data: *void) {
     memcpy(mapped_data, data, size);
     unmap_buffer(buffer_to_map);
 
-    if buffer_is_scary destroy_buffer(buffer_to_map);
+    if buffer_is_scary {
+        copy_buffer(buffer_to_map, buffer);
+        destroy_buffer(buffer_to_map);
+    }
 }
 
 copy_buffer :: (from: *Buffer, to: *Buffer) {
@@ -296,6 +292,12 @@ destroy_buffer :: (buffer: *Buffer) {
 
     buffer.count, buffer.stride = 0;
     buffer.dynamic = false;
+}
+
+destroy_texture :: (texture: *Texture) {
+    IUnknown_Release(texture.texture);
+    IUnknown_Release(texture.resource_view);
+    texture.width, texture.height = 0;
 }
 
 load_shader :: (file_name: string, type: Shader_Type) -> Shader {
@@ -420,7 +422,7 @@ draw_instanced :: (indexed := false) {
 }
 
 present :: (interval: u32 = 1) {
-    hr := IDXGISwapChain_Present(D3D11.swap_chain, interval, xx DXGI_SWAP_EFFECT.FLIP_DISCARD);
+    hr := IDXGISwapChain_Present(D3D11.swap_chain, interval, 0);//xx DXGI_SWAP_EFFECT.FLIP_DISCARD);
     check_hr("IDXGISwapChain_Present", #code {});
 }
 
@@ -484,8 +486,10 @@ create_texture :: (data: *u8, width: u32, height: u32, channels: u32, read := fa
     if read  cpu_flags |= .READ;
     if write cpu_flags |= .WRITE;
 
+    // @Robustness: Support other formats.
     if channels == 4 texture_format = .R8G8B8A8_UNORM;
-    else assert(false, "Only 4 channeled images are supported right now.");
+    else assert(false, "Only RGBA8 images are supported right now.");
+
     texture_desc := D3D11_TEXTURE2D_DESC.{
         Width = width,
         Height = height,
@@ -504,13 +508,12 @@ create_texture :: (data: *u8, width: u32, height: u32, channels: u32, read := fa
         SysMemSlicePitch = 0, // System-memory-slice pitch is only used for 3D texture data.
     };
 
-    texture := Texture.{width = width, height = height};
-    d3d11_texture: *ID3D11Texture2D;
-    hr := ID3D11Device_CreateTexture2D(D3D11.device, *texture_desc, *init_data, *d3d11_texture );
+    texture := Texture.{width = width, height = height, channels = channels};
+
+    hr := ID3D11Device_CreateTexture2D(D3D11.device, *texture_desc, *init_data, *texture.texture );
     check_hr("ID3D11Device.CreateTexture2D", #code return .{});
 
-    hr = ID3D11Device_CreateShaderResourceView(D3D11.device, d3d11_texture,null, *texture.resource_view);
-    IUnknown_Release(d3d11_texture);
+    hr = ID3D11Device_CreateShaderResourceView(D3D11.device, texture.texture, null, *texture.resource_view);
     check_hr("ID3D11Device.CreateShaderResourceView", #code return .{});
 
     return texture;
@@ -554,9 +557,8 @@ FS_EXTENSION :: ".dxfs";
 CS_EXTENSION :: ".dxcs";
 
 #scope_file
-// This is so ugly
 get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
-    // @Hardcoded: has to be this way until jai includes IID_ID3D11ShaderReflection in its d3dcompiler module
+    // @Hardcoded: has to be this way until jai includes IID_ID3D11ShaderReflection in its d3d_compiler module
     IID_ID3D11ShaderReflection :: IID.{Data1=0x8D536CA1, Data2=0x0CCA, Data3=0x4956,
     Data4=.[0xA8, 0x37, 0x78, 0x69, 0x63, 0x75, 0x55, 0x84]};
 
@@ -629,26 +631,26 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
 
 
 check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
-    fail_message : string;
-
-    // https://learn.microsoft.com/tr-tr/windows/win32/direct3d11/d3d11-graphics-reference-returnvalues
-    if `hr == {
-    case 0x887C0002; fail_message = "The file was not found.";
-    case 0x887C0001; fail_message = "There are too many unique instances of a particular type of state object.";
-    case 0x887C0003; fail_message = "There are too many unique instances of a particular type of view object.";
-    case 0x887C0004; fail_message = "The first call to ID3D11DeviceContext::Map was not D3D11_MAP_WRITE_DISCARD.";
-    case 0x887A0001; fail_message = "The procedure call is invalid.";
-    case 0x887A000A; fail_message = "The previous blit operation that is transferring information to or from this surface is incomplete.";
-
-    case 0x80004005; fail_message = "The procedure failed.";
-    case 0x80070057; fail_message = "An invalid argument was passed to the procedure.";
-    case 0x8007000E; fail_message = "Direct3D could not allocate sufficient memory to complete the call.";
-    case 0x80004001; fail_message = "The procedure call isn't implemented with the passed parameter combination.";
-
-    case; fail_message = get_last_error();
-    }
-
     if FAILED(`hr) {
+        fail_message : string;
+
+        // https://learn.microsoft.com/tr-tr/windows/win32/direct3d11/d3d11-graphics-reference-returnvalues
+        if `hr == {
+        case 0x887C0002; fail_message = "The file was not found.";
+        case 0x887C0001; fail_message = "There are too many unique instances of a particular type of state object.";
+        case 0x887C0003; fail_message = "There are too many unique instances of a particular type of view object.";
+        case 0x887C0004; fail_message = "The first call to ID3D11DeviceContext::Map was not D3D11_MAP_WRITE_DISCARD.";
+        case 0x887A0001; fail_message = "The procedure call is invalid.";
+        case 0x887A000A; fail_message = "The previous blit operation that is transferring information to or from this surface is incomplete.";
+
+        case 0x80004005; fail_message = "The procedure failed.";
+        case 0x80070057; fail_message = "An invalid argument was passed to the procedure.";
+        case 0x8007000E; fail_message = "Direct3D could not allocate sufficient memory to complete the call.";
+        case 0x80004001; fail_message = "The procedure call isn't implemented with the passed parameter combination.";
+
+        case; fail_message = get_last_error();
+        }
+
         log_error("% failed with code 0x%: %\n", from, FormatInt.{value = `hr, base=16}, fail_message);
         #insert code_to_insert_after_fail;
     }

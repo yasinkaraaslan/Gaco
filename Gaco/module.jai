@@ -1,19 +1,18 @@
 #module_parameters (BACKEND := DEFAULT_BACKEND, DEBUG:=false) {
     Backend_Type :: enum #specified {
         Vulkan :: 0;
-        D3D11 :: 1;
+        D3D11  :: 1;
+        Metal  :: 2;
     };
     DEFAULT_BACKEND :: #run -> Backend_Type {
         #if OS == .WINDOWS return .D3D11;
         else #if OS == .LINUX | OS == .ANDROID return .Vulkan;
-        else #if OS == .MACOS | OS == .IOS  #assert false, "Metal is not supported right now.";
+        else #if OS == .MACOS | OS == .IOS  return .Metal;
     }
 
     //
     // Note that you have to add this to your main program to enable DEBUG while using the D3D11 backend:
-    // #if OS == .WINDOWS {
-    //     D3D11 :: #import "d3d11"()(INCLUDE_DEBUG_BINDINGS=true);
-    // }
+    // D3D11 :: #import "d3d11"()(INCLUDE_DEBUG_BINDINGS=true);
     //
 }
 Shader_Type :: enum_flags u8 #specified {
@@ -24,7 +23,6 @@ Shader_Type :: enum_flags u8 #specified {
 };
 
 
-// This is not a union since one hlsl file can output cs, vs and fs at the same time
 Shader_Bytecode :: struct {
     vs: string;
     fs: string;
@@ -37,8 +35,7 @@ Primitive_Type :: enum {
 }
 
 
-// We use HLSL naming here since we expect it to be used for
-// both d3d11 and opengl backend.
+// We use HLSL naming here since we expect it to be used for all backends.
 Buffer_Type :: enum {
     Vertex;
     Index;
@@ -53,12 +50,15 @@ Sampler_Filtering :: enum {
     Nearest;
 }
 
-// @Rename
 Sampler_Edge_Handling :: enum {
     Wrap :: 1;
     Mirror :: 2;
     Clamp :: 3;
     Border :: 4;
+}
+
+Rect :: struct {
+    x, y, w, h : u32 = 0;
 }
 
 compile_shader :: (file_name: string, output_path: string, type: Shader_Type) -> bool {
@@ -88,6 +88,31 @@ compile_shader :: (file_name: string, output_path: string, type: Shader_Type) ->
     }
 
     return true;
+}
+
+create_buffer :: (data: *$T, type: Buffer_Type, dynamic := false) -> Buffer {
+    data_pointer : *void = ---;
+    DATA_INFO :: type_info(T);
+    count, stride: u32;
+    #if DATA_INFO.type == .ARRAY {
+        if type == .Index {
+            element_info := (cast(*Type_Info_Array)DATA_INFO).element_type;
+            assert(element_info == type_info(u32) || element_info == type_info(u16), "Index buffers can only be created with u16 or u32 arrays. Got: %\n", T);
+        }
+
+        stride = cast(u32)size_of(type_of(data.*[0]));
+        count = cast(u32)data.count;
+
+        data_pointer = data.data;
+    }
+    else {
+        assert(type != .Index, "Index buffers can only be created with u16 or u32 arrays. Got: %\n", T);
+
+        stride = cast(u32)size_of(type_of(data.*));
+        count = 1;
+        data_pointer = *data;
+    }
+    return create_buffer(data_pointer, count, stride, type, dynamic);
 }
 
 load_shader_bytecode :: (shader_file: string, type: Shader_Type) -> Shader_Bytecode {
@@ -126,6 +151,8 @@ case .D3D11;
 #load "backends/d3d11.jai";
 case .Vulkan;
 #load "backends/vulkan.jai";
+case .Metal;
+#load "backends/metal.jai";
 }
 
 #scope_module
