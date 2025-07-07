@@ -43,10 +43,7 @@ main :: () {
         .{.{ 0.5,  0.5,  0.5}, .{2.0/3.0, 1}},
 
     ];
-    Index_Input :: struct {
-        indices: []u16;
-    }
-    index_input: Index_Input;
+
     indices := u16.[
         0,1,2, 2,3,0, // Front
         6,5,4, 4,7,6, // Back
@@ -60,7 +57,7 @@ main :: () {
 
     vertex_buffer := Gaco.create_buffer(*vertex_inputs, .Vertex);
     index_buffer := Gaco.create_buffer(*indices, .Index);
-    vs_cb := Gaco.create_buffer(*constant, .Constant, true);
+    vs_cb := Gaco.create_buffer(*constant, .Constant, dynamic=true);
 
     texture := Gaco.create_texture_from_file("images/mc_cube.png");
 
