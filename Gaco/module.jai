@@ -1,12 +1,12 @@
 #module_parameters (BACKEND := DEFAULT_BACKEND, DEBUG:=false) {
     Backend_Type :: enum #specified {
-        Vulkan :: 0;
+        OpenGL :: 0;
         D3D11  :: 1;
         Metal  :: 2;
     };
     DEFAULT_BACKEND :: #run -> Backend_Type {
         #if OS == .WINDOWS return .D3D11;
-        else #if OS == .LINUX | OS == .ANDROID return .Vulkan;
+        else #if OS == .LINUX | OS == .ANDROID return .OpenGL;
         else #if OS == .MACOS | OS == .IOS  return .Metal;
     }
 
@@ -149,8 +149,8 @@ create_texture_from_file :: (file_name: string) -> Texture {
 #if BACKEND == {
 case .D3D11;
 #load "backends/d3d11.jai";
-case .Vulkan;
-#load "backends/vulkan.jai";
+case .OpenGL;
+#load "backends/opengl.jai";
 case .Metal;
 #load "backends/metal.jai";
 }

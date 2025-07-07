@@ -160,15 +160,23 @@ create_buffer :: (data: *void, count: u32, stride: u32, type: Buffer_Type, dynam
     return buffer;
 }
 
-// @Incomplete: Allow for an array of buffers to be bound.
-// Note: bind_to is only used with Constant and RW/Structured buffers.
-// Note: slot doesn't mean anything with index buffers.
+// Note(Yasin): bind_to is only used with Constant and RW/Structured buffers.
+
+/*
+    Note(Yasin): slot doesn't mean anything for vertex and index buffers.
+    It looks like it can for vertex buffers but only if we could pass an
+    array of vertex buffers, and we don't allow it right now to keep the
+    api simple. We also cannot get that information when generating the
+    input layout from D3DReflect, and we would like the user not to pass
+    input layouts when creating shaders.
+    Is this a good tradeoff? I don't know.
+*/
 bind_buffer :: (buffer: Buffer, slot : u32 = 0, bind_to := Shader_Type.Unspecified) {
     stride : u32 = buffer.stride;
     offset : u32 = 0;
     if buffer.type == {
     case .Vertex;
-        ID3D11DeviceContext_IASetVertexBuffers(D3D11.device_context, slot, 1,
+        ID3D11DeviceContext_IASetVertexBuffers(D3D11.device_context, 0, 1,
         *buffer.buffer, *stride, *offset);
         Frame_Info.num_bound_vertices = buffer.count;
     case .Index;
@@ -178,7 +186,10 @@ bind_buffer :: (buffer: Buffer, slot : u32 = 0, bind_to := Shader_Type.Unspecifi
         ID3D11DeviceContext_IASetIndexBuffer(D3D11.device_context, buffer.buffer, format, offset);
         Frame_Info.num_bound_indices = buffer.count;
     case .Constant;
-        assert(bind_to != .Unspecified, "You have to specify a shader type to bind a constant buffer.");
+        if bind_to == .Unspecified {
+            log_error("Gaco: Unspecified shader type to bind a constant buffer.");
+            return;
+        }
         if bind_to & .Vertex
             ID3D11DeviceContext_VSSetConstantBuffers(D3D11.device_context, slot, 1, *buffer.buffer);
         if bind_to & .Fragment
@@ -186,7 +197,10 @@ bind_buffer :: (buffer: Buffer, slot : u32 = 0, bind_to := Shader_Type.Unspecifi
         if bind_to & .Compute
             ID3D11DeviceContext_CSSetConstantBuffers(D3D11.device_context, slot, 1, *buffer.buffer);
     case .Structured;
-        assert(bind_to != .Unspecified, "You have to specify a shader type to bind a structured buffer.");
+        if bind_to == .Unspecified {
+            log_error("Gaco: Unspecified shader type to bind a structured buffer.");
+            return;
+        }
         if bind_to & .Vertex
             ID3D11DeviceContext_VSSetShaderResources(D3D11.device_context, slot, 1, *buffer.srv);
         if bind_to & .Fragment
@@ -194,7 +208,10 @@ bind_buffer :: (buffer: Buffer, slot : u32 = 0, bind_to := Shader_Type.Unspecifi
         if bind_to & .Compute
             ID3D11DeviceContext_CSSetShaderResources(D3D11.device_context, slot, 1, *buffer.srv);
     case .RWStructured;
-        assert(bind_to == .Compute, "RWStructured buffers can only be bound to compute shaders.");
+        if bind_to != .Compute {
+            log_error("Gaco: RWStructured buffers can only be bound to compute shaders.");
+            return;
+        }
         ID3D11DeviceContext_CSSetUnorderedAccessViews(D3D11.device_context, slot, 1, *buffer.uav, null);
     }
 }
@@ -286,9 +303,16 @@ copy_buffer :: (from: *Buffer, to: *Buffer) {
 
 destroy_buffer :: (buffer: *Buffer) {
     IUnknown_Release(buffer.buffer);
+    buffer.buffer = null;
 
-    if      buffer.type == .Structured   IUnknown_Release(buffer.srv);
-    else if buffer.type == .RWStructured IUnknown_Release(buffer.uav);
+    if buffer.type == .Structured   {
+        IUnknown_Release(buffer.srv);
+        buffer.srv = null;
+    }
+    else if buffer.type == .RWStructured {
+        IUnknown_Release(buffer.uav);
+        buffer.uav = null;
+    }
 
     buffer.count, buffer.stride = 0;
     buffer.dynamic = false;
@@ -297,6 +321,7 @@ destroy_buffer :: (buffer: *Buffer) {
 destroy_texture :: (texture: *Texture) {
     IUnknown_Release(texture.texture);
     IUnknown_Release(texture.resource_view);
+    texture.texture, texture.resource_view = null;
     texture.width, texture.height = 0;
 }
 
@@ -565,20 +590,20 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
     reflector: *ID3D11ShaderReflection;
     hr := D3DReflect(bytecode.data, xx bytecode.count, IID_ID3D11ShaderReflection, cast(**void) *reflector);
     check_hr("D3DReflect", #code `return null);
-     shader_desc: D3D11_SHADER_DESC;
-   ID3D11ShaderReflection_GetDesc(reflector, *shader_desc);
+    shader_desc: D3D11_SHADER_DESC;
+    ID3D11ShaderReflection_GetDesc(reflector, *shader_desc);
 
-     input_layout: *ID3D11InputLayout;
-     input_layout_desc: [..]D3D11_INPUT_ELEMENT_DESC;
+    input_layout: *ID3D11InputLayout;
+    input_layout_desc: [..]D3D11_INPUT_ELEMENT_DESC;
 
     for 0..shader_desc.InputParameters-1 {
         param_desc: D3D11_SIGNATURE_PARAMETER_DESC;
         ID3D11ShaderReflection_GetInputParameterDesc(reflector, it, *param_desc);
         // fill out input element desc
-        element_desc: D3D11_INPUT_ELEMENT_DESC ;
+        element_desc: D3D11_INPUT_ELEMENT_DESC;
         element_desc.SemanticName = param_desc.SemanticName;
         element_desc.SemanticIndex = param_desc.SemanticIndex;
-        element_desc.InputSlot = 0;
+        element_desc.InputSlot = 0; // @Hardcoded: We cannot use other slots (1-15).
         element_desc.AlignedByteOffset = D3D11_APPEND_ALIGNED_ELEMENT;
         element_desc.InputSlotClass = .VERTEX_DATA;
         element_desc.InstanceDataStepRate = 0;
