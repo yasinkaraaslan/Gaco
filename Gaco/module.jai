@@ -141,9 +141,10 @@ load_shader_bytecode :: (shader_file: string, type: Shader_Type) -> Shader_Bytec
 
 create_texture_from_file :: (file_name: string) -> Texture {
     bytes, ok := read_entire_file(file_name);
+    defer free(bytes);
     if !ok return .{};
     width, height, channels: s32;
-    buffer := stbi_load_from_memory(bytes.data, cast(s32)bytes.count, *width, *height, *channels, 4);
+    buffer := stbi_load_from_memory(bytes.data, cast(s32)bytes.count, *width, *height, *channels, 0);
     return create_texture(buffer, cast(u32)width, cast(u32)height, cast(u32)channels);
 }
 

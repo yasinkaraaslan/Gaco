@@ -539,8 +539,15 @@ create_texture :: (data: *u8, width: u32, height: u32, channels: u32, read := fa
     if read  cpu_flags |= .READ;
     if write cpu_flags |= .WRITE;
 
-    // @Robustness: Support other formats.
-    if channels == 4 texture_format = .R8G8B8A8_UNORM;
+    // @Robustness: Support other formats (HDR etc.)
+
+    if channels == {
+    case 1; texture_format = .R8_UNORM; // Gray-scale
+    case 2; texture_format = .R8G8_UNORM; // Gray-scale + Alpha
+    case 3; #through; // @Incomplete: There is no R8G8B8_UNORM
+    case 4; texture_format = .R8G8B8A8_UNORM;
+    }
+    if channels == 4 ;
     else assert(false, "Only RGBA8 images are supported right now.");
 
     texture_desc := D3D11_TEXTURE2D_DESC.{
