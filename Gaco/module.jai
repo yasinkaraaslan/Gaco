@@ -58,7 +58,7 @@ Sampler_Edge_Handling :: enum {
 }
 
 Rect :: struct {
-    x, y, w, h : u32 = 0;
+    x, y, w, h : s32 = 0;
 }
 
 compile_shader :: (file_name: string, output_path: string, type: Shader_Type) -> bool {
@@ -106,6 +106,7 @@ create_buffer :: (data: *$T, type: Buffer_Type, dynamic := false) -> Buffer {
         data_pointer = data.data;
     }
     else {
+        // @Incomplete: Check if we are a struct and our only member is a u16 or u32 array.
         assert(type != .Index, "Index buffers can only be created with u16 or u32 arrays. Got: %\n", T);
 
         stride = cast(u32)size_of(type_of(data.*));

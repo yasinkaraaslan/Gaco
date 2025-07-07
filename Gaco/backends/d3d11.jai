@@ -92,6 +92,15 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
     ID3D11DeviceContext_OMSetDepthStencilState(D3D11.device_context, depth_stencil_state, 0xFF);
     IUnknown_Release(depth_stencil_state);
 
+    // Everything default except for scissor.
+    rasterizer_desc := D3D11_RASTERIZER_DESC.{
+        FillMode = .SOLID,
+        CullMode = .BACK,
+        DepthClipEnable = 1,
+        ScissorEnable = 1,
+    };
+    ID3D11Device_CreateRasterizerState(D3D11.device, *rasterizer_desc, *D3D11.scissor_state);
+
     set_primitive_type(.Triangle_List);
 }
 
@@ -155,6 +164,7 @@ create_buffer :: (data: *void, count: u32, stride: u32, type: Buffer_Type, dynam
             Buffer.NumElements = count
         };
         hr = ID3D11Device_CreateUnorderedAccessView(D3D11.device, buffer.buffer, *uav_desc, *buffer.uav);
+        check_hr("ID3D11Device.CreateUnorderedAccessView", #code `return .{});
     }
 
     return buffer;
@@ -238,10 +248,10 @@ update_texture :: (texture: *Texture, data: *void, rect : Rect) {
     rows := rect.w * texture.channels;
 
     box: D3D11_BOX;
-    box.top = rect.y;
-    box.left = rect.x;
-    box.bottom = rect.y + rect.h;
-    box.right = rect.x + rect.w;
+    box.top = xx rect.y;
+    box.left = xx rect.x;
+    box.bottom = xx (rect.y + rect.h);
+    box.right = xx (rect.x + rect.w);
     box.back = 1;
 
     ID3D11DeviceContext_UpdateSubresource(D3D11.device_context, texture.texture, 0, *box, data, rows, rows * rect.h);
@@ -434,6 +444,25 @@ set_primitive_type :: (primitive_type : Primitive_Type) {
     ID3D11DeviceContext_IASetPrimitiveTopology(D3D11.device_context, topology);
 }
 
+enable_scissor :: () {
+    ID3D11DeviceContext_RSSetState(D3D11.device_context, D3D11.scissor_state);
+}
+
+disable_scissor :: () {
+    ID3D11DeviceContext_RSSetState(D3D11.device_context, null); // Sets to default
+}
+
+set_scissor :: (rect: Rect) {
+    d3d11_rect := D3D11_RECT.{
+        left = rect.x,
+        top = rect.y,
+        right = rect.x + rect.w,
+        bottom = rect.y + rect.h
+    };
+
+    ID3D11DeviceContext_RSSetScissorRects(D3D11.device_context, 1, *d3d11_rect);
+}
+
 draw :: (indexed := false) {
     if indexed {
         ID3D11DeviceContext_DrawIndexed(D3D11.device_context, Frame_Info.num_bound_indices, 0, 0);
@@ -503,7 +532,6 @@ resize :: (width: int, height: int) {
 dispatch_compute :: (num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) {
     ID3D11DeviceContext_Dispatch(D3D11.device_context, num_groups_x, num_groups_y, num_groups_z);
 }
-
 
 create_texture :: (data: *u8, width: u32, height: u32, channels: u32, read := false, write := false) -> Texture {
     texture_format : DXGI_FORMAT;
@@ -708,6 +736,7 @@ D3D11 : struct {
     swap_chain: *IDXGISwapChain1;
     render_target_view: *ID3D11RenderTargetView;
     depth_stencil_view: *ID3D11DepthStencilView;
+    scissor_state: *ID3D11RasterizerState;
     msaa : u32;
 }
 #import "d3d11";
