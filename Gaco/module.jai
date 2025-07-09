@@ -22,7 +22,6 @@ Shader_Type :: enum_flags u8 #specified {
     Compute :: 0x4;
 };
 
-
 Shader_Bytecode :: struct {
     vs: string;
     fs: string;
@@ -33,7 +32,6 @@ Primitive_Type :: enum {
     Triangle_List;
     Triangle_Strip;
 }
-
 
 // We use HLSL naming here since we expect it to be used for all backends.
 Buffer_Type :: enum {
@@ -50,7 +48,7 @@ Sampler_Filtering :: enum {
     Nearest;
 }
 
-Sampler_Edge_Handling :: enum {
+Sampler_Edge_Handling :: enum #specified {
     Wrap :: 1;
     Mirror :: 2;
     Clamp :: 3;

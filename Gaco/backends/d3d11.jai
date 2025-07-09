@@ -175,9 +175,9 @@ create_buffer :: (data: *void, count: u32, stride: u32, type: Buffer_Type, dynam
 /*
     Note(Yasin): slot doesn't mean anything for vertex and index buffers.
     It looks like it can for vertex buffers but only if we could pass an
-    array of vertex buffers, and we don't allow it right now to keep the
+    array of them, and we don't allow it right now to keep the
     api simple. We also cannot get that information when generating the
-    input layout from D3DReflect, and we would like the user not to pass
+    input layout from D3DReflect, and would like the user not to pass
     input layouts when creating shaders.
     Is this a good tradeoff? I don't know.
 */
@@ -261,26 +261,28 @@ update_texture :: (texture: *Texture, data: *void) {
     ID3D11DeviceContext_UpdateSubresource(D3D11.device_context, texture.texture, 0, null, data, 0,0);
 }
 
-read_buffer :: (buffer: *Buffer) -> *void {
+// Allocates on temp
+read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer = null) -> *void {
     buffer_to_map : *Buffer = ---;
-    buffer_is_scary := buffer.type == .RWStructured || buffer.type == .Structured;
 
-    if buffer_is_scary {
-        buffer_to_map = * (create_buffer(null, buffer.count, buffer.stride, .Copy, false));
-        copy_buffer(buffer, buffer_to_map);
+    if copy_buffer_to_use {
+        assert(copy_buffer_to_use.type == .Copy);
+        buffer_to_map = copy_buffer_to_use;
     }
     else {
-        buffer_to_map = buffer;
+        buffer_to_map = * (create_buffer(null, buffer.count, buffer.stride, .Copy));
     }
 
+    copy_buffer(buffer, buffer_to_map);
+
     size := cast(int)(buffer.count * buffer.stride);
-    data := alloc(size); // It is the callee's responsibility to manage the memory.
+    data := alloc(size,, temp);
 
     mapped_data := map_buffer(buffer_to_map, true, false);
     memcpy(data, mapped_data, size);
     unmap_buffer(buffer_to_map);
-    if buffer_is_scary destroy_buffer(buffer_to_map);
 
+    if !copy_buffer_to_use destroy_buffer(buffer_to_map);
     return data;
 }
 
@@ -289,7 +291,7 @@ write_buffer :: (buffer: *Buffer, data: *void) {
     buffer_is_scary := buffer.type == .RWStructured || buffer.type == .Structured;
 
     if buffer_is_scary {
-        buffer_to_map = * (create_buffer(null, buffer.count, buffer.stride, .Copy, false));
+        buffer_to_map = * (create_buffer(null, buffer.count, buffer.stride, .Copy, true));
     }
     else {
         buffer_to_map = buffer;
@@ -592,6 +594,7 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
     case .Linear; d3d11_filter  = .MIN_MAG_MIP_LINEAR;
     case .Nearest; d3d11_filter = .MIN_MAG_MIP_POINT;
     }
+
     // Since all the enum values are equal to their D3D11 counterparts.
     address_mode := cast(D3D11_TEXTURE_ADDRESS_MODE)edge_handling;
 
@@ -695,7 +698,6 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
 check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
     if FAILED(`hr) {
         fail_message : string;
-
         // https://learn.microsoft.com/tr-tr/windows/win32/direct3d11/d3d11-graphics-reference-returnvalues
         if `hr == {
         case 0x887C0002; fail_message = "The file was not found.";
