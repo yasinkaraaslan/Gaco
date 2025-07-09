@@ -58,7 +58,7 @@ Sampler_Edge_Handling :: enum {
 }
 
 Rect :: struct {
-    x, y, w, h : s32 = 0;
+    x, y, w, h : u32 = 0;
 }
 
 compile_shader :: (file_name: string, output_path: string, type: Shader_Type) -> bool {

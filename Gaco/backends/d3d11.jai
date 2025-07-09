@@ -188,13 +188,13 @@ bind_buffer :: (buffer: Buffer, slot : u32 = 0, bind_to := Shader_Type.Unspecifi
     case .Vertex;
         ID3D11DeviceContext_IASetVertexBuffers(D3D11.device_context, 0, 1,
         *buffer.buffer, *stride, *offset);
-        Frame_Info.num_bound_vertices = buffer.count;
+        FrameInfo.num_bound_vertices = buffer.count;
     case .Index;
         format : DXGI_FORMAT;
         if      buffer.stride == 2 format = .R16_UINT;
         else if buffer.stride == 4 format = .R32_UINT;
         ID3D11DeviceContext_IASetIndexBuffer(D3D11.device_context, buffer.buffer, format, offset);
-        Frame_Info.num_bound_indices = buffer.count;
+        FrameInfo.num_bound_indices = buffer.count;
     case .Constant;
         if bind_to == .Unspecified {
             log_error("Gaco: Unspecified shader type to bind a constant buffer.");
@@ -245,13 +245,13 @@ update_buffer :: (buffer: *Buffer, data: *void) {
 }
 
 update_texture :: (texture: *Texture, data: *void, rect : Rect) {
-    rows := rect.w * texture.channels;
+    rows : u32 = rect.w * texture.channels;
 
     box: D3D11_BOX;
-    box.top = xx rect.y;
-    box.left = xx rect.x;
-    box.bottom = xx (rect.y + rect.h);
-    box.right = xx (rect.x + rect.w);
+    box.top = rect.y;
+    box.left = rect.x;
+    box.bottom = (rect.y + rect.h);
+    box.right = (rect.x + rect.w);
     box.back = 1;
 
     ID3D11DeviceContext_UpdateSubresource(D3D11.device_context, texture.texture, 0, *box, data, rows, rows * rect.h);
@@ -463,20 +463,27 @@ set_scissor :: (rect: Rect) {
     ID3D11DeviceContext_RSSetScissorRects(D3D11.device_context, 1, *d3d11_rect);
 }
 
-draw :: (indexed := false) {
+draw :: (indexed := false, first: u32 = 0) {
     if indexed {
-        ID3D11DeviceContext_DrawIndexed(D3D11.device_context, Frame_Info.num_bound_indices, 0, 0);
+        ID3D11DeviceContext_DrawIndexed(D3D11.device_context, FrameInfo.num_bound_indices, first, 0);
     }
     else {
-        ID3D11DeviceContext_Draw(D3D11.device_context, Frame_Info.num_bound_vertices, 0);
+        ID3D11DeviceContext_Draw(D3D11.device_context, FrameInfo.num_bound_vertices, first);
     }
 }
 
-draw_instanced :: (indexed := false) {
+
+draw_instanced :: (indexed := false, instance_count: u32, first: u32 = 0) {
+    if indexed {
+        ID3D11DeviceContext_DrawIndexedInstanced(D3D11.device_context, FrameInfo.num_bound_indices, instance_count, first, 0, 0);
+    }
+    else {
+        ID3D11DeviceContext_DrawInstanced(D3D11.device_context, FrameInfo.num_bound_vertices, instance_count, first, 0);
+    }
 }
 
 present :: (interval: u32 = 1) {
-    hr := IDXGISwapChain_Present(D3D11.swap_chain, interval, 0);//xx DXGI_SWAP_EFFECT.FLIP_DISCARD);
+    hr := IDXGISwapChain_Present(D3D11.swap_chain, interval, xx DXGI_SWAP_EFFECT.FLIP_DISCARD);
     check_hr("IDXGISwapChain_Present", #code {});
 }
 
@@ -534,21 +541,13 @@ dispatch_compute :: (num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) {
 }
 
 create_texture :: (data: *u8, width: u32, height: u32, channels: u32, read := false, write := false) -> Texture {
-    texture_format : DXGI_FORMAT;
     cpu_flags: D3D11_CPU_ACCESS_FLAG;
     if read  cpu_flags |= .READ;
     if write cpu_flags |= .WRITE;
 
     // @Robustness: Support other formats (HDR etc.)
-
-    if channels == {
-    case 1; texture_format = .R8_UNORM; // Gray-scale
-    case 2; texture_format = .R8G8_UNORM; // Gray-scale + Alpha
-    case 3; #through; // @Incomplete: There is no R8G8B8_UNORM
-    case 4; texture_format = .R8G8B8A8_UNORM;
-    }
-    if channels == 4 ;
-    else assert(false, "Only RGBA8 images are supported right now.");
+    formats := DXGI_FORMAT.[.R8_UNORM, .R8G8_UNORM, .UNKNOWN, .R8G8B8A8_UNORM];
+    texture_format := formats[channels-1];
 
     texture_desc := D3D11_TEXTURE2D_DESC.{
         Width = width,
@@ -562,17 +561,20 @@ create_texture :: (data: *u8, width: u32, height: u32, channels: u32, read := fa
         CPUAccessFlags = cpu_flags,
     };
 
-    init_data := D3D11_SUBRESOURCE_DATA.{
-        pSysMem = data,
-        SysMemPitch = width * channels,
-        SysMemSlicePitch = 0, // System-memory-slice pitch is only used for 3D texture data.
-    };
+
+    init_data : *D3D11_SUBRESOURCE_DATA = null;
+    if data {
+        init_data = * (D3D11_SUBRESOURCE_DATA.{
+            pSysMem = data,
+            SysMemPitch = width * channels,
+            SysMemSlicePitch = 0,
+        });
+    }
 
     texture := Texture.{width = width, height = height, channels = channels};
 
-    hr := ID3D11Device_CreateTexture2D(D3D11.device, *texture_desc, *init_data, *texture.texture );
+    hr := ID3D11Device_CreateTexture2D(D3D11.device, *texture_desc, init_data, *texture.texture );
     check_hr("ID3D11Device.CreateTexture2D", #code return .{});
-
     hr = ID3D11Device_CreateShaderResourceView(D3D11.device, texture.texture, null, *texture.resource_view);
     check_hr("ID3D11Device.CreateShaderResourceView", #code return .{});
 
@@ -732,7 +734,7 @@ get_last_error :: () -> string {
     return message;
 }
 
-Frame_Info : struct {
+FrameInfo : struct {
     num_bound_vertices: u32;
     num_bound_indices: u32;
 }
