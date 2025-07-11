@@ -78,14 +78,16 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
 
     D3D11.msaa = wanted_msaa;
 
+    // --- States ---
+
     // @Unused: stencil buffer
     depth_stencil_desc := D3D11_DEPTH_STENCIL_DESC.{
         DepthEnable = cast(BOOL) true,
         DepthWriteMask = .ALL,
-        DepthFunc = .LESS,
+        DepthFunc = .LESS_EQUAL,
     };
-    depth_stencil_state: *ID3D11DepthStencilState;
 
+    depth_stencil_state: *ID3D11DepthStencilState;
     hr = ID3D11Device_CreateDepthStencilState(D3D11.device, *depth_stencil_desc, *depth_stencil_state);
     check_hr("ID3D11Device.CreateDepthStencilState");
 
@@ -100,6 +102,20 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
         ScissorEnable = 1,
     };
     ID3D11Device_CreateRasterizerState(D3D11.device, *rasterizer_desc, *D3D11.scissor_state);
+
+    blend_alpha_desc : D3D11_BLEND_DESC;
+    blend_alpha_desc.RenderTarget[0] = .{
+        BlendEnable = 1,
+        SrcBlend = .SRC_ALPHA,
+        DestBlend = .INV_SRC_ALPHA,
+        BlendOp = .ADD,
+        SrcBlendAlpha = .ONE,
+        DestBlendAlpha = .ZERO,
+        BlendOpAlpha = .ADD,
+        RenderTargetWriteMask = xx D3D11_COLOR_WRITE_ENABLE.ALL,
+    };
+
+    ID3D11Device_CreateBlendState(D3D11.device, *blend_alpha_desc, *D3D11.blend_alpha_state);
 
     set_primitive_type(.Triangle_List);
 }
@@ -258,7 +274,10 @@ update_texture :: (texture: *Texture, data: *void, rect : Rect) {
 }
 
 update_texture :: (texture: *Texture, data: *void) {
-    ID3D11DeviceContext_UpdateSubresource(D3D11.device_context, texture.texture, 0, null, data, 0,0);
+    rect: Rect;
+    rect.w = texture.width;
+    rect.h = texture.height;
+    update_texture(texture, data,rect);
 }
 
 // Allocates on temp
@@ -465,6 +484,13 @@ set_scissor :: (rect: Rect) {
     ID3D11DeviceContext_RSSetScissorRects(D3D11.device_context, 1, *d3d11_rect);
 }
 
+set_blend :: (state: Blend_State) {
+    states := (*ID3D11BlendState).[null, D3D11.blend_alpha_state];
+    d3d11_blend_state: *ID3D11BlendState = ---;
+
+    ID3D11DeviceContext_OMSetBlendState(D3D11.device_context, states[state], null, SampleMask=0xFFFFFFFF);
+}
+
 draw :: (indexed := false, first: u32 = 0) {
     if indexed {
         ID3D11DeviceContext_DrawIndexed(D3D11.device_context, FrameInfo.num_bound_indices, first, 0);
@@ -630,6 +656,7 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
     reflector: *ID3D11ShaderReflection;
     hr := D3DReflect(bytecode.data, xx bytecode.count, IID_ID3D11ShaderReflection, cast(**void) *reflector);
     check_hr("D3DReflect", #code `return null);
+
     shader_desc: D3D11_SHADER_DESC;
     ID3D11ShaderReflection_GetDesc(reflector, *shader_desc);
 
@@ -639,7 +666,9 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
     for 0..shader_desc.InputParameters-1 {
         param_desc: D3D11_SIGNATURE_PARAMETER_DESC;
         ID3D11ShaderReflection_GetInputParameterDesc(reflector, it, *param_desc);
-        // fill out input element desc
+
+        // @Incomplete: Instance elements
+
         element_desc: D3D11_INPUT_ELEMENT_DESC;
         element_desc.SemanticName = param_desc.SemanticName;
         element_desc.SemanticIndex = param_desc.SemanticIndex;
@@ -747,7 +776,10 @@ D3D11 : struct {
     swap_chain: *IDXGISwapChain1;
     render_target_view: *ID3D11RenderTargetView;
     depth_stencil_view: *ID3D11DepthStencilView;
+
     scissor_state: *ID3D11RasterizerState;
+    blend_alpha_state: *ID3D11BlendState;
+
     msaa : u32;
 }
 #import "d3d11";

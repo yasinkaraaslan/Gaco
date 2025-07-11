@@ -4,10 +4,11 @@
         D3D11  :: 1;
         Metal  :: 2;
     };
+
     DEFAULT_BACKEND :: #run -> Backend_Type {
-        #if OS == .WINDOWS return .D3D11;
+        #if      OS == .WINDOWS                return .D3D11;
         else #if OS == .LINUX | OS == .ANDROID return .OpenGL;
-        else #if OS == .MACOS | OS == .IOS  return .Metal;
+        else #if OS == .MACOS | OS == .IOS     return .Metal;
     }
 
     //
@@ -15,7 +16,8 @@
     // D3D11 :: #import "d3d11"()(INCLUDE_DEBUG_BINDINGS=true);
     //
 }
-Shader_Type :: enum_flags u8 #specified {
+
+Shader_Type :: enum_flags #specified {
     Unspecified :: 0;
     Vertex :: 0x1;
     Fragment :: 0x2;
@@ -49,10 +51,16 @@ Sampler_Filtering :: enum {
 }
 
 Sampler_Edge_Handling :: enum #specified {
-    Wrap :: 1;
+    Wrap   :: 1;
     Mirror :: 2;
-    Clamp :: 3;
+    Clamp  :: 3;
     Border :: 4;
+}
+
+// Note: If you want to add a new state or change an existing one, remember to do it on set_blend as well.
+Blend_State :: enum #specified {
+    None  :: 0;
+    Alpha :: 1;
 }
 
 Rect :: struct {
@@ -140,6 +148,7 @@ load_shader_bytecode :: (shader_file: string, type: Shader_Type) -> Shader_Bytec
 create_texture_from_file :: (file_name: string) -> Texture {
     bytes, ok := read_entire_file(file_name);
     defer free(bytes);
+
     if !ok return .{};
     width, height, channels: s32;
     buffer := stbi_load_from_memory(bytes.data, cast(s32)bytes.count, *width, *height, *channels, 0);
