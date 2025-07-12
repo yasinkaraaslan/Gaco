@@ -45,6 +45,16 @@ Buffer_Type :: enum {
     Copy;
 }
 
+Buffer_Usage :: enum {
+    Default;
+    Dynamic;
+    Immutable;
+}
+Map_Flags :: enum_flags {
+    Read;
+    Write;
+}
+
 Sampler_Filtering :: enum {
     Linear;
     Nearest;
@@ -96,7 +106,7 @@ compile_shader :: (file_name: string, output_path: string, type: Shader_Type) ->
     return true;
 }
 
-create_buffer :: (data: *$T, type: Buffer_Type, dynamic := false) -> Buffer {
+create_buffer :: (data: *$T, type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer {
     data_pointer : *void = ---;
     DATA_INFO :: type_info(T);
     count, stride: u32;
@@ -119,7 +129,7 @@ create_buffer :: (data: *$T, type: Buffer_Type, dynamic := false) -> Buffer {
         count = 1;
         data_pointer = *data;
     }
-    return create_buffer(data_pointer, count, stride, type, dynamic);
+    return create_buffer(data_pointer, count, stride, type, usage);
 }
 
 load_shader_bytecode :: (shader_file: string, type: Shader_Type) -> Shader_Bytecode {

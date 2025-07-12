@@ -120,7 +120,7 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
     set_primitive_type(.Triangle_List);
 }
 
-create_buffer :: (data: *void, count: u32, stride: u32, type: Buffer_Type, dynamic := false) -> Buffer {
+create_buffer :: (data: *void, count: u32, stride: u32, type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer {
     buffer: Buffer;
     buffer.count = count;
     buffer.stride = stride;
@@ -130,11 +130,15 @@ create_buffer :: (data: *void, count: u32, stride: u32, type: Buffer_Type, dynam
         ByteWidth = buffer.count * buffer.stride
     };
 
-    if dynamic {
+    if usage == .Dynamic {
         bd.Usage = .DYNAMIC;
         bd.CPUAccessFlags = .WRITE;
         buffer.dynamic = true;
     }
+    else if usage == .Immutable {
+        bd.Usage = .IMMUTABLE;
+    }
+
     if type == {
     case .Vertex;
         bd.BindFlags = .VERTEX_BUFFER;
@@ -242,12 +246,13 @@ bind_buffer :: (buffer: Buffer, slot : u32 = 0, bind_to := Shader_Type.Unspecifi
     }
 }
 
-map_buffer :: (buffer: *Buffer, read: bool, write: bool) -> *void {
+map_buffer :: (buffer: *Buffer, flags: Map_Flags) -> *void {
         subresource : D3D11_MAPPED_SUBRESOURCE;
-        map_flags : D3D11_MAP;
-        if read map_flags |= .READ;
-        if write map_flags |=  ifx buffer.dynamic then .WRITE_DISCARD else .WRITE;
-        hr := ID3D11DeviceContext_Map(D3D11.device_context, buffer.buffer, 0, map_flags, 0, *subresource);
+        d3d11_flags : D3D11_MAP;
+        if flags & .Read  d3d11_flags |= .READ;
+        if flags & .Write d3d11_flags |= .WRITE_DISCARD;
+
+        hr := ID3D11DeviceContext_Map(D3D11.device_context, buffer.buffer, 0, d3d11_flags, 0, *subresource);
         check_hr("ID3D11DeviceContext.Map", #code return null);
         return subresource.pData;
 }
@@ -294,7 +299,7 @@ read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer = null) -> *void {
 
     copy_buffer(buffer, buffer_to_map);
 
-    size := cast(int)(buffer.count * buffer.stride);
+    size := cast(int)buffer.count * cast(int)buffer.stride;
     data := alloc(size,, temp);
 
     mapped_data := map_buffer(buffer_to_map, true, false);
@@ -310,7 +315,7 @@ write_buffer :: (buffer: *Buffer, data: *void) {
     buffer_is_scary := buffer.type == .RWStructured || buffer.type == .Structured;
 
     if buffer_is_scary {
-        buffer_to_map = * (create_buffer(null, buffer.count, buffer.stride, .Copy, true));
+        buffer_to_map = * (create_buffer(null, buffer.count, buffer.stride, .Copy, .Dynamic));
     }
     else {
         buffer_to_map = buffer;
@@ -318,7 +323,7 @@ write_buffer :: (buffer: *Buffer, data: *void) {
 
     size := cast(int)(buffer.count * buffer.stride);
 
-    mapped_data := map_buffer(buffer_to_map, false, true);
+    mapped_data := map_buffer(buffer_to_map, .Write);
     memcpy(mapped_data, data, size);
     unmap_buffer(buffer_to_map);
 
@@ -486,27 +491,25 @@ set_scissor :: (rect: Rect) {
 
 set_blend :: (state: Blend_State) {
     states := (*ID3D11BlendState).[null, D3D11.blend_alpha_state];
-    d3d11_blend_state: *ID3D11BlendState = ---;
-
     ID3D11DeviceContext_OMSetBlendState(D3D11.device_context, states[state], null, SampleMask=0xFFFFFFFF);
 }
 
-draw :: (indexed := false, first: u32 = 0) {
+draw :: (indexed := false, count: u32 = 0, first: u32 = 0) {
     if indexed {
-        ID3D11DeviceContext_DrawIndexed(D3D11.device_context, FrameInfo.num_bound_indices, first, 0);
+        ID3D11DeviceContext_DrawIndexed(D3D11.device_context, ifx count == 0 FrameInfo.num_bound_indices else count, first, 0);
     }
     else {
-        ID3D11DeviceContext_Draw(D3D11.device_context, FrameInfo.num_bound_vertices, first);
+        ID3D11DeviceContext_Draw(D3D11.device_context, ifx count == 0 FrameInfo.num_bound_vertices else count, first);
     }
 }
 
 
-draw_instanced :: (indexed := false, instance_count: u32, first: u32 = 0) {
+draw_instanced :: (indexed := false, instance_count: u32, count: u32 = 0, first: u32 = 0) {
     if indexed {
-        ID3D11DeviceContext_DrawIndexedInstanced(D3D11.device_context, FrameInfo.num_bound_indices, instance_count, first, 0, 0);
+        ID3D11DeviceContext_DrawIndexedInstanced(D3D11.device_context, ifx count == 0 FrameInfo.num_bound_indices else count, instance_count, first, 0, 0);
     }
     else {
-        ID3D11DeviceContext_DrawInstanced(D3D11.device_context, FrameInfo.num_bound_vertices, instance_count, first, 0);
+        ID3D11DeviceContext_DrawInstanced(D3D11.device_context, ifx count == 0 FrameInfo.num_bound_vertices else count, instance_count, first, 0);
     }
 }
 
@@ -516,9 +519,15 @@ present :: (interval: u32 = 1) {
 }
 
 resize :: (width: int, height: int) {
-    if D3D11.render_target_view && D3D11.depth_stencil_view {
+    if D3D11.render_target_view {
         ID3D11DeviceContext_OMSetRenderTargets(D3D11.device_context, 0, null, null);
         IUnknown_Release(D3D11.render_target_view);
+        D3D11.render_target_view = null;
+    }
+
+    if D3D11.depth_stencil_view {
+        IUnknown_Release(D3D11.depth_stencil_view);
+        D3D11.depth_stencil_view = null;
     }
 
     hr := IDXGISwapChain_ResizeBuffers(D3D11.swap_chain, 0, cast(u32)width, cast(u32)height, .UNKNOWN, 0);
@@ -573,7 +582,7 @@ create_texture :: (data: *u8, width: u32, height: u32, channels: u32, read := fa
     if read  cpu_flags |= .READ;
     if write cpu_flags |= .WRITE;
 
-    // @Robustness: Support other formats (HDR etc.)
+    // @Incomplete: Support other formats (HDR etc.)
     formats := DXGI_FORMAT.[.R8_UNORM, .R8G8_UNORM, .UNKNOWN, .R8G8B8A8_UNORM];
     texture_format := formats[channels-1];
 
@@ -617,7 +626,7 @@ bind_texture :: (texture: Texture, slot: u32) {
 create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Wrap) -> Sampler {
     d3d11_filter: D3D11_FILTER;
     if filtering == {
-    case .Linear; d3d11_filter  = .MIN_MAG_MIP_LINEAR;
+    case .Linear;  d3d11_filter = .MIN_MAG_MIP_LINEAR;
     case .Nearest; d3d11_filter = .MIN_MAG_MIP_POINT;
     }
 
