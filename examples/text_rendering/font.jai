@@ -107,11 +107,10 @@ prepare_quads_for_text :: (using font: *Font, text: string, position: Vector2) -
     x := 0.0;
     y := 0.0;
 
-    resolution := Vector2.{xx WindowWidth, xx WindowHeight};
     vertices : [..]Text_Vertex_Data;
     vertices.allocator = temp;
 
-    num_chars: u32; // Space, new line etc.
+    num_chars: u32; // Excluding space, new line etc.
     for char: text {
         if char >= 32 && char <= 126 {
             glyph := glyphs[char];
@@ -123,7 +122,6 @@ prepare_quads_for_text :: (using font: *Font, text: string, position: Vector2) -
             if char == " " {
                 continue;
             }
-
 
             if has_kerning && it_index != 0 {
                 kerning: FT_Vector;

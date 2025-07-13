@@ -191,22 +191,13 @@ create_buffer :: (data: *void, count: u32, stride: u32, type: Buffer_Type, usage
 }
 
 // Note(Yasin): bind_to is only used with Constant and RW/Structured buffers.
-
-/*
-    Note(Yasin): slot doesn't mean anything for vertex and index buffers.
-    It looks like it can for vertex buffers but only if we could pass an
-    array of them, and we don't allow it right now to keep the
-    api simple. We also cannot get that information when generating the
-    input layout from D3DReflect, and would like the user not to pass
-    input layouts when creating shaders.
-    Is this a good tradeoff? I don't know.
-*/
+// Note(Yasin): slot doesn't mean anything for index buffers.
 bind_buffer :: (buffer: Buffer, slot : u32 = 0, bind_to := Shader_Type.Unspecified) {
     stride : u32 = buffer.stride;
     offset : u32 = 0;
     if buffer.type == {
     case .Vertex;
-        ID3D11DeviceContext_IASetVertexBuffers(D3D11.device_context, 0, 1,
+        ID3D11DeviceContext_IASetVertexBuffers(D3D11.device_context, slot, 1,
         *buffer.buffer, *stride, *offset);
         FrameInfo.num_bound_vertices = buffer.count;
     case .Index;
@@ -504,12 +495,12 @@ draw :: (indexed := false, count: u32 = 0, first: u32 = 0) {
 }
 
 
-draw_instanced :: (indexed := false, instance_count: u32, count: u32 = 0, first: u32 = 0) {
+draw_instanced :: (indexed := false, instance_count: u32, count: u32 = 0, first: u32 = 0, first_instance: u32 = 0) {
     if indexed {
-        ID3D11DeviceContext_DrawIndexedInstanced(D3D11.device_context, ifx count == 0 FrameInfo.num_bound_indices else count, instance_count, first, 0, 0);
+        ID3D11DeviceContext_DrawIndexedInstanced(D3D11.device_context, ifx count == 0 FrameInfo.num_bound_indices else count, instance_count, first, 0, first_instance);
     }
     else {
-        ID3D11DeviceContext_DrawInstanced(D3D11.device_context, ifx count == 0 FrameInfo.num_bound_vertices else count, instance_count, first, 0);
+        ID3D11DeviceContext_DrawInstanced(D3D11.device_context, ifx count == 0 FrameInfo.num_bound_vertices else count, instance_count, first, first_instance);
     }
 }
 
@@ -658,6 +649,7 @@ CS_EXTENSION :: ".dxcs";
 
 #scope_file
 get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
+    // @Cleanup
     // @Hardcoded: has to be this way until jai includes IID_ID3D11ShaderReflection in its d3d_compiler module
     IID_ID3D11ShaderReflection :: IID.{Data1=0x8D536CA1, Data2=0x0CCA, Data3=0x4956,
     Data4=.[0xA8, 0x37, 0x78, 0x69, 0x63, 0x75, 0x55, 0x84]};
@@ -673,23 +665,35 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
     input_layout_desc: [..]D3D11_INPUT_ELEMENT_DESC;
 
     for 0..shader_desc.InputParameters-1 {
-        param_desc: D3D11_SIGNATURE_PARAMETER_DESC;
-        ID3D11ShaderReflection_GetInputParameterDesc(reflector, it, *param_desc);
-
-        // @Incomplete: Instance elements
+        using param_desc: D3D11_SIGNATURE_PARAMETER_DESC;
+        hr := ID3D11ShaderReflection_GetInputParameterDesc(reflector, it, *param_desc);
+        check_hr("ID3D11ShaderReflection.GetInputParameterDesc", #code `return null);
 
         element_desc: D3D11_INPUT_ELEMENT_DESC;
-        element_desc.SemanticName = param_desc.SemanticName;
-        element_desc.SemanticIndex = param_desc.SemanticIndex;
-        element_desc.InputSlot = 0; // @Hardcoded: We cannot use other slots (1-15).
+        element_desc.SemanticName = SemanticName;
+        element_desc.SemanticIndex = SemanticIndex;
         element_desc.AlignedByteOffset = D3D11_APPEND_ALIGNED_ELEMENT;
-        element_desc.InputSlotClass = .VERTEX_DATA;
-        element_desc.InstanceDataStepRate = 0;
+
+        // InputSlot is @Hardcoded right now. There may be reasons to want to change this
+        // but there is no way to get it from the shader code and I don't want to force people
+        // to pass an input layout.
+
+        // Instance data is passed to the slot 1 (in bind_buffer) and vertex data to the slot 0.
+        if starts_with(to_string(SemanticName), "INST_") {
+            element_desc.InputSlot = 1;
+            element_desc.InputSlotClass = .INSTANCE_DATA;
+            element_desc.InstanceDataStepRate = 1; // How often is something other than 1 is used in instancing?
+        }
+        else {
+            element_desc.InputSlot = 0;
+            element_desc.InputSlotClass = .VERTEX_DATA;
+            element_desc.InstanceDataStepRate = 0;
+        }
 
         // determine DXGI format
-        if param_desc.Mask == 1
+        if Mask == 1
         {
-            if param_desc.ComponentType == {
+            if ComponentType == {
             case .REGISTER_COMPONENT_UINT32;
                 element_desc.Format = .R32_UINT;
             case .REGISTER_COMPONENT_SINT32;
@@ -698,25 +702,25 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
                 element_desc.Format = .R32_FLOAT;
             }
         }
-        else if param_desc.Mask <= 3
+        else if Mask <= 3
         {
-            if param_desc.ComponentType == {
+            if ComponentType == {
                 case .REGISTER_COMPONENT_UINT32; element_desc.Format = .R32G32_UINT;
                 case .REGISTER_COMPONENT_SINT32; element_desc.Format = .R32G32_SINT;
                 case .REGISTER_COMPONENT_FLOAT32; element_desc.Format = .R32G32_FLOAT;
             }
         }
-        else if param_desc.Mask <= 7
+        else if Mask <= 7
         {
-            if param_desc.ComponentType == {
+            if ComponentType == {
                 case .REGISTER_COMPONENT_UINT32; element_desc.Format = .R32G32B32_UINT;
                 case .REGISTER_COMPONENT_SINT32; element_desc.Format = .R32G32B32_SINT;
                 case .REGISTER_COMPONENT_FLOAT32; element_desc.Format = .R32G32B32_FLOAT;
             }
         }
-        else if param_desc.Mask <= 15
+        else if Mask <= 15
         {
-            if param_desc.ComponentType ==  {
+            if ComponentType ==  {
                 case .REGISTER_COMPONENT_UINT32; element_desc.Format = .R32G32B32A32_UINT;
                 case .REGISTER_COMPONENT_SINT32; element_desc.Format = .R32G32B32A32_SINT;
                 case .REGISTER_COMPONENT_FLOAT32; element_desc.Format = .R32G32B32A32_FLOAT;
