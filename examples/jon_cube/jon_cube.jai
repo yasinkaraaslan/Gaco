@@ -68,9 +68,9 @@ main :: () {
       .{.{-0.5, -0.5, -0.5}, .{0.0, 1.0}},
    ];
 
-	Index_Input :: struct {
-		indices: []u16;
-	}
+    Index_Input :: struct {
+        indices: []u16;
+    }
 
    index_input: Index_Input;
    indices := u16.[
@@ -84,7 +84,7 @@ main :: () {
 
    vertex_buffer := Gaco.create_buffer(*vertex_inputs, .Vertex);
    index_buffer := Gaco.create_buffer(*indices, .Index);
-   transform_cb := Gaco.create_buffer(null, size_of(Transform_Buffer), 1, .Constant, true);
+   transform_cb := Gaco.create_buffer(null, size_of(Transform_Buffer), 1, .Constant, .Dynamic);
 
    texture := Gaco.create_texture_from_file("jon.png");
 
@@ -96,8 +96,8 @@ main :: () {
       reset_temporary_storage();
 
       current := cast(float32)seconds_since_init();
-		Frame_Info.delta = current - Frame_Info.last;
-		Frame_Info.last = current;
+        Frame_Info.delta = current - Frame_Info.last;
+        Frame_Info.last = current;
 
       update_window_events();
       for get_window_resizes() {

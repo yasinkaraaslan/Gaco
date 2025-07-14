@@ -10,7 +10,7 @@ update_camera :: () {
     success, view := inverse(transform);
     proj_view = proj * view;
     if !ControllingCamera  return;
-	movement : Vector3;
+    movement : Vector3;
     SPEED :: 5;
     speed_multiplier := 1.0;
 
@@ -25,8 +25,8 @@ update_camera :: () {
 
     translate(*transform, movement * SPEED * speed_multiplier * FrameInfo.delta);
 
-	delta_x := -cast(float)mouse_delta_x / cast(float)WindowWidth;
-	delta_y := -cast(float)mouse_delta_y / cast(float)WindowHeight;
+    delta_x := -cast(float)mouse_delta_x / cast(float)WindowWidth;
+    delta_y := -cast(float)mouse_delta_y / cast(float)WindowHeight;
     if delta_x != 0 || delta_y != 0 {
         rotation += .{delta_y, delta_x};
 

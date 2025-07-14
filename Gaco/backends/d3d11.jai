@@ -10,16 +10,14 @@ Shader :: struct {
     }
 }
 
-Buffer :: struct {
+Buffer :: struct (type: Buffer_Type) {
     buffer: *ID3D11Buffer;
-    union {
-        srv: *ID3D11ShaderResourceView; // For structured buffers.
-        uav: *ID3D11UnorderedAccessView; // For rw structured buffers.
-    }
     count: u32;
     stride: u32;
-    type: Buffer_Type;
-    dynamic: bool;
+    #if type == {
+    case .Structured;   srv: *ID3D11ShaderResourceView;
+    case .RWStructured; uav: *ID3D11UnorderedAccessView;
+    }
 };
 
 Sampler :: struct {
@@ -120,11 +118,22 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
     set_primitive_type(.Triangle_List);
 }
 
-create_buffer :: (data: *void, count: u32, stride: u32, type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer {
-    buffer: Buffer;
+deinit :: () {
+    IUnknown_Release(D3D11.device);
+    IUnknown_Release(D3D11.device_context);
+    IUnknown_Release(D3D11.swap_chain);
+    IUnknown_Release(D3D11.render_target_view);
+    IUnknown_Release(D3D11.depth_stencil_view);
+    IUnknown_Release(D3D11.scissor_state);
+    IUnknown_Release(D3D11.blend_alpha_state);
+
+    log_messages_and_get_last();
+}
+
+create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {
+    buffer: Buffer(type);
     buffer.count = count;
     buffer.stride = stride;
-    buffer.type = type;
 
     bd := D3D11_BUFFER_DESC.{
         ByteWidth = buffer.count * buffer.stride
@@ -133,13 +142,12 @@ create_buffer :: (data: *void, count: u32, stride: u32, type: Buffer_Type, usage
     if usage == .Dynamic {
         bd.Usage = .DYNAMIC;
         bd.CPUAccessFlags = .WRITE;
-        buffer.dynamic = true;
     }
     else if usage == .Immutable {
         bd.Usage = .IMMUTABLE;
     }
 
-    if type == {
+    #if type == {
     case .Vertex;
         bd.BindFlags = .VERTEX_BUFFER;
     case .Index;
@@ -169,7 +177,7 @@ create_buffer :: (data: *void, count: u32, stride: u32, type: Buffer_Type, usage
     hr := ID3D11Device_CreateBuffer(D3D11.device, *bd, init_data, *buffer.buffer);
     check_hr("ID3D11Device.CreateBuffer", #code `return .{});
 
-    if type == .Structured {
+    #if type == .Structured {
         srv_desc := D3D11_SHADER_RESOURCE_VIEW_DESC.{
             ViewDimension = .BUFFER,
             Buffer.NumElements = count
@@ -178,7 +186,7 @@ create_buffer :: (data: *void, count: u32, stride: u32, type: Buffer_Type, usage
         check_hr("ID3D11Device.CreateShaderResourceView", #code `return .{});
     }
 
-    else if type == .RWStructured {
+    else #if type == .RWStructured {
         uav_desc := D3D11_UNORDERED_ACCESS_VIEW_DESC.{
             ViewDimension = .BUFFER,
             Buffer.NumElements = count
@@ -190,51 +198,49 @@ create_buffer :: (data: *void, count: u32, stride: u32, type: Buffer_Type, usage
     return buffer;
 }
 
-// Note(Yasin): bind_to is only used with Constant and RW/Structured buffers.
-// Note(Yasin): slot doesn't mean anything for index buffers.
-bind_buffer :: (buffer: Buffer, slot : u32 = 0, bind_to := Shader_Type.Unspecified) {
-    stride : u32 = buffer.stride;
+bind_buffer :: (buffer: Buffer(.Vertex), slot : u32 = 0) {
     offset : u32 = 0;
-    if buffer.type == {
-    case .Vertex;
-        ID3D11DeviceContext_IASetVertexBuffers(D3D11.device_context, slot, 1,
-        *buffer.buffer, *stride, *offset);
-        FrameInfo.num_bound_vertices = buffer.count;
-    case .Index;
-        format : DXGI_FORMAT;
-        if      buffer.stride == 2 format = .R16_UINT;
-        else if buffer.stride == 4 format = .R32_UINT;
-        ID3D11DeviceContext_IASetIndexBuffer(D3D11.device_context, buffer.buffer, format, offset);
-        FrameInfo.num_bound_indices = buffer.count;
-    case .Constant;
-        if bind_to == .Unspecified {
-            log_error("Gaco: Unspecified shader type to bind a constant buffer.");
-            return;
-        }
-        if bind_to & .Vertex
-            ID3D11DeviceContext_VSSetConstantBuffers(D3D11.device_context, slot, 1, *buffer.buffer);
-        if bind_to & .Fragment
-            ID3D11DeviceContext_PSSetConstantBuffers(D3D11.device_context, slot, 1, *buffer.buffer);
-        if bind_to & .Compute
-            ID3D11DeviceContext_CSSetConstantBuffers(D3D11.device_context, slot, 1, *buffer.buffer);
-    case .Structured;
-        if bind_to == .Unspecified {
-            log_error("Gaco: Unspecified shader type to bind a structured buffer.");
-            return;
-        }
-        if bind_to & .Vertex
-            ID3D11DeviceContext_VSSetShaderResources(D3D11.device_context, slot, 1, *buffer.srv);
-        if bind_to & .Fragment
-            ID3D11DeviceContext_PSSetShaderResources(D3D11.device_context, slot, 1, *buffer.srv);
-        if bind_to & .Compute
-            ID3D11DeviceContext_CSSetShaderResources(D3D11.device_context, slot, 1, *buffer.srv);
-    case .RWStructured;
-        if bind_to != .Compute {
-            log_error("Gaco: RWStructured buffers can only be bound to compute shaders.");
-            return;
-        }
-        ID3D11DeviceContext_CSSetUnorderedAccessViews(D3D11.device_context, slot, 1, *buffer.uav, null);
+    ID3D11DeviceContext_IASetVertexBuffers(D3D11.device_context, slot, 1, *buffer.buffer, *buffer.stride, *offset);
+    FrameInfo.num_bound_vertices = buffer.count;
+}
+
+bind_buffer :: (buffer: Buffer(.Index)) {
+    format : DXGI_FORMAT;
+    if      buffer.stride == 2 format = .R16_UINT;
+    else if buffer.stride == 4 format = .R32_UINT;
+    ID3D11DeviceContext_IASetIndexBuffer(D3D11.device_context, buffer.buffer, format, 0);
+    FrameInfo.num_bound_indices = buffer.count;
+}
+
+bind_buffer :: (buffer: Buffer(.Constant), bind_to: Shader_Type, slot : u32 = 0) {
+    if bind_to == .Unspecified {
+        log_error("Gaco: Unspecified shader type to bind a constant buffer.");
+        return;
     }
+    if bind_to & .Vertex
+        ID3D11DeviceContext_VSSetConstantBuffers(D3D11.device_context, slot, 1, *buffer.buffer);
+    if bind_to & .Fragment
+        ID3D11DeviceContext_PSSetConstantBuffers(D3D11.device_context, slot, 1, *buffer.buffer);
+    if bind_to & .Compute
+        ID3D11DeviceContext_CSSetConstantBuffers(D3D11.device_context, slot, 1, *buffer.buffer);
+}
+
+bind_buffer :: (buffer: Buffer(.Structured), bind_to: Shader_Type, slot : u32 = 0) {
+    if bind_to == .Unspecified {
+        log_error("Gaco: Unspecified shader type to bind a structured buffer.");
+        return;
+    }
+    if bind_to & .Vertex
+        ID3D11DeviceContext_VSSetShaderResources(D3D11.device_context, slot, 1, *buffer.srv);
+    if bind_to & .Fragment
+        ID3D11DeviceContext_PSSetShaderResources(D3D11.device_context, slot, 1, *buffer.srv);
+    if bind_to & .Compute
+        ID3D11DeviceContext_CSSetShaderResources(D3D11.device_context, slot, 1, *buffer.srv);
+}
+
+// TODO(Yasin): OMSetRenderTargetsAndUnorderedAccessViews
+bind_buffer :: (buffer: Buffer(.RWStructured), slot : u32 = 0) {
+    ID3D11DeviceContext_CSSetUnorderedAccessViews(D3D11.device_context, slot, 1, *buffer.uav, null);
 }
 
 map_buffer :: (buffer: *Buffer, flags: Map_Flags) -> *void {
@@ -277,11 +283,10 @@ update_texture :: (texture: *Texture, data: *void) {
 }
 
 // Allocates on temp
-read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer = null) -> *void {
-    buffer_to_map : *Buffer = ---;
+read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *void {
+    buffer_to_map : *Buffer(.Copy) = ---;
 
     if copy_buffer_to_use {
-        assert(copy_buffer_to_use.type == .Copy);
         buffer_to_map = copy_buffer_to_use;
     }
     else {
@@ -293,35 +298,27 @@ read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer = null) -> *void {
     size := cast(int)buffer.count * cast(int)buffer.stride;
     data := alloc(size,, temp);
 
-    mapped_data := map_buffer(buffer_to_map, true, false);
+    mapped_data := map_buffer(buffer_to_map, .Read);
     memcpy(data, mapped_data, size);
     unmap_buffer(buffer_to_map);
-
     if !copy_buffer_to_use destroy_buffer(buffer_to_map);
     return data;
 }
 
+write_buffer :: (buffer: *$T/Buffer, data: *void) #modify {
+    return T == Buffer(.Structured) || T == Buffer(.RWStructured);
+} {
+    copy_buffer_to_map := * (create_buffer(null, buffer.count, buffer.stride, .Copy, .Dynamic));
+    write_buffer(copy_buffer_to_map, data);
+    copy_buffer(copy_buffer_to_map, buffer);
+    destroy_buffer(copy_buffer_to_map);
+}
+
 write_buffer :: (buffer: *Buffer, data: *void) {
-    buffer_to_map : *Buffer = ---;
-    buffer_is_scary := buffer.type == .RWStructured || buffer.type == .Structured;
-
-    if buffer_is_scary {
-        buffer_to_map = * (create_buffer(null, buffer.count, buffer.stride, .Copy, .Dynamic));
-    }
-    else {
-        buffer_to_map = buffer;
-    }
-
-    size := cast(int)(buffer.count * buffer.stride);
-
-    mapped_data := map_buffer(buffer_to_map, .Write);
+    size := cast(int)buffer.count * cast(int)buffer.stride;
+    mapped_data := map_buffer(buffer, .Write);
     memcpy(mapped_data, data, size);
-    unmap_buffer(buffer_to_map);
-
-    if buffer_is_scary {
-        copy_buffer(buffer_to_map, buffer);
-        destroy_buffer(buffer_to_map);
-    }
+    unmap_buffer(buffer);
 }
 
 copy_buffer :: (from: *Buffer, to: *Buffer) {
@@ -332,17 +329,16 @@ destroy_buffer :: (buffer: *Buffer) {
     IUnknown_Release(buffer.buffer);
     buffer.buffer = null;
 
-    if buffer.type == .Structured   {
+    #if buffer.type == .Structured   {
         IUnknown_Release(buffer.srv);
         buffer.srv = null;
     }
-    else if buffer.type == .RWStructured {
+    else #if buffer.type == .RWStructured {
         IUnknown_Release(buffer.uav);
         buffer.uav = null;
     }
 
     buffer.count, buffer.stride = 0;
-    buffer.dynamic = false;
 }
 
 destroy_texture :: (texture: *Texture) {
@@ -831,22 +827,31 @@ Crash_Handler :: #import "Runtime_Support_Crash_Handler";
 
         message_count := ID3D11InfoQueue_GetNumStoredMessages(info);
         if message_count == 0 return .{}, false;
-
+        logged_ids : [..]D3D11_MESSAGE_ID;
         message_str: string;
         sb: String_Builder;
-        for 0..message_count-1 {
+        error := false;
+        for i: 0..message_count-1 {
             message_size : u64;
-            ID3D11InfoQueue_GetMessageA(info, it, null, *message_size);
+            ID3D11InfoQueue_GetMessageA(info, i, null, *message_size);
 
             message := cast(*D3D11_MESSAGE) alloc(xx message_size);
-            ID3D11InfoQueue_GetMessageA(info, it, message, *message_size);
+            ID3D11InfoQueue_GetMessageA(info, i, message, *message_size);
 
+            for logged_ids {
+                if it == message.ID  continue i;
+            }
+            array_add(*logged_ids, message.ID);
+
+            if message.Severity == .ERROR || message.Severity == .CORRUPTION {
+                error = true;
+            }
             message_str = string.{data=message.pDescription, count=xx message.DescriptionByteLength-1};
-            log_error("D3D11 Error: %\n", message_str);
+            log_error("%: %\n", message.ID, message_str);
             free(message);
         }
         ID3D11InfoQueue_ClearStoredMessages(info);
         IUnknown_Release(info);
-        return message_str, true;
+        return message_str, error;
     }
 }

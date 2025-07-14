@@ -98,8 +98,8 @@ load_font :: (filename: string, size: u32) -> Font {
         x += bitmap.width;
     }
 
-    constant_data : Vector4;
-    font.constant_buffer = Gaco.create_buffer(*constant_data, .Constant);
+    proj : Vector4;
+    font.constant_buffer = Gaco.create_buffer(*proj, .Constant);
     return font;
 }
 
@@ -191,7 +191,7 @@ Font :: struct {
     face: FT_Face;
     size: u32;
     ascender: float;
-    constant_buffer: Gaco.Buffer;
+    constant_buffer: Gaco.Buffer(.Constant);
     glyphs: [128]Glyph_Info;
 
     texture: Gaco.Texture;
@@ -211,7 +211,9 @@ Text_Vertex_Data :: struct {
     uv: Vector2;
 }
 
-VertexBuffer, IndexBuffer, ConstantBuffer: Gaco.Buffer;
+VertexBuffer: Gaco.Buffer(.Vertex);
+IndexBuffer: Gaco.Buffer(.Index);
+ConstantBuffer: Gaco.Buffer(.Constant);
 FtLibrary: FT_Library;
 Shader: Gaco.Shader;
 

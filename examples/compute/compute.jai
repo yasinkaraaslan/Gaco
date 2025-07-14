@@ -20,7 +20,7 @@ main :: () {
    out_buffer := Gaco.create_buffer(null, SIZE, size_of(float), .RWStructured);
 
    Gaco.bind_buffer(compute_input_buffer, bind_to=.Compute);
-   Gaco.bind_buffer(out_buffer, bind_to=.Compute);
+   Gaco.bind_buffer(out_buffer);
 
    Gaco.dispatch_compute(69, 105, 1);
 
@@ -29,9 +29,9 @@ main :: () {
    output.data = Gaco.read_buffer(*out_buffer);
 
    print("--------- INIT DATA -------\n");
-   print("%\n", init_data);
+   print("%\n\n", init_data);
    print("--------- OUT DATA  -------\n");
-   print("%\n", output);
+   print("%\n\n", output);
 }
 
 #run {
