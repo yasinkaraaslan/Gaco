@@ -138,12 +138,13 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
     bd := D3D11_BUFFER_DESC.{
         ByteWidth = buffer.count * buffer.stride
     };
-
-    if usage == .Dynamic {
+    if usage == {
+    case .Default;
+        bd.Usage = .DEFAULT;
+    case .Dynamic;
         bd.Usage = .DYNAMIC;
         bd.CPUAccessFlags = .WRITE;
-    }
-    else if usage == .Immutable {
+    case .Immutable;
         bd.Usage = .IMMUTABLE;
     }
 
@@ -247,7 +248,10 @@ map_buffer :: (buffer: *Buffer, flags: Map_Flags) -> *void {
         subresource : D3D11_MAPPED_SUBRESOURCE;
         d3d11_flags : D3D11_MAP;
         if flags & .Read  d3d11_flags |= .READ;
-        if flags & .Write d3d11_flags |= .WRITE_DISCARD;
+        if flags & .Write {
+            #if buffer.type == .Copy d3d11_flags |= .WRITE;
+            else                     d3d11_flags |= .WRITE_DISCARD;
+        }
 
         hr := ID3D11DeviceContext_Map(D3D11.device_context, buffer.buffer, 0, d3d11_flags, 0, *subresource);
         check_hr("ID3D11DeviceContext.Map", #code return null);
@@ -305,20 +309,27 @@ read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *
     return data;
 }
 
-write_buffer :: (buffer: *$T/Buffer, data: *void) #modify {
-    return T == Buffer(.Structured) || T == Buffer(.RWStructured);
-} {
-    copy_buffer_to_map := * (create_buffer(null, buffer.count, buffer.stride, .Copy, .Dynamic));
-    write_buffer(copy_buffer_to_map, data);
-    copy_buffer(copy_buffer_to_map, buffer);
-    destroy_buffer(copy_buffer_to_map);
+write_buffer :: (buffer: *Buffer, data: *void, size: int) {
+    mapped_data := map_buffer(buffer, .Write);
+    memcpy(mapped_data, data, size);
+    unmap_buffer(buffer);
+}
+
+write_buffer :: (buffer: *Buffer, data: []$T) {
+    write_buffer(buffer, data.data, data.count);
 }
 
 write_buffer :: (buffer: *Buffer, data: *void) {
     size := cast(int)buffer.count * cast(int)buffer.stride;
-    mapped_data := map_buffer(buffer, .Write);
-    memcpy(mapped_data, data, size);
-    unmap_buffer(buffer);
+    #if buffer.type == .Structured || buffer.type == .RWStructured {
+        buffer_to_map := * (create_buffer(null, buffer.count, buffer.stride, .Copy, .Dynamic));
+        write_buffer(buffer_to_map, data, size);
+        copy_buffer(buffer_to_map, buffer);
+        destroy_buffer(buffer_to_map);
+    }
+    else {
+        write_buffer(buffer, data, size);
+    }
 }
 
 copy_buffer :: (from: *Buffer, to: *Buffer) {

@@ -1,41 +1,39 @@
 SIZE :: 69 * 105;
 
 main :: () {
-   random_seed(420);
+    random_seed(420);
 
-   Gaco.init(null); // We can pass null here if we do not plan to render anything.
+    Gaco.init(null); // We can pass null here if we do not plan to render anything.
 
-   shader := Gaco.load_shader("compute", .Compute);
-   Gaco.set_shader(shader);
+    shader := Gaco.load_shader("compute", .Compute);
+    Gaco.set_shader(shader);
 
-   init_data : [] float;
-   init_data.count = SIZE;
-   init_data.data = alloc(SIZE * size_of(float));
+    init_data := NewArray(SIZE, float);
 
-   for * init_data {
-      it.* = random_get_zero_to_one();
-   }
+    for * init_data {
+        it.* = random_get_zero_to_one();
+    }
 
-   compute_input_buffer := Gaco.create_buffer(*init_data, .Structured);
-   out_buffer := Gaco.create_buffer(null, SIZE, size_of(float), .RWStructured);
+    compute_input_buffer := Gaco.create_buffer(*init_data, .Structured);
 
-   Gaco.bind_buffer(compute_input_buffer, bind_to=.Compute);
-   Gaco.bind_buffer(out_buffer);
+    out_buffer := Gaco.create_buffer(null, SIZE, size_of(float), .RWStructured);
+    Gaco.bind_buffer(compute_input_buffer, bind_to=.Compute);
+    Gaco.bind_buffer(out_buffer);
 
-   Gaco.dispatch_compute(69, 105, 1);
+    Gaco.dispatch_compute(69, 105, 1);
 
-   output : []float;
-   output.count = SIZE;
-   output.data = Gaco.read_buffer(*out_buffer);
+    output : []float;
+    output.count = SIZE;
+    output.data = Gaco.read_buffer(*out_buffer);
 
-   print("--------- INIT DATA -------\n");
-   print("%\n\n", init_data);
-   print("--------- OUT DATA  -------\n");
-   print("%\n\n", output);
+    print("--------- INIT DATA -------\n");
+    print("%\n\n", init_data);
+    print("--------- OUT DATA  -------\n");
+    print("%\n\n", output);
 }
 
 #run {
-   Gaco.compile_shader("compute.hlsl", "compute", .Compute);
+    Gaco.compile_shader("compute.hlsl", "compute", .Compute);
 }
 
 #import "Basic";
