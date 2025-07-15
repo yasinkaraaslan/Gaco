@@ -50,9 +50,16 @@ Buffer_Usage :: enum {
     Dynamic;
     Immutable;
 }
+
 Map_Flags :: enum_flags {
     Read;
     Write;
+}
+Texture_Flags :: enum_flags {
+    None :: 0;
+    Read :: 1;
+    Write;
+    SRGB;
 }
 
 Sampler_Filtering :: enum {
@@ -74,7 +81,7 @@ Blend_State :: enum #specified {
 }
 
 Rect :: struct {
-    x, y, w, h : u32 = 0;
+    x, y, w, h : s32 = 0;
 }
 
 compile_shader :: (file_name: string, output_path: string, type: Shader_Type) -> bool {
@@ -154,13 +161,17 @@ load_shader_bytecode :: (shader_file: string, type: Shader_Type) -> Shader_Bytec
     return bytecode;
 }
 
-create_texture_from_file :: (file_name: string) -> Texture {
+create_texture_from_file :: (file_name: string, flags := Texture_Flags.None) -> Texture {
     bytes, ok := read_entire_file(file_name);
     defer free(bytes);
 
     if !ok return .{};
+    return create_texture_from_memory(bytes, flags);
+}
+
+create_texture_from_memory :: (memory: []u8, flags := Texture_Flags.None) -> Texture {
     width, height, channels: s32;
-    buffer := stbi_load_from_memory(bytes.data, cast(s32)bytes.count, *width, *height, *channels, 0);
+    buffer := stbi_load_from_memory(memory.data, cast(s32)memory.count, *width, *height, *channels, 0);
     return create_texture(buffer, cast(u32)width, cast(u32)height, cast(u32)channels);
 }
 

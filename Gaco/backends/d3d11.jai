@@ -267,16 +267,16 @@ update_buffer :: (buffer: *Buffer, data: *void) {
 }
 
 update_texture :: (texture: *Texture, data: *void, rect : Rect) {
-    rows : u32 = rect.w * texture.channels;
+    rows : u32 = cast(u32)rect.w * texture.channels;
 
     box: D3D11_BOX;
-    box.top = rect.y;
-    box.left = rect.x;
-    box.bottom = (rect.y + rect.h);
-    box.right = (rect.x + rect.w);
+    box.top = xx rect.y;
+    box.left = xx rect.x;
+    box.bottom = xx (rect.y + rect.h);
+    box.right = xx (rect.x + rect.w);
     box.back = 1;
 
-    ID3D11DeviceContext_UpdateSubresource(D3D11.device_context, texture.texture, 0, *box, data, rows, rows * rect.h);
+    ID3D11DeviceContext_UpdateSubresource(D3D11.device_context, texture.texture, 0, *box, data, rows, rows * cast(u32)rect.h);
 }
 
 update_texture :: (texture: *Texture, data: *void) {
@@ -575,13 +575,19 @@ dispatch_compute :: (num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) {
     ID3D11DeviceContext_Dispatch(D3D11.device_context, num_groups_x, num_groups_y, num_groups_z);
 }
 
-create_texture :: (data: *u8, width: u32, height: u32, channels: u32, read := false, write := false) -> Texture {
+create_texture :: (data: *u8, width: u32, height: u32, channels: u32, flags := Texture_Flags.None) -> Texture {
     cpu_flags: D3D11_CPU_ACCESS_FLAG;
-    if read  cpu_flags |= .READ;
-    if write cpu_flags |= .WRITE;
+    if flags & .Read  cpu_flags |= .READ;
+    if flags & .Write cpu_flags |= .WRITE;
 
-    // @Incomplete: Support other formats (HDR etc.)
-    formats := DXGI_FORMAT.[.R8_UNORM, .R8G8_UNORM, .UNKNOWN, .R8G8B8A8_UNORM];
+    formats : [4]DXGI_FORMAT = ---;
+    if flags & .SRGB {
+        formats = DXGI_FORMAT.[.UNKNOWN, .UNKNOWN, .B8G8R8X8_UNORM_SRGB, .R8G8B8A8_UNORM_SRGB];
+    }
+    else {
+        formats = DXGI_FORMAT.[.R8_UNORM, .R8G8_UNORM, .B8G8R8X8_UNORM, .R8G8B8A8_UNORM];
+    }
+
     texture_format := formats[channels-1];
 
     texture_desc := D3D11_TEXTURE2D_DESC.{
@@ -680,7 +686,6 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
         element_desc.SemanticName = SemanticName;
         element_desc.SemanticIndex = SemanticIndex;
         element_desc.AlignedByteOffset = D3D11_APPEND_ALIGNED_ELEMENT;
-
         // InputSlot is @Hardcoded right now. There may be reasons to want to change this
         // but there is no way to get it from the shader code and I don't want to force people
         // to pass an input layout.
