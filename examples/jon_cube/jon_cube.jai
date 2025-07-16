@@ -113,13 +113,13 @@ main :: () {
       Gaco.bind_buffer(transform_cb, bind_to=.Vertex);
       Gaco.bind_texture(texture, 0);
 
-      draw_cube(.{0, 0, -3}, *transform_cb, proj);
+      draw_cube(.{0, 0, -3}, *transform_cb, proj, indices.count);
 
       Gaco.present();
    }
 }
 
-draw_cube :: (position: Vector3, buffer: *Gaco.Buffer, proj: Matrix4) {
+draw_cube :: (position: Vector3, buffer: *Gaco.Buffer, proj: Matrix4, indices_count: u32) {
    delta_z :=  cast(float)mouse_delta_z / 20.0;
    if delta_z != 0 {
       RotationZ.target += delta_z * PI / 180.0;
@@ -147,7 +147,7 @@ draw_cube :: (position: Vector3, buffer: *Gaco.Buffer, proj: Matrix4) {
    transform_b.transformation = proj * model;
    Gaco.write_buffer(buffer, *transform_b);
 
-   Gaco.draw(true);
+   Gaco.draw(true, indices_count);
 }
 
 

@@ -72,12 +72,12 @@ main :: () {
         Gaco.bind_buffer(fragment_cb, bind_to=.Fragment);
 
         Gaco.clear(0.3, 0.5, 0.3, 1.0);
-        draw_the_cube(vertex_cb);
+        draw_the_cube(vertex_cb, indices.count);
         Gaco.present();
     }
 }
 
-draw_the_cube :: (transform_cb: Gaco.Buffer) {
+draw_the_cube :: (transform_cb: Gaco.Buffer, indices_count: u32) {
     delta_x := cast(float)mouse_delta_x / cast(float)Width;
     delta_y := cast(float)mouse_delta_y / cast(float)Height;
     Position += .{delta_x, -delta_y, 0};
@@ -95,7 +95,7 @@ draw_the_cube :: (transform_cb: Gaco.Buffer) {
     Gaco.write_buffer(*transform_cb, *transform_buffer);
 
     Gaco.bind_buffer(transform_cb, bind_to=.Vertex);
-    Gaco.draw(true);
+    Gaco.draw(true, indices_count);
 }
 
 #import "Math";

@@ -109,22 +109,22 @@ main :: () {
 
 
         Gaco.clear(1.0, 0.5, 0.3, 1.0);
-        draw_cube(.{0, 0, -3}, vs_cb);
-        draw_cube(.{0, 0, -10}, vs_cb);
+        draw_cube(.{0, 0, -3}, vs_cb, xx indices.count);
+        draw_cube(.{0, 0, -10}, vs_cb, xx indices.count);
 
         Gaco.present(0);
 
     }
 }
 
-draw_cube :: (pos: Vector3, constant_buffer: Gaco.Buffer) {
+draw_cube :: (pos: Vector3, constant_buffer: Gaco.Buffer, indices_count: u32) {
 
     model := make_translation_matrix4(pos);
     constant : Constant_Buffer;
     constant.transformation = Camera.proj_view*model;
 
     Gaco.write_buffer(*constant_buffer, *constant);
-    Gaco.draw(true);
+    Gaco.draw(true, indices_count);
 }
 
 #run build_shader("texture");

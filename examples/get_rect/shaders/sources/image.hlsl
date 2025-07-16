@@ -1,23 +1,26 @@
 // Vertex Shader
 cbuffer Constant_Buffer : register(b0) {
-    matrix transformation;
+    matrix proj;
 };
 
 struct Vertex_Input {
-    float3 pos: POSITION;
+    float2 pos: POSITION;
+    float4 color: COLOR;
     float2 tex: TEXCOORD0;
 };
 
 struct Fragment_Input {
     float4 pos: SV_Position;
+    float4 color: COLOR;
     float2 tex: TEXCOORD0;
 };
 
 Fragment_Input vertex_main(Vertex_Input input) {
-    Fragment_Input pixel_input;
-    pixel_input.pos = mul(float4(input.pos, 1), transformation);
-    pixel_input.tex = input.tex;
-    return pixel_input;
+    Fragment_Input fragment_input;
+    fragment_input.pos = mul(float4(input.pos, 0, 1), proj);
+    fragment_input.tex = input.tex;
+    fragment_input.color = input.color;
+    return fragment_input;
 };
 
 
@@ -27,6 +30,6 @@ SamplerState texture_sampler: register(s0);
 
 float4 fragment_main(Fragment_Input input, uint tid: SV_PrimitiveID) : SV_Target {
 
-    float4 color = shader_texture.Sample(texture_sampler, input.tex);
-    return color;
+    float4 texture_color = shader_texture.Sample(texture_sampler, input.tex);
+    return texture_color * input.color;
 }

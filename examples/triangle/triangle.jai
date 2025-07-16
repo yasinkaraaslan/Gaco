@@ -29,7 +29,7 @@ main :: () {
         }
 
         Gaco.clear(1.0, 0.5, 0.3, 1.0);
-        Gaco.draw();
+        Gaco.draw(false, 3);
         Gaco.present();
     }
 }

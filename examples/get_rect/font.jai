@@ -1,11 +1,15 @@
+#run {
+    Gaco.compile_shader("shaders/sources/text.hlsl", "shaders/text", .Vertex | .Fragment);
+}
+
 MAX_CHARACTERS :: 512;
 
 fonts_init :: () {
     error := FT_Init_FreeType(*FtLibrary);
-    Shader = Gaco.load_shader("shaders/text", .Vertex | .Fragment);
+    TextShader = Gaco.load_shader("shaders/text", .Vertex | .Fragment);
     assert(!error);
 
-    VertexBuffer = Gaco.create_buffer(null, MAX_CHARACTERS * size_of(Text_Vertex_Data) * 4, size_of(Text_Vertex_Data), .Vertex, .Dynamic);
+    TextVertexBuffer = Gaco.create_buffer(null, MAX_CHARACTERS * size_of(Text_Vertex_Data) * 4, size_of(Text_Vertex_Data), .Vertex, .Dynamic);
     index_data : [6*MAX_CHARACTERS]u16;
     for 0..MAX_CHARACTERS-1 {
         base := cast(u16) (it*4);
@@ -17,27 +21,36 @@ fonts_init :: () {
         index_data[6*it+5]=base+3;
     }
 
-    IndexBuffer = Gaco.create_buffer(*index_data, .Index, .Immutable);
+    TextIndexBuffer = Gaco.create_buffer(*index_data, .Index, .Immutable);
 
     m := Matrix4_Identity; // This should be replaced in the next resize call.
-    ConstantBuffer = Gaco.create_buffer(*m, .Constant);
+    WindowProjConstantBuffer = Gaco.create_buffer(*m, .Constant);
+
+    v : struct {
+        v: Vector2 #align 16;
+    };
+    TextPosConstantBuffer = Gaco.create_buffer(*v, .Constant, .Dynamic);
 }
 
-load_font :: (filename: string, size: u32) -> Font {
-    font: Font;
-    content := read_entire_file(filename); // @Leak
+load_font :: (file_name: string, size: int) -> *Font {
+    content := cast([]u8)read_entire_file(file_name); // @Leak
+    return load_font_from_memory(content, size);
+}
 
-    error := FT_New_Memory_Face(FtLibrary, content.data, cast(s32) content.count, 0, *font.face);
+load_font_from_memory :: (memory: []u8, size: int) -> *Font {
+    font := New(Font);
+
+    error := FT_New_Memory_Face(FtLibrary, memory.data, cast(s32) memory.count, 0, *font.face);
     if error {
-        log_error("Error loading font: % - Error Code: %\n", filename, error);
-        return .{};
+        log_error("Error loading font, Error Code: %\n", error);
+        return null;
     }
     font.has_kerning = FT_HAS_KERNING(font.face);
-    error = FT_Set_Pixel_Sizes(font.face, 0, size);
+    error = FT_Set_Pixel_Sizes(font.face, 0, cast(u32)size);
 
     metrics := font.face.size.metrics;
-    font.ascender = (metrics.ascender / 64.0) + (metrics.descender / 64.0);
-    font.size = size;
+    font.character_height = xx size;
+    font.em_width = xx metrics.x_ppem;
     texture_width, texture_height : u32;
     for 32..126 {
         if FT_Load_Char(font.face, cast(u32)it, FT_LOAD_BITMAP_METRICS_ONLY) != 0 {
@@ -103,57 +116,6 @@ load_font :: (filename: string, size: u32) -> Font {
     return font;
 }
 
-prepare_quads_for_text :: (using font: *Font, text: string, position: Vector2) -> u32 {
-    x := 0.0;
-    y := 0.0;
-
-    vertices : [..]Text_Vertex_Data;
-    vertices.allocator = temp;
-
-    num_chars: u32; // Excluding space, new line etc.
-    for char: text {
-        if char >= 32 && char <= 126 {
-            glyph := glyphs[char];
-
-            y_addition := y - glyph.bitmap_top + ascender;
-            x_addition := x + glyph.bitmap_left;
-            x += glyph.advance_x;
-
-            if char == " " {
-                continue;
-            }
-
-            if has_kerning && it_index != 0 {
-                kerning: FT_Vector;
-                previous := FT_Get_Char_Index(face, text[it_index - 1]);
-                current  := FT_Get_Char_Index(face, char);
-
-                FT_Get_Kerning(face, previous, current, xx FT_Kerning_Mode.DEFAULT, *kerning);
-                x_addition += kerning.x / 64.0;
-            }
-
-            for 0..3 {
-                glyph.vertices[it].position += position + Vector2.{x_addition, y_addition};
-            }
-
-            array_add(*vertices, ..glyph.vertices);
-            num_chars += 1;
-        }
-        else if char == "\n" {
-            y += font.size;
-            x = 0;
-        }
-
-    }
-    // @Incomplete: Handle this situation
-    assert(num_chars <= MAX_CHARACTERS);
-
-    mapped := Gaco.map_buffer(*VertexBuffer, .Write);
-    memcpy(mapped, vertices.data, vertices.count * size_of(Text_Vertex_Data));
-    Gaco.unmap_buffer(*VertexBuffer);
-    return num_chars;
-}
-
 fonts_window_resize :: (width: int, height: int) {
     // Map window coordinates to -> [-1, 1]
     proj := Matrix4_Identity;
@@ -163,39 +125,109 @@ fonts_window_resize :: (width: int, height: int) {
     proj._22 = -2.0 / xx height;
     proj._24 = 1;
 
-    Gaco.update_buffer(*ConstantBuffer, *proj);
+    Gaco.update_buffer(*WindowProjConstantBuffer, *proj);
 }
 
-draw_text :: (using font: *Font, text: string, position: Vector2, color := Vector4.{1,1,1,1}) {
-    num_chars := prepare_quads_for_text(font, text, position);
-    Gaco.set_blend(.Alpha);
 
-    Gaco.set_shader(Shader);
-    Gaco.bind_buffer(VertexBuffer);
-    Gaco.bind_buffer(IndexBuffer);
-    Gaco.bind_buffer(ConstantBuffer, bind_to=.Vertex);
-    Gaco.bind_buffer(constant_buffer, bind_to=.Fragment);
-    Gaco.bind_texture(texture, 0);
+prepare_text :: (using font: *Font, text: string, effect_flags: Font_Effects = 0) -> s64 {
+    x := 0.0;
+    y := 0.0;
 
-    if color != selected_color {
-        selected_color = color;
-        Gaco.update_buffer(*constant_buffer, *color);
+    vertices : [..]Text_Vertex_Data;
+    vertices.allocator = temp;
+
+    num_chars: u32; // Excluding space, new line etc.
+    width := 0.0;
+    for char: text {
+        if char >= 32 && char <= 126 {
+            glyph := glyphs[char];
+
+            y_addition := y - glyph.bitmap_top;
+            x_addition := x + glyph.bitmap_left;
+            x += glyph.advance_x;
+
+            if has_kerning && it_index != 0 {
+                kerning: FT_Vector;
+                previous := FT_Get_Char_Index(face, text[it_index - 1]);
+                current  := FT_Get_Char_Index(face, char);
+
+                FT_Get_Kerning(face, previous, current, xx FT_Kerning_Mode.DEFAULT, *kerning);
+                kern := kerning.x / 64.0;
+                x_addition += kern;
+                x += kern;
+            }
+
+            if char == " " {
+                continue;
+            }
+            if x > width  width += glyph.advance_x;
+
+            for 0..3 {
+                glyph.vertices[it].position += Vector2.{x_addition, y_addition};
+            }
+
+            array_add(*vertices, ..glyph.vertices);
+            num_chars += 1;
+        }
+        else if char == "\n" {
+            y += font.character_height;
+            x = 0;
+        }
+
+    }
+    // @Incomplete: Handle this situation
+    assert(num_chars <= MAX_CHARACTERS);
+
+    mapped := Gaco.map_buffer(*TextVertexBuffer, .Write);
+    memcpy(mapped, vertices.data, vertices.count * size_of(Text_Vertex_Data));
+    Gaco.unmap_buffer(*TextVertexBuffer);
+
+    font.num_chars_to_render = num_chars;
+    return cast(s64)width;
+}
+
+draw_prepared_text :: (font: *Font, x: s64, y: s64, color := Vector4.{1, 1, 1, 1}, effects: Font_Effects = 0) {
+    pos := Vector2.{x=xx x, y=xx y};
+    Gaco.write_buffer(*TextPosConstantBuffer, *pos);
+
+
+    if color != font.selected_color {
+        font.selected_color = color;
+        Gaco.update_buffer(*font.constant_buffer, *color);
     }
 
-    Gaco.draw(true, num_chars * 6);
+    Gaco.set_blend(.Alpha);
+    Gaco.set_shader(TextShader);
+    Gaco.bind_buffer(TextVertexBuffer);
+    Gaco.bind_buffer(TextIndexBuffer);
+
+    Gaco.bind_buffer(WindowProjConstantBuffer, .Vertex, 0);
+    Gaco.bind_buffer(TextPosConstantBuffer,  .Vertex, 1);
+
+    Gaco.bind_buffer(font.constant_buffer, .Fragment);
+    Gaco.bind_texture(font.texture, 0);
+    Gaco.draw(true, font.num_chars_to_render * 6);
     Gaco.set_blend(.None);
 }
+
+draw_text :: (font: *Font, text: string, x: s64, y: s64, color := Vector4.{1,1,1,1}) {
+    prepare_text(font, text);
+    draw_prepared_text(font, x, y, color);
+}
+
+Font_Effects :: enum{};
 
 // @Incomplete: Can only do ASCII
 Font :: struct {
     face: FT_Face;
-    size: u32;
-    ascender: float;
+    character_height: u32;
+    em_width: float;
     constant_buffer: Gaco.Buffer(.Constant);
     glyphs: [128]Glyph_Info;
 
     texture: Gaco.Texture;
     selected_color: Vector4;
+    num_chars_to_render: u32;
 
     has_kerning: bool;
 }
@@ -211,10 +243,11 @@ Text_Vertex_Data :: struct {
     uv: Vector2;
 }
 
-VertexBuffer: Gaco.Buffer(.Vertex);
-IndexBuffer: Gaco.Buffer(.Index);
-ConstantBuffer: Gaco.Buffer(.Constant);
+TextVertexBuffer: Gaco.Buffer(.Vertex);
+TextIndexBuffer: Gaco.Buffer(.Index);
+WindowProjConstantBuffer: Gaco.Buffer(.Constant);
+TextPosConstantBuffer: Gaco.Buffer(.Constant);
 FtLibrary: FT_Library;
-Shader: Gaco.Shader;
+TextShader: Gaco.Shader;
 
 #import "freetype-2.12.1";

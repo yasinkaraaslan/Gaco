@@ -136,7 +136,7 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
     buffer.stride = stride;
 
     bd := D3D11_BUFFER_DESC.{
-        ByteWidth = buffer.count * buffer.stride
+        ByteWidth = count * stride
     };
     if usage == {
     case .Default;
@@ -158,11 +158,11 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
     case .Structured;
         bd.BindFlags = .SHADER_RESOURCE;
         bd.MiscFlags = .BUFFER_STRUCTURED;
-        bd.StructureByteStride = buffer.stride;
+        bd.StructureByteStride = stride;
     case .RWStructured;
         bd.BindFlags = .UNORDERED_ACCESS;
         bd.MiscFlags = .BUFFER_STRUCTURED;
-        bd.StructureByteStride = buffer.stride;
+        bd.StructureByteStride = stride;
     case .Copy;
         bd.Usage = .STAGING;
         bd.CPUAccessFlags |= .READ;
@@ -202,7 +202,6 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
 bind_buffer :: (buffer: Buffer(.Vertex), slot : u32 = 0) {
     offset : u32 = 0;
     ID3D11DeviceContext_IASetVertexBuffers(D3D11.device_context, slot, 1, *buffer.buffer, *buffer.stride, *offset);
-    FrameInfo.num_bound_vertices = buffer.count;
 }
 
 bind_buffer :: (buffer: Buffer(.Index)) {
@@ -210,7 +209,6 @@ bind_buffer :: (buffer: Buffer(.Index)) {
     if      buffer.stride == 2 format = .R16_UINT;
     else if buffer.stride == 4 format = .R32_UINT;
     ID3D11DeviceContext_IASetIndexBuffer(D3D11.device_context, buffer.buffer, format, 0);
-    FrameInfo.num_bound_indices = buffer.count;
 }
 
 bind_buffer :: (buffer: Buffer(.Constant), bind_to: Shader_Type, slot : u32 = 0) {
@@ -310,26 +308,30 @@ read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *
 }
 
 write_buffer :: (buffer: *Buffer, data: *void, size: int) {
-    mapped_data := map_buffer(buffer, .Write);
-    memcpy(mapped_data, data, size);
-    unmap_buffer(buffer);
+    write :: (buffer_to_write: *Buffer) #expand {
+        mapped_data := map_buffer(buffer_to_write, .Write);
+        memcpy(mapped_data, data, size);
+        unmap_buffer(buffer_to_write);
+    }
+
+    #if buffer.type == .Structured || buffer.type == .RWStructured {
+        buffer_to_write := * (create_buffer(null, buffer.count, buffer.stride, .Copy, .Dynamic));
+        write(buffer_to_write);
+        copy_buffer(buffer_to_write, buffer);
+        destroy_buffer(buffer_to_write);
+    }
+    else {
+        write(buffer);
+    }
 }
 
 write_buffer :: (buffer: *Buffer, data: []$T) {
-    write_buffer(buffer, data.data, data.count);
+    write_buffer(buffer, data.data, data.count * size_of(T));
 }
 
 write_buffer :: (buffer: *Buffer, data: *void) {
     size := cast(int)buffer.count * cast(int)buffer.stride;
-    #if buffer.type == .Structured || buffer.type == .RWStructured {
-        buffer_to_map := * (create_buffer(null, buffer.count, buffer.stride, .Copy, .Dynamic));
-        write_buffer(buffer_to_map, data, size);
-        copy_buffer(buffer_to_map, buffer);
-        destroy_buffer(buffer_to_map);
-    }
-    else {
-        write_buffer(buffer, data, size);
-    }
+    write_buffer(buffer, data, size);
 }
 
 copy_buffer :: (from: *Buffer, to: *Buffer) {
@@ -492,22 +494,22 @@ set_blend :: (state: Blend_State) {
     ID3D11DeviceContext_OMSetBlendState(D3D11.device_context, states[state], null, SampleMask=0xFFFFFFFF);
 }
 
-draw :: (indexed := false, count: u32 = 0, first: u32 = 0) {
+draw :: (indexed := false, count: u32, first: u32 = 0) {
     if indexed {
-        ID3D11DeviceContext_DrawIndexed(D3D11.device_context, ifx count == 0 FrameInfo.num_bound_indices else count, first, 0);
+        ID3D11DeviceContext_DrawIndexed(D3D11.device_context, count, first, 0);
     }
     else {
-        ID3D11DeviceContext_Draw(D3D11.device_context, ifx count == 0 FrameInfo.num_bound_vertices else count, first);
+        ID3D11DeviceContext_Draw(D3D11.device_context, count, first);
     }
 }
 
 
-draw_instanced :: (indexed := false, instance_count: u32, count: u32 = 0, first: u32 = 0, first_instance: u32 = 0) {
+draw_instanced :: (indexed := false, count: u32, instance_count: u32, first: u32 = 0, first_instance: u32 = 0) {
     if indexed {
-        ID3D11DeviceContext_DrawIndexedInstanced(D3D11.device_context, ifx count == 0 FrameInfo.num_bound_indices else count, instance_count, first, 0, first_instance);
+        ID3D11DeviceContext_DrawIndexedInstanced(D3D11.device_context, count, instance_count, first, 0, first_instance);
     }
     else {
-        ID3D11DeviceContext_DrawInstanced(D3D11.device_context, ifx count == 0 FrameInfo.num_bound_vertices else count, instance_count, first, first_instance);
+        ID3D11DeviceContext_DrawInstanced(D3D11.device_context, count, instance_count, first, first_instance);
     }
 }
 
@@ -770,6 +772,10 @@ check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
         }
 
         log_error("% failed with code 0x%: %\n", from, FormatInt.{value = `hr, base=16}, fail_message);
+        #if !DEBUG {
+            log("Pass DEBUG=true when importing Gaco to learn more.");
+        }
+
         #insert code_to_insert_after_fail;
     }
 }
@@ -788,11 +794,6 @@ get_last_error :: () -> string {
     message := string.{data=message_buffer, count=size};
 
     return message;
-}
-
-FrameInfo : struct {
-    num_bound_vertices: u32;
-    num_bound_indices: u32;
 }
 
 D3D11 : struct {

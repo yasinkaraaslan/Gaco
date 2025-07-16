@@ -6,9 +6,9 @@
     };
 
     DEFAULT_BACKEND :: #run -> Backend_Type {
-        #if      OS == .WINDOWS                return .D3D11;
-        else #if OS == .LINUX | OS == .ANDROID return .OpenGL;
-        else #if OS == .MACOS | OS == .IOS     return .Metal;
+        #if      OS == .WINDOWS || OS == .XBOX    return .D3D11;
+        else #if OS == .LINUX   || OS == .ANDROID return .OpenGL;
+        else #if OS == .MACOS   || OS == .IOS     return .Metal;
     }
 
     //
@@ -166,7 +166,7 @@ create_texture_from_file :: (file_name: string, flags := Texture_Flags.None) -> 
     defer free(bytes);
 
     if !ok return .{};
-    return create_texture_from_memory(bytes, flags);
+    return create_texture_from_memory(cast([]u8)bytes, flags);
 }
 
 create_texture_from_memory :: (memory: []u8, flags := Texture_Flags.None) -> Texture {
