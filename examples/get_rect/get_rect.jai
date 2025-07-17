@@ -32,7 +32,8 @@ gr_init :: () {
 }
 
 gr_set_shader_for_color :: (enable_blend := false) {
-    Gaco.set_blend(ifx enable_blend then .Alpha else .None);
+
+    if enable_blend  Gaco.set_blend(.Alpha);
     Gaco.set_shader(ColorShader);
 }
 

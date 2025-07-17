@@ -41,6 +41,7 @@ main :: () {
                 fps = xx (frames / FPS_MEASURE_TIME);
                 frames = 0;
                 time_between_measure = 0;
+                FrameInfo.latency = FrameInfo.delta;
             }
             FrameInfo.last = current;
         }
@@ -65,12 +66,6 @@ main :: () {
 
         draw_shadowed_text(*font, tprint("Latency: % ms", FrameInfo.latency*1000), .{0, xx (WindowHeight - font.size)});
         draw_shadowed_text(*font, tprint("FPS: %", fps), .{0, 0});
-
-        if time_between_measure == 0 {
-            FrameInfo.latency = cast(float32) (seconds_since_init() - FrameInfo.last);
-        }
-
-
 
         draw_shadowed_text(*big_font, IMPORTANT_TEXT, .{0, WindowHeight * 0.1});
         Gaco.present(1);

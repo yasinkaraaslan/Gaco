@@ -55,11 +55,12 @@ Map_Flags :: enum_flags {
     Read;
     Write;
 }
-Texture_Flags :: enum_flags {
+Texture_Flags :: enum_flags u32 {
     None :: 0;
     Read :: 1;
     Write;
     SRGB;
+    RWCompute; // @Rename
 }
 
 Sampler_Filtering :: enum {

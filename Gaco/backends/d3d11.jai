@@ -26,9 +26,14 @@ Sampler :: struct {
 
 Texture :: struct {
     texture: *ID3D11Texture2D;
-    resource_view: *ID3D11ShaderResourceView;
+    union {
+        resource_view: *ID3D11ShaderResourceView;
+        unordered_access_view: *ID3D11UnorderedAccessView;
+    }
     width, height, channels: u32;
+    flags: Texture_Flags;
 };
+
 
 init :: (window: HWND, wanted_msaa : u32 = 4) {
     flags : D3D11_CREATE_DEVICE_FLAG;
@@ -127,7 +132,8 @@ deinit :: () {
     IUnknown_Release(D3D11.scissor_state);
     IUnknown_Release(D3D11.blend_alpha_state);
 
-    log_messages_and_get_last();
+    #if DEBUG
+        log_messages_and_get_last();
 }
 
 create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {
@@ -323,9 +329,16 @@ write_buffer :: (buffer: *Buffer, data: *void, size: int) {
     else {
         write(buffer);
     }
+
+    // I guess you could change the stride and not notice.
+    count := size / buffer.stride;
+    if count > buffer.count
+        buffer.count = size / buffer.stride;
 }
 
 write_buffer :: (buffer: *Buffer, data: []$T) {
+    if size_of(T) != buffer.stride
+        buffer.stride = size_of(T);
     write_buffer(buffer, data.data, data.count * size_of(T));
 }
 
@@ -407,8 +420,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_file_na
     flags := D3DCOMPILE.ENABLE_STRICTNESS;
     defines: []D3D_SHADER_MACRO;
     #if DEBUG {
-        flags |= .DEBUG;
-        flags |= .SKIP_OPTIMIZATION;
+        flags |= .DEBUG |  .SKIP_OPTIMIZATION;
     }
     compile :: (type: Shader_Type) -> string #expand {
         entry_point, target: string;
@@ -489,6 +501,17 @@ set_scissor :: (rect: Rect) {
     ID3D11DeviceContext_RSSetScissorRects(D3D11.device_context, 1, *d3d11_rect);
 }
 
+set_viewport :: (using rect: Rect) {
+    vp : D3D11_VIEWPORT;
+    vp.Width = cast(float) w;
+    vp.Height = cast(float) h;
+    vp.MinDepth = 0.0;
+    vp.MaxDepth = 1.0;
+    vp.TopLeftX = cast(float) x;
+    vp.TopLeftY = cast(float) y;
+    ID3D11DeviceContext_RSSetViewports(D3D11.device_context, 1, *vp);
+}
+
 set_blend :: (state: Blend_State) {
     states := (*ID3D11BlendState).[null, D3D11.blend_alpha_state];
     ID3D11DeviceContext_OMSetBlendState(D3D11.device_context, states[state], null, SampleMask=0xFFFFFFFF);
@@ -562,25 +585,22 @@ resize :: (width: int, height: int) {
     check_hr("ID3D11Device.CreateDepthStencilView");
 
     ID3D11DeviceContext_OMSetRenderTargets(D3D11.device_context, 1, *D3D11.render_target_view, D3D11.depth_stencil_view);
-
-    vp : D3D11_VIEWPORT;
-    vp.Width = xx width;
-    vp.Height = xx height;
-    vp.MinDepth = 0.0;
-    vp.MaxDepth = 1.0;
-    vp.TopLeftX = 0;
-    vp.TopLeftY = 0;
-    ID3D11DeviceContext_RSSetViewports(D3D11.device_context, 1, *vp);
+    set_viewport(.{0, 0, cast(s32)width, cast(s32)height});
 }
 
 dispatch_compute :: (num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) {
     ID3D11DeviceContext_Dispatch(D3D11.device_context, num_groups_x, num_groups_y, num_groups_z);
 }
 
+// @Incomplete: Mipmapping
 create_texture :: (data: *u8, width: u32, height: u32, channels: u32, flags := Texture_Flags.None) -> Texture {
     cpu_flags: D3D11_CPU_ACCESS_FLAG;
     if flags & .Read  cpu_flags |= .READ;
     if flags & .Write cpu_flags |= .WRITE;
+
+    bind_flags := D3D11_BIND_FLAG.SHADER_RESOURCE;
+    if flags & .RWCompute
+        bind_flags |= .UNORDERED_ACCESS;
 
     formats : [4]DXGI_FORMAT = ---;
     if flags & .SRGB {
@@ -600,7 +620,7 @@ create_texture :: (data: *u8, width: u32, height: u32, channels: u32, flags := T
         ArraySize = 1,
         Format = texture_format,
         Usage = .DEFAULT,
-        BindFlags = .SHADER_RESOURCE,
+        BindFlags = bind_flags,
         CPUAccessFlags = cpu_flags,
     };
 
@@ -614,18 +634,33 @@ create_texture :: (data: *u8, width: u32, height: u32, channels: u32, flags := T
         });
     }
 
-    texture := Texture.{width = width, height = height, channels = channels};
+    texture := Texture.{width = width, height = height, channels = channels, flags = flags};
 
     hr := ID3D11Device_CreateTexture2D(D3D11.device, *texture_desc, init_data, *texture.texture );
     check_hr("ID3D11Device.CreateTexture2D", #code return .{});
-    hr = ID3D11Device_CreateShaderResourceView(D3D11.device, texture.texture, null, *texture.resource_view);
-    check_hr("ID3D11Device.CreateShaderResourceView", #code return .{});
 
+    if flags & .RWCompute {
+        uav_desc := D3D11_UNORDERED_ACCESS_VIEW_DESC.{
+            Format = texture_format,
+            ViewDimension = .TEXTURE2D,
+            Texture2D.MipSlice = 0
+        };
+        hr = ID3D11Device_CreateUnorderedAccessView(D3D11.device, texture.texture, *uav_desc, *texture.unordered_access_view);
+    }
+    else {
+        hr = ID3D11Device_CreateShaderResourceView(D3D11.device, texture.texture, null, *texture.resource_view);
+        check_hr("ID3D11Device.CreateShaderResourceView", #code return .{});
+    }
     return texture;
 }
 
 bind_texture :: (texture: Texture, slot: u32) {
-    ID3D11DeviceContext_PSSetShaderResources(D3D11.device_context, slot, 1, *texture.resource_view);
+    if texture.flags & .RWCompute {
+        ID3D11DeviceContext_CSSetUnorderedAccessViews(D3D11.device_context, slot, 1, *texture.unordered_access_view, null);
+    }
+    else {
+        ID3D11DeviceContext_PSSetShaderResources(D3D11.device_context, slot, 1, *texture.resource_view);
+    }
 }
 
 // @Incomplete: give more options
