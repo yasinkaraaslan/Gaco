@@ -333,7 +333,7 @@ write_buffer :: (buffer: *Buffer, data: *void, size: int) {
     // I guess you could change the stride and not notice.
     count := size / buffer.stride;
     if count > buffer.count
-        buffer.count = size / buffer.stride;
+        buffer.count = cast(u32) count;
 }
 
 write_buffer :: (buffer: *Buffer, data: []$T) {
@@ -418,7 +418,7 @@ load_shader :: (file_name: string, type: Shader_Type) -> Shader {
 compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_file_name: string) -> Shader_Bytecode, bool {
     bytecode: Shader_Bytecode;
     flags := D3DCOMPILE.ENABLE_STRICTNESS;
-    defines: []D3D_SHADER_MACRO;
+    defines: []string;
     #if DEBUG {
         flags |= .DEBUG |  .SKIP_OPTIMIZATION;
     }
@@ -699,13 +699,8 @@ CS_EXTENSION :: ".dxcs";
 
 #scope_file
 get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
-    // @Cleanup
-    // @Hardcoded: has to be this way until jai includes IID_ID3D11ShaderReflection in its d3d_compiler module
-    IID_ID3D11ShaderReflection :: IID.{Data1=0x8D536CA1, Data2=0x0CCA, Data3=0x4956,
-    Data4=.[0xA8, 0x37, 0x78, 0x69, 0x63, 0x75, 0x55, 0x84]};
-
     reflector: *ID3D11ShaderReflection;
-    hr := D3DReflect(bytecode.data, xx bytecode.count, IID_ID3D11ShaderReflection, cast(**void) *reflector);
+    hr := D3DReflect(bytecode.data, xx bytecode.count, *uid(ID3D11ShaderReflection_UUID), cast(**void) *reflector);
     check_hr("D3DReflect", #code `return null);
 
     shader_desc: D3D11_SHADER_DESC;
