@@ -51,6 +51,7 @@ load_font_from_memory :: (memory: []u8, size: int) -> *Font {
     metrics := font.face.size.metrics;
     font.character_height = xx size;
     font.em_width = xx metrics.x_ppem;
+    font.ascent = metrics.ascender / 64.0 + metrics.descender / 64.0;
     texture_width, texture_height : u32;
     for 32..126 {
         if FT_Load_Char(font.face, cast(u32)it, FT_LOAD_BITMAP_METRICS_ONLY) != 0 {
@@ -178,10 +179,7 @@ prepare_text :: (using font: *Font, text: string, effect_flags: Font_Effects = 0
     // @Incomplete: Handle this situation
     assert(num_chars <= MAX_CHARACTERS);
 
-    mapped := Gaco.map_buffer(*TextVertexBuffer, .Write);
-    memcpy(mapped, vertices.data, vertices.count * size_of(Text_Vertex_Data));
-    Gaco.unmap_buffer(*TextVertexBuffer);
-
+    Gaco.write_buffer(*TextVertexBuffer, vertices);
     font.num_chars_to_render = num_chars;
     return cast(s64)width;
 }
@@ -196,7 +194,7 @@ draw_prepared_text :: (font: *Font, x: s64, y: s64, color := Vector4.{1, 1, 1, 1
         Gaco.update_buffer(*font.constant_buffer, *color);
     }
 
-    Gaco.set_blend(.Alpha);
+    Gaco.set_blend_state(.Alpha);
     Gaco.set_shader(TextShader);
     Gaco.bind_buffer(TextVertexBuffer);
     Gaco.bind_buffer(TextIndexBuffer);
@@ -207,12 +205,16 @@ draw_prepared_text :: (font: *Font, x: s64, y: s64, color := Vector4.{1, 1, 1, 1
     Gaco.bind_buffer(font.constant_buffer, .Fragment);
     Gaco.bind_texture(font.texture, 0);
     Gaco.draw(true, font.num_chars_to_render * 6);
-    Gaco.set_blend(.None);
+    Gaco.set_blend_state(.None);
 }
 
-draw_text :: (font: *Font, text: string, x: s64, y: s64, color := Vector4.{1,1,1,1}) {
+draw_text :: inline (font: *Font, text: string, x: s64, y: s64, color := Vector4.{1,1,1,1}) {
     prepare_text(font, text);
     draw_prepared_text(font, x, y, color);
+}
+
+draw_text_ascended :: inline (font: *Font, text: string, x: s64, y: s64, color := Vector4.{1,1,1,1}) {
+    draw_text(font, text, x, y + cast(s64)font.ascent, color);
 }
 
 Font_Effects :: enum{};
@@ -220,6 +222,7 @@ Font_Effects :: enum{};
 // @Incomplete: Can only do ASCII
 Font :: struct {
     face: FT_Face;
+    ascent: float;
     character_height: u32;
     em_width: float;
     constant_buffer: Gaco.Buffer(.Constant);

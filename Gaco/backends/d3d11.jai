@@ -97,14 +97,21 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
     ID3D11DeviceContext_OMSetDepthStencilState(D3D11.device_context, depth_stencil_state, 0xFF);
     IUnknown_Release(depth_stencil_state);
 
-    // Everything default except for scissor.
-    rasterizer_desc := D3D11_RASTERIZER_DESC.{
+    rs_scissor_desc := D3D11_RASTERIZER_DESC.{
         FillMode = .SOLID,
         CullMode = .BACK,
         DepthClipEnable = 1,
         ScissorEnable = 1,
     };
-    ID3D11Device_CreateRasterizerState(D3D11.device, *rasterizer_desc, *D3D11.scissor_state);
+    ID3D11Device_CreateRasterizerState(D3D11.device, *rs_scissor_desc, *D3D11.rasterizer_scissor);
+
+    rs_front_cull_desc := D3D11_RASTERIZER_DESC.{
+        FillMode = .SOLID,
+        CullMode = .FRONT,
+        DepthClipEnable = 1,
+    };
+    ID3D11Device_CreateRasterizerState(D3D11.device, *rs_front_cull_desc, *D3D11.rasterizer_front_cull);
+
 
     blend_alpha_desc : D3D11_BLEND_DESC;
     blend_alpha_desc.RenderTarget[0] = .{
@@ -129,7 +136,10 @@ deinit :: () {
     IUnknown_Release(D3D11.swap_chain);
     IUnknown_Release(D3D11.render_target_view);
     IUnknown_Release(D3D11.depth_stencil_view);
-    IUnknown_Release(D3D11.scissor_state);
+
+    IUnknown_Release(D3D11.rasterizer_scissor);
+    IUnknown_Release(D3D11.rasterizer_front_cull);
+
     IUnknown_Release(D3D11.blend_alpha_state);
 
     #if DEBUG
@@ -480,14 +490,6 @@ set_primitive_type :: (primitive_type : Primitive_Type) {
     ID3D11DeviceContext_IASetPrimitiveTopology(D3D11.device_context, topology);
 }
 
-enable_scissor :: () {
-    ID3D11DeviceContext_RSSetState(D3D11.device_context, D3D11.scissor_state);
-}
-
-disable_scissor :: () {
-    ID3D11DeviceContext_RSSetState(D3D11.device_context, null); // Sets to default
-}
-
 set_scissor :: (rect: Rect) {
     d3d11_rect := D3D11_RECT.{
         left = rect.x,
@@ -510,9 +512,14 @@ set_viewport :: (using rect: Rect) {
     ID3D11DeviceContext_RSSetViewports(D3D11.device_context, 1, *vp);
 }
 
-set_blend :: (state: Blend_State) {
+set_blend_state :: (state: Blend_State) {
     states := (*ID3D11BlendState).[null, D3D11.blend_alpha_state];
     ID3D11DeviceContext_OMSetBlendState(D3D11.device_context, states[state], null, SampleMask=0xFFFFFFFF);
+}
+
+set_rasterizer_state :: (state: Rasterizer_State) {
+    states := (*ID3D11RasterizerState).[null, D3D11.rasterizer_front_cull, D3D11.rasterizer_scissor];
+    ID3D11DeviceContext_RSSetState(D3D11.device_context, states[state]);
 }
 
 draw :: (indexed := false, count: u32, first: u32 = 0) {
@@ -891,7 +898,9 @@ D3D11 : struct {
     render_target_view: *ID3D11RenderTargetView;
     depth_stencil_view: *ID3D11DepthStencilView;
 
-    scissor_state: *ID3D11RasterizerState;
+    rasterizer_front_cull: *ID3D11RasterizerState;
+    rasterizer_scissor: *ID3D11RasterizerState;
+
     blend_alpha_state: *ID3D11BlendState;
 
     msaa : u32;

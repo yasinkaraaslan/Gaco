@@ -77,10 +77,17 @@ Sampler_Edge_Handling :: enum #specified {
     Border :: 4;
 }
 
-// Note: If you want to add a new state or change an existing one, remember to do it on set_blend as well.
-Blend_State :: enum #specified {
+// Note(Yasin): If you want to add a new state or change an existing one, remember to do it on set_blend_state as well.
+Blend_State :: enum u32 #specified {
     None  :: 0;
     Alpha :: 1;
+}
+
+// @@
+Rasterizer_State :: enum u32 {
+    Default    :: 0;
+    Front_Cull :: 1;
+    Scissor    :: 2;
 }
 
 Rect :: struct {
@@ -131,7 +138,6 @@ create_buffer :: (data: *$T, $type: Buffer_Type, usage := Buffer_Usage.Default) 
         data_pointer = data.data;
     }
     else {
-        // @Incomplete: Check if we are a struct and our only member is a u16 or u32 array.
         assert(type != .Index, "Index buffers can only be created with u16 or u32 arrays. Got: %\n", T);
 
         stride = cast(u32)size_of(type_of(data.*));

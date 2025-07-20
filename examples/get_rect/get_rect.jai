@@ -1,19 +1,18 @@
+MAX_VERTEX_COUNT :: 1024; // Increase this number if you need, or... generate vertex buffers on the fly.
+
 #import "GetRect_LeftHanded"()(Type_Indicator);
-#run {
-    Gaco.compile_shader("shaders/sources/color.hlsl", "shaders/color", .Vertex | .Fragment);
-    Gaco.compile_shader("shaders/sources/image.hlsl", "shaders/image", .Vertex | .Fragment);
-}
 
 gr_init :: () {
     ColorShader = Gaco.load_shader("shaders/color", .Vertex | .Fragment);
     ImageShader = Gaco.load_shader("shaders/image", .Vertex | .Fragment);
-    vertices: [512]Vertex_Data;
-    VerticesBuffer = Gaco.create_buffer(*vertices, .Vertex, .Dynamic);
-
+    {
+        vertices: [MAX_VERTEX_COUNT]Vertex_Data;
+        VerticesBuffer = Gaco.create_buffer(*vertices, .Vertex, .Dynamic);
+    }
     procs := Draw_Procs.{
         texture_load_from_memory = gr_texture_load_from_memory,
         set_scissor = gr_set_scissor,
-        clear_scissor = Gaco.disable_scissor,
+        clear_scissor = #bake_arguments Gaco.set_rasterizer_state(state=.Default),
         set_shader_for_color = gr_set_shader_for_color,
         set_shader_for_images = gr_set_shader_for_images,
 
@@ -33,12 +32,12 @@ gr_init :: () {
 
 gr_set_shader_for_color :: (enable_blend := false) {
 
-    if enable_blend  Gaco.set_blend(.Alpha);
+    if enable_blend  Gaco.set_blend_state(.Alpha);
     Gaco.set_shader(ColorShader);
 }
 
 gr_set_shader_for_images :: (texture: *Gaco.Texture) {
-    Gaco.set_blend(.Alpha);
+    Gaco.set_blend_state(.Alpha);
     Gaco.bind_texture(texture, 0);
     Gaco.set_shader(ImageShader);
 }
@@ -76,7 +75,7 @@ gr_immediate_flush :: () {
         Gaco.draw(false, cast(u32)VerticesToDraw.count);
         array_reset(*VerticesToDraw);
     }
-    Gaco.set_blend(.None);
+    Gaco.set_blend_state(.None);
 }
 
 gr_texture_load_from_memory :: (texture: *Gaco.Texture, memory: []u8, srgb: bool, build_mipmaps: bool) -> bool {
@@ -89,7 +88,7 @@ gr_texture_load_from_memory :: (texture: *Gaco.Texture, memory: []u8, srgb: bool
 }
 
 gr_set_scissor :: (x0: s32, y0: s32, x1: s32, y1: s32) {
-    Gaco.enable_scissor();
+    Gaco.set_rasterizer_state(.Scissor);
     rect: Gaco.Rect;
     rect.x = x0;
     rect.y = y0 ;
