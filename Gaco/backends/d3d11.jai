@@ -12,7 +12,7 @@ Shader :: struct {
 
 Buffer :: struct (type: Buffer_Type) {
     buffer: *ID3D11Buffer;
-    count: u32;
+    size: u32;
     stride: u32;
     #if type == {
     case .Structured;   srv: *ID3D11ShaderResourceView;
@@ -138,11 +138,11 @@ deinit :: () {
 
 create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {
     buffer: Buffer(type);
-    buffer.count = count;
+    buffer.size = count * stride;
     buffer.stride = stride;
 
     bd := D3D11_BUFFER_DESC.{
-        ByteWidth = count * stride
+        ByteWidth = buffer.size
     };
     if usage == {
     case .Default;
@@ -270,6 +270,7 @@ update_buffer :: (buffer: *Buffer, data: *void) {
     ID3D11DeviceContext_UpdateSubresource(D3D11.device_context, buffer.buffer, 0, null, data, buffer.stride, 0);
 }
 
+// If you create a texture array, this can only update the first one, for now.
 update_texture :: (texture: *Texture, data: *void, rect : Rect) {
     rows : u32 = cast(u32)rect.w * texture.channels;
 
@@ -291,6 +292,7 @@ update_texture :: inline (texture: *Texture, data: *void) {
 }
 
 // Allocates on temp
+// Note(Yasin): This creates a huge performance penalty.
 read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *void {
     buffer_to_map : *Buffer(.Copy) = ---;
 
@@ -298,16 +300,15 @@ read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *
         buffer_to_map = copy_buffer_to_use;
     }
     else {
-        buffer_to_map = * (create_buffer(null, buffer.count, buffer.stride, .Copy));
+        buffer_to_map = * (create_buffer(null, buffer.size / buffer.stride, buffer.stride, .Copy));
     }
 
     copy_buffer(buffer, buffer_to_map);
 
-    size := cast(int)buffer.count * cast(int)buffer.stride;
-    data := alloc(size,, temp);
+    data := alloc(buffer.size,, temp);
 
     mapped_data := map_buffer(buffer_to_map, .Read);
-    memcpy(data, mapped_data, size);
+    memcpy(data, mapped_data, buffer.size);
     unmap_buffer(buffer_to_map);
     if !copy_buffer_to_use destroy_buffer(buffer_to_map);
     return data;
@@ -321,7 +322,7 @@ write_buffer :: (buffer: *Buffer, data: *void, size: int) {
     }
 
     #if buffer.type == .Structured || buffer.type == .RWStructured {
-        buffer_to_write := * (create_buffer(null, buffer.count, buffer.stride, .Copy, .Dynamic));
+        buffer_to_write := * (create_buffer(null, buffer.size / buffer.stride, buffer.stride, .Copy, .Dynamic));
         write(buffer_to_write);
         copy_buffer(buffer_to_write, buffer);
         destroy_buffer(buffer_to_write);
@@ -333,7 +334,6 @@ write_buffer :: (buffer: *Buffer, data: *void, size: int) {
 
 write_buffer :: inline (buffer: *Buffer, data: []$T) {
     if size_of(T) != buffer.stride {
-        buffer.count = (buffer.count * buffer.stride) / size_of(T);
         buffer.stride = size_of(T);
     }
     write_buffer(buffer, data.data, data.count * size_of(T));
@@ -342,8 +342,7 @@ write_buffer :: inline (buffer: *Buffer, data: []$T) {
 write_buffer :: inline (buffer: *Buffer, data: *void) {
     // I guess you could change the stride and not notice.
 
-    size := cast(int)buffer.count * cast(int)buffer.stride;
-    write_buffer(buffer, data, size);
+    write_buffer(buffer, data, buffer.size);
 }
 
 copy_buffer :: (from: *Buffer, to: *Buffer) {
@@ -363,7 +362,7 @@ destroy_buffer :: (buffer: *Buffer) {
         buffer.uav = null;
     }
 
-    buffer.count, buffer.stride = 0;
+    buffer.size, buffer.stride = 0;
 }
 
 destroy_texture :: (texture: *Texture) {
