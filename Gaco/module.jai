@@ -60,6 +60,8 @@ Texture_Flags :: enum_flags u32 {
     Read :: 1;
     Write;
     SRGB;
+    Cubemap;
+    Generate_Mips;
     RWCompute; // @Rename
 }
 
@@ -162,18 +164,46 @@ load_shader_bytecode :: (shader_file: string, type: Shader_Type) -> Shader_Bytec
     return bytecode;
 }
 
-create_texture_from_file :: (file_name: string, flags := Texture_Flags.None) -> Texture {
-    bytes, ok := read_entire_file(file_name);
-    defer free(bytes);
+create_texture_from_file :: (file_name: string, mip_levels : u32 = 1, flags := Texture_Flags.None, desired_channels : u32 = 0) -> Texture {
+    bytes, ok := read_entire_file(file_name,, temp);
 
     if !ok return .{};
-    return create_texture_from_memory(cast([]u8)bytes, flags);
+    return create_texture_from_memory(bytes, mip_levels, flags, desired_channels);
 }
 
-create_texture_from_memory :: (memory: []u8, flags := Texture_Flags.None) -> Texture {
+create_texture_from_memory :: (memory: string, mip_levels : u32 = 1, flags := Texture_Flags.None, desired_channels: u32 = 0) -> Texture {
     width, height, channels: s32;
-    buffer := stbi_load_from_memory(memory.data, cast(s32)memory.count, *width, *height, *channels, 0);
-    return create_texture(buffer, cast(u32)width, cast(u32)height, cast(u32)channels);
+
+    // Note(Yasin): Unfortunately, this is allocated with malloc and there is no way to read into an existing buffer.
+    // https://github.com/nothings/stb/issues/58
+
+    buffer := stbi_load_from_memory(memory.data, cast(s32)memory.count, *width, *height, *channels, cast(s32) desired_channels);
+    defer stbi_image_free(buffer);
+    return create_texture(buffer, cast(u32)width, cast(u32)height, ifx desired_channels desired_channels else cast(u32)channels, mip_levels, flags);
+}
+
+create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, flags := Texture_Flags.None, desired_channels : u32 = 0) -> Texture {
+    data := NewArray(file_names.count, *u8,, temp);
+    defer for data {
+        if it  stbi_image_free(it);
+    }
+
+    texture_width, texture_height, texture_channels: u32;
+    for file_names {
+        bytes, ok := read_entire_file(it,, temp);
+        if !ok return .{};
+        width, height, channels: s32;
+
+        data[it_index] = stbi_load_from_memory(bytes.data, cast(s32)bytes.count, *width, *height, *channels, cast(s32)desired_channels);
+
+        if it_index == 1 {
+            texture_width    = cast(u32)width;
+            texture_height   = cast(u32)height;
+            texture_channels = ifx desired_channels desired_channels else cast(u32)channels;
+        }
+    }
+
+    return create_texture_array(data, texture_width, texture_height, texture_channels, mip_levels, flags);
 }
 
 #if BACKEND == {

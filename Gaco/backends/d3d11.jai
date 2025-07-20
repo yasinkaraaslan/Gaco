@@ -267,7 +267,7 @@ unmap_buffer :: (buffer: *Buffer) {
 }
 
 update_buffer :: (buffer: *Buffer, data: *void) {
-    ID3D11DeviceContext_UpdateSubresource(D3D11.device_context, buffer.buffer, 0, null, data, buffer.stride, buffer.count);
+    ID3D11DeviceContext_UpdateSubresource(D3D11.device_context, buffer.buffer, 0, null, data, buffer.stride, 0);
 }
 
 update_texture :: (texture: *Texture, data: *void, rect : Rect) {
@@ -280,10 +280,10 @@ update_texture :: (texture: *Texture, data: *void, rect : Rect) {
     box.right = xx (rect.x + rect.w);
     box.back = 1;
 
-    ID3D11DeviceContext_UpdateSubresource(D3D11.device_context, texture.texture, 0, *box, data, rows, rows * cast(u32)rect.h);
+    ID3D11DeviceContext_UpdateSubresource(D3D11.device_context, texture.texture, 0, *box, data, rows, 0);
 }
 
-update_texture :: (texture: *Texture, data: *void) {
+update_texture :: inline (texture: *Texture, data: *void) {
     rect: Rect;
     rect.w = texture.width;
     rect.h = texture.height;
@@ -329,20 +329,19 @@ write_buffer :: (buffer: *Buffer, data: *void, size: int) {
     else {
         write(buffer);
     }
-
-    // I guess you could change the stride and not notice.
-    count := size / buffer.stride;
-    if count > buffer.count
-        buffer.count = cast(u32) count;
 }
 
-write_buffer :: (buffer: *Buffer, data: []$T) {
-    if size_of(T) != buffer.stride
+write_buffer :: inline (buffer: *Buffer, data: []$T) {
+    if size_of(T) != buffer.stride {
+        buffer.count = (buffer.count * buffer.stride) / size_of(T);
         buffer.stride = size_of(T);
+    }
     write_buffer(buffer, data.data, data.count * size_of(T));
 }
 
-write_buffer :: (buffer: *Buffer, data: *void) {
+write_buffer :: inline (buffer: *Buffer, data: *void) {
+    // I guess you could change the stride and not notice.
+
     size := cast(int)buffer.count * cast(int)buffer.stride;
     write_buffer(buffer, data, size);
 }
@@ -592,52 +591,76 @@ dispatch_compute :: (num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) {
     ID3D11DeviceContext_Dispatch(D3D11.device_context, num_groups_x, num_groups_y, num_groups_z);
 }
 
-// @Incomplete: Mipmapping
-create_texture :: (data: *u8, width: u32, height: u32, channels: u32, flags := Texture_Flags.None) -> Texture {
+create_texture_array :: (data: []*u8, width: u32, height: u32, channels: u32, mip_levels: u32 = 1, flags := Texture_Flags.None) -> Texture {
     cpu_flags: D3D11_CPU_ACCESS_FLAG;
     if flags & .Read  cpu_flags |= .READ;
     if flags & .Write cpu_flags |= .WRITE;
 
     bind_flags := D3D11_BIND_FLAG.SHADER_RESOURCE;
+    misc_flags : D3D11_RESOURCE_MISC_FLAG;
     if flags & .RWCompute
         bind_flags |= .UNORDERED_ACCESS;
+    if flags & .Generate_Mips {
+        bind_flags |= .RENDER_TARGET;
+        misc_flags |= .GENERATE_MIPS;
+    }
+
+    if flags & .Cubemap
+        misc_flags |= .TEXTURECUBE;
 
     formats : [4]DXGI_FORMAT = ---;
+
     if flags & .SRGB {
-        formats = DXGI_FORMAT.[.UNKNOWN, .UNKNOWN, .B8G8R8X8_UNORM_SRGB, .R8G8B8A8_UNORM_SRGB];
+        formats = DXGI_FORMAT.[.UNKNOWN, .UNKNOWN, .UNKNOWN, .R8G8B8A8_UNORM_SRGB];
     }
     else {
-        formats = DXGI_FORMAT.[.R8_UNORM, .R8G8_UNORM, .B8G8R8X8_UNORM, .R8G8B8A8_UNORM];
+        formats = DXGI_FORMAT.[.R8_UNORM, .R8G8_UNORM, .UNKNOWN, .R8G8B8A8_UNORM];
     }
 
     texture_format := formats[channels-1];
+    if texture_format == .UNKNOWN {
+        recommended_channels := ifx flags & .SRGB "4" else "4, 2 or 1";
+        log_error("Gaco: Error while creating texture - % channels is not compatible with D3D11. Please create your image with % channels.", channels, recommended_channels);
+        return .{};
+    }
 
     texture_desc := D3D11_TEXTURE2D_DESC.{
         Width = width,
         Height = height,
         SampleDesc.Count = 1,
-        MipLevels = 1,
-        ArraySize = 1,
+        MipLevels = mip_levels,
+        ArraySize = ifx data cast(u32)data.count else 1,
         Format = texture_format,
         Usage = .DEFAULT,
         BindFlags = bind_flags,
         CPUAccessFlags = cpu_flags,
+        MiscFlags = misc_flags
     };
-
-
-    init_data : *D3D11_SUBRESOURCE_DATA = null;
-    if data {
-        init_data = * (D3D11_SUBRESOURCE_DATA.{
-            pSysMem = data,
-            SysMemPitch = width * channels,
-            SysMemSlicePitch = 0,
-        });
-    }
 
     texture := Texture.{width = width, height = height, channels = channels, flags = flags};
 
-    hr := ID3D11Device_CreateTexture2D(D3D11.device, *texture_desc, init_data, *texture.texture );
+    init_data : []D3D11_SUBRESOURCE_DATA;
+    if !(flags & .Generate_Mips) && data {
+        init_data = NewArray(data.count, D3D11_SUBRESOURCE_DATA);
+        for * init_data {
+            it.* = D3D11_SUBRESOURCE_DATA.{
+                pSysMem = data[it_index],
+                SysMemPitch = width * channels,
+                SysMemSlicePitch = 0,
+            };
+        }
+    }
+
+    hr := ID3D11Device_CreateTexture2D(D3D11.device, *texture_desc, init_data.data, *texture.texture );
     check_hr("ID3D11Device.CreateTexture2D", #code return .{});
+
+    if flags & .Generate_Mips {
+        for data {
+            index := cast(u32)it_index * mip_levels;
+            ID3D11DeviceContext_UpdateSubresource(D3D11.device_context, texture.texture, index, null, it, width * channels, 1);
+
+        }
+    }
 
     if flags & .RWCompute {
         uav_desc := D3D11_UNORDERED_ACCESS_VIEW_DESC.{
@@ -646,12 +669,41 @@ create_texture :: (data: *u8, width: u32, height: u32, channels: u32, flags := T
             Texture2D.MipSlice = 0
         };
         hr = ID3D11Device_CreateUnorderedAccessView(D3D11.device, texture.texture, *uav_desc, *texture.unordered_access_view);
+        check_hr("ID3D11Device.CreateUnorderedAccessView", #code return .{});
     }
     else {
-        hr = ID3D11Device_CreateShaderResourceView(D3D11.device, texture.texture, null, *texture.resource_view);
+        srv_desc := D3D11_SHADER_RESOURCE_VIEW_DESC.{
+            Format = texture_format,
+            ViewDimension = ifx flags & .Cubemap then .TEXTURECUBE else .TEXTURE2D,
+            Texture2D.MostDetailedMip = 0,
+            Texture2D.MipLevels = mip_levels
+        };
+
+        hr = ID3D11Device_CreateShaderResourceView(D3D11.device, texture.texture, *srv_desc, *texture.resource_view);
         check_hr("ID3D11Device.CreateShaderResourceView", #code return .{});
+
+        if flags & .Generate_Mips {
+            ID3D11DeviceContext_GenerateMips(D3D11.device_context, texture.resource_view);
+        }
     }
     return texture;
+
+}
+
+// Actually mip_levels without .Generate_Mips doesn't make any sense in this case.
+create_texture :: inline (data: *u8, width: u32, height: u32, channels: u32, mip_levels: u32 = 1, flags := Texture_Flags.None) -> Texture {
+    data_array: []*u8;
+    if data {
+        if flags & .Cubemap {
+            data_array = NewArray(6, *u8);
+            for * data_array  it.* = data;
+        }
+        else {
+            data_array = .[data];
+        }
+    }
+
+    return create_texture_array(data_array, width, height, channels, mip_levels, flags);
 }
 
 bind_texture :: (texture: Texture, slot: u32) {
@@ -671,7 +723,14 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
     case .Nearest; d3d11_filter = .MIN_MAG_MIP_POINT;
     }
 
-    // Since all the enum values are equal to their D3D11 counterparts.
+    address_mode: D3D11_TEXTURE_ADDRESS_MODE;
+    if edge_handling == {
+    case .Wrap;   address_mode = .WRAP;
+    case .Mirror; address_mode = .MIRROR;
+    case .Clamp;  address_mode = .CLAMP;
+    case .Border; address_mode = .BORDER;
+    }
+
     address_mode := cast(D3D11_TEXTURE_ADDRESS_MODE)edge_handling;
 
     sampler_desc := D3D11_SAMPLER_DESC.{
@@ -893,8 +952,11 @@ Crash_Handler :: #import "Runtime_Support_Crash_Handler";
             if message.Severity == .ERROR || message.Severity == .CORRUPTION {
                 error = true;
             }
+
             message_str = string.{data=message.pDescription, count=xx message.DescriptionByteLength-1};
-            log_error("%: %\n", message.ID, message_str);
+            flags := ifx error Log_Flags.ERROR else .WARNING;
+            log("Gaco: % - %\n", message.ID, message_str, flags=flags);
+
             free(message);
         }
         ID3D11InfoQueue_ClearStoredMessages(info);

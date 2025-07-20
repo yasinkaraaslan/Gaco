@@ -16,6 +16,7 @@ main :: () {
     window := create_window(WindowWidth, WindowHeight, "Gacomera!");
 
     Gaco.init(window);
+    defer Gaco.deinit();
     shader := Gaco.load_shader("shaders/texture", .Vertex | .Fragment);
 
     Vertex_Input :: struct {

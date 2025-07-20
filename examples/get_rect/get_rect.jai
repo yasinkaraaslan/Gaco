@@ -80,7 +80,7 @@ gr_immediate_flush :: () {
 }
 
 gr_texture_load_from_memory :: (texture: *Gaco.Texture, memory: []u8, srgb: bool, build_mipmaps: bool) -> bool {
-    result := Gaco.create_texture_from_memory(memory, ifx srgb then .SRGB else .None);
+    result := Gaco.create_texture_from_memory(cast(string)memory, flags=ifx srgb then .SRGB else .None);
     if result.texture != null {
         texture.* = result;
         return true;
