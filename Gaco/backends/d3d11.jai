@@ -83,13 +83,27 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
 
     // --- States ---
 
-    // @Unused: stencil buffer
     depth_stencil_desc := D3D11_DEPTH_STENCIL_DESC.{
         DepthEnable = cast(BOOL) true,
         DepthWriteMask = .ALL,
         DepthFunc = .LESS_EQUAL,
+        StencilEnable = cast(BOOL) true,
+
+        StencilReadMask = D3D11_DEFAULT_STENCIL_READ_MASK,
+        StencilWriteMask = D3D11_DEFAULT_STENCIL_WRITE_MASK,
+
+        FrontFace.StencilFunc = .ALWAYS,
+        FrontFace.StencilFailOp = .KEEP,
+        FrontFace.StencilDepthFailOp = .KEEP,
+        FrontFace.StencilPassOp = .KEEP,
+
+        BackFace.StencilFunc = .ALWAYS,
+        BackFace.StencilFailOp = .KEEP,
+        BackFace.StencilDepthFailOp = .KEEP,
+        BackFace.StencilPassOp = .KEEP,
     };
 
+    // TODO(Yasin): Add more depth-stencil states.
     depth_stencil_state: *ID3D11DepthStencilState;
     hr = ID3D11Device_CreateDepthStencilState(D3D11.device, *depth_stencil_desc, *depth_stencil_state);
     check_hr("ID3D11Device.CreateDepthStencilState");
@@ -108,9 +122,16 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
     rs_front_cull_desc := D3D11_RASTERIZER_DESC.{
         FillMode = .SOLID,
         CullMode = .FRONT,
+
         DepthClipEnable = 1,
     };
     ID3D11Device_CreateRasterizerState(D3D11.device, *rs_front_cull_desc, *D3D11.rasterizer_front_cull);
+
+    rs_default_desc := D3D11_RASTERIZER_DESC.{
+        FillMode = .SOLID,
+        CullMode = .BACK,
+    };
+    ID3D11Device_CreateRasterizerState(D3D11.device, *rs_default_desc, *D3D11.rasterizer_default);
 
 
     blend_alpha_desc : D3D11_BLEND_DESC;
@@ -379,7 +400,8 @@ destroy_texture :: (texture: *Texture) {
     IUnknown_Release(texture.texture);
     IUnknown_Release(texture.resource_view);
     texture.texture, texture.resource_view = null;
-    texture.width, texture.height = 0;
+    texture.width, texture.height, texture.channels = 0;
+    texture.flags = .None;
 }
 
 load_shader :: (file_name: string, type: Shader_Type) -> Shader {
@@ -387,10 +409,10 @@ load_shader :: (file_name: string, type: Shader_Type) -> Shader {
 
     bytecode := load_shader_bytecode(file_name, type);
     if type & .Compute {
+        defer free(bytecode.cs);
         assert(type == .Compute, "Compute shader cannot be used with other shader types.");
         hr := ID3D11Device_CreateComputeShader(D3D11.device, bytecode.cs.data, xx bytecode.cs.count, null, *shader.compute_shader);
         check_hr("ID3D11Device.CreateComputeShader", #code `return .{});
-        free(bytecode.cs);
 
         #if DEBUG {
             ID3D11DeviceChild_SetPrivateData(shader.compute_shader, *uid(WKPDID_D3DDebugObjectName), CS_ENTRY_POINT.count, CS_ENTRY_POINT.data);
@@ -398,11 +420,11 @@ load_shader :: (file_name: string, type: Shader_Type) -> Shader {
     }
 
     if type & .Vertex {
+        defer free(bytecode.vs);
         hr := ID3D11Device_CreateVertexShader(D3D11.device, bytecode.vs.data, xx bytecode.vs.count, null, *shader.vertex_shader);
         check_hr("ID3D11Device.CreateVertexShader", #code `return .{});
 
         shader.input_layout = get_input_layout_from_bytecode(bytecode.vs);
-        free(bytecode.vs);
 
         #if DEBUG {
             ID3D11DeviceChild_SetPrivateData(shader.vertex_shader, *uid(WKPDID_D3DDebugObjectName), VS_ENTRY_POINT.count, VS_ENTRY_POINT.data);
@@ -410,9 +432,9 @@ load_shader :: (file_name: string, type: Shader_Type) -> Shader {
     }
 
     if type & .Fragment {
+        defer free(bytecode.fs);
         hr := ID3D11Device_CreatePixelShader(D3D11.device, bytecode.fs.data, xx bytecode.fs.count, null, *shader.pixel_shader);
         check_hr("ID3D11Device.CreatePixelShader", #code `return .{});
-        free(bytecode.fs);
 
         #if DEBUG {
             ID3D11DeviceChild_SetPrivateData(shader.pixel_shader,*uid(WKPDID_D3DDebugObjectName), FS_ENTRY_POINT.count, FS_ENTRY_POINT.data);
@@ -428,7 +450,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_file_na
     flags := D3DCOMPILE.ENABLE_STRICTNESS;
     defines: []string;
     #if DEBUG {
-        flags |= .DEBUG |  .SKIP_OPTIMIZATION;
+        flags |= .DEBUG | .SKIP_OPTIMIZATION;
     }
     compile :: (type: Shader_Type) -> string #expand {
         entry_point, target: string;
@@ -473,10 +495,10 @@ set_shader :: (shader: Shader) {
     }
 }
 
-clear :: (r: float, g: float, b: float, a: float, depth := 1.0) {
+clear :: (r: float, g: float, b: float, a: float, depth := 1.0, stencil : u8 = 0) {
     color := float.[r, g, b, a];
     ID3D11DeviceContext_ClearRenderTargetView(D3D11.device_context, D3D11.render_target_view, *color);
-    ID3D11DeviceContext_ClearDepthStencilView(D3D11.device_context, D3D11.depth_stencil_view, cast(u32) D3D11_CLEAR_FLAG.DEPTH  | D3D11_CLEAR_FLAG.STENCIL, depth, 0);
+    ID3D11DeviceContext_ClearDepthStencilView(D3D11.device_context, D3D11.depth_stencil_view, cast(u32) D3D11_CLEAR_FLAG.DEPTH  | D3D11_CLEAR_FLAG.STENCIL, depth, stencil);
 }
 
 set_primitive_type :: (primitive_type : Primitive_Type) {
@@ -518,7 +540,7 @@ set_blend_state :: (state: Blend_State) {
 }
 
 set_rasterizer_state :: (state: Rasterizer_State) {
-    states := (*ID3D11RasterizerState).[null, D3D11.rasterizer_front_cull, D3D11.rasterizer_scissor];
+    states := (*ID3D11RasterizerState).[D3D11.rasterizer_default, D3D11.rasterizer_front_cull, D3D11.rasterizer_scissor];
     ID3D11DeviceContext_RSSetState(D3D11.device_context, states[state]);
 }
 
@@ -599,14 +621,14 @@ dispatch_compute :: (num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) {
 
 create_texture_array :: (data: []*u8, width: u32, height: u32, channels: u32, mip_levels: u32 = 1, flags := Texture_Flags.None) -> Texture {
     cpu_flags: D3D11_CPU_ACCESS_FLAG;
-    if flags & .Read  cpu_flags |= .READ;
-    if flags & .Write cpu_flags |= .WRITE;
 
     bind_flags := D3D11_BIND_FLAG.SHADER_RESOURCE;
     misc_flags : D3D11_RESOURCE_MISC_FLAG;
     if flags & .RWCompute
         bind_flags |= .UNORDERED_ACCESS;
     if flags & .Generate_Mips {
+        // @Speed: We would probably want to create a seperate render target texture
+        // and copy it to our newly generated texture.
         bind_flags |= .RENDER_TARGET;
         misc_flags |= .GENERATE_MIPS;
     }
@@ -696,7 +718,7 @@ create_texture_array :: (data: []*u8, width: u32, height: u32, channels: u32, mi
 
 }
 
-// Actually mip_levels without .Generate_Mips doesn't make any sense in this case.
+// Actually, mip_levels without .Generate_Mips doesn't make any sense in here
 create_texture :: inline (data: *u8, width: u32, height: u32, channels: u32, mip_levels: u32 = 1, flags := Texture_Flags.None) -> Texture {
     data_array: []*u8;
     if data {
@@ -765,7 +787,7 @@ CS_EXTENSION :: ".dxcs";
 #scope_file
 get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
     reflector: *ID3D11ShaderReflection;
-    hr := D3DReflect(bytecode.data, xx bytecode.count, *uid(ID3D11ShaderReflection_UUID), cast(**void) *reflector);
+    hr := D3DReflect(bytecode.data, xx bytecode.count, uid(ID3D11ShaderReflection_UUID), cast(**void)*reflector);
     check_hr("D3DReflect", #code `return null);
 
     shader_desc: D3D11_SHADER_DESC;
@@ -783,6 +805,7 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
         element_desc.SemanticName = SemanticName;
         element_desc.SemanticIndex = SemanticIndex;
         element_desc.AlignedByteOffset = D3D11_APPEND_ALIGNED_ELEMENT;
+
         // InputSlot is @Hardcoded right now. There may be reasons to want to change this
         // but there is no way to get it from the shader code and I don't want to force people
         // to pass an input layout.
@@ -841,6 +864,7 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
 
     hr = ID3D11Device_CreateInputLayout(D3D11.device, input_layout_desc.data, cast(u32) input_layout_desc.count, bytecode.data, cast(u64) bytecode.count, *input_layout);
     check_hr("ID3D11Device.CreateInputLayout", #code `return null);
+
     IUnknown_Release(reflector);
     return input_layout;
 }
@@ -848,7 +872,7 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
 
 check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
     if FAILED(`hr) {
-        fail_message : string;
+        fail_message: string;
         // https://learn.microsoft.com/tr-tr/windows/win32/direct3d11/d3d11-graphics-reference-returnvalues
         if `hr == {
         case 0x887C0002; fail_message = "The file was not found.";
@@ -863,7 +887,9 @@ check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
         case 0x8007000E; fail_message = "Direct3D could not allocate sufficient memory to complete the call.";
         case 0x80004001; fail_message = "The procedure call isn't implemented with the passed parameter combination.";
 
-        case; fail_message = get_last_error();
+        case;
+            System :: #import "System";
+            _, fail_message = System.get_error_value_and_string();
         }
 
         log_error("% failed with code 0x%: %\n", from, FormatInt.{value = `hr, base=16}, fail_message);
@@ -875,22 +901,6 @@ check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
     }
 }
 
-get_last_error :: () -> string {
-    error := GetLastError();
-    if(error == 0) {
-        return ""; //No error message has been recorded
-    }
-
-    message_buffer: *u8;
-    // Ask Win32 to give us the string version of that message ID.
-    // The parameters we pass in, tell Win32 to create the buffer that holds the message for us (because we don't yet know how long the message string will be).
-    size := FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, null, error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), *message_buffer, 0, null);
-
-    message := string.{data=message_buffer, count=size};
-
-    return message;
-}
-
 D3D11 : struct {
     device: *ID3D11Device;
     device_context: *ID3D11DeviceContext;
@@ -898,6 +908,7 @@ D3D11 : struct {
     render_target_view: *ID3D11RenderTargetView;
     depth_stencil_view: *ID3D11DepthStencilView;
 
+    rasterizer_default: *ID3D11RasterizerState;
     rasterizer_front_cull: *ID3D11RasterizerState;
     rasterizer_scissor: *ID3D11RasterizerState;
 
@@ -909,9 +920,9 @@ D3D11 : struct {
 #import "d3d_compiler";
 #import "dxgi";
 #import "Windows";
-Crash_Handler :: #import "Runtime_Support_Crash_Handler";
 
 #if DEBUG {
+    Crash_Handler :: #import "Runtime_Support_Crash_Handler";
     init_exception_handler :: () {
         info: *ID3D11InfoQueue;
         hr := IUnknown_QueryInterface(D3D11.device, *uid(ID3D11InfoQueue_UUID), cast(**void) *info);
@@ -949,7 +960,7 @@ Crash_Handler :: #import "Runtime_Support_Crash_Handler";
             message_size : u64;
             ID3D11InfoQueue_GetMessageA(info, i, null, *message_size);
 
-            message := cast(*D3D11_MESSAGE) alloc(xx message_size);
+            message := cast(*D3D11_MESSAGE) alloc(cast(s64)message_size,, temp);
             ID3D11InfoQueue_GetMessageA(info, i, message, *message_size);
 
             for logged_ids {
@@ -964,8 +975,6 @@ Crash_Handler :: #import "Runtime_Support_Crash_Handler";
             message_str = string.{data=message.pDescription, count=xx message.DescriptionByteLength-1};
             flags := ifx error Log_Flags.ERROR else .WARNING;
             log("Gaco: % - %\n", message.ID, message_str, flags=flags);
-
-            free(message);
         }
         ID3D11InfoQueue_ClearStoredMessages(info);
         IUnknown_Release(info);
