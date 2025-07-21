@@ -82,10 +82,11 @@ Blend_State :: enum u32 #specified {
 }
 
 // @@
-Rasterizer_State :: enum u32 {
+Rasterizer_State :: enum u32 #specified {
     Default    :: 0;
     Front_Cull :: 1;
-    Scissor    :: 2;
+    No_Cull    :: 2;
+    Scissor    :: 3;
 }
 
 Rect :: struct {

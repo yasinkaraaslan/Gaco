@@ -111,28 +111,22 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
     ID3D11DeviceContext_OMSetDepthStencilState(D3D11.device_context, depth_stencil_state, 0xFF);
     IUnknown_Release(depth_stencil_state);
 
-    rs_scissor_desc := D3D11_RASTERIZER_DESC.{
+    rs_desc := D3D11_RASTERIZER_DESC.{
         FillMode = .SOLID,
         CullMode = .BACK,
         DepthClipEnable = 1,
         ScissorEnable = 1,
     };
-    ID3D11Device_CreateRasterizerState(D3D11.device, *rs_scissor_desc, *D3D11.rasterizer_scissor);
+    ID3D11Device_CreateRasterizerState(D3D11.device, *rs_desc, *D3D11.rasterizer_scissor);
 
-    rs_front_cull_desc := D3D11_RASTERIZER_DESC.{
-        FillMode = .SOLID,
-        CullMode = .FRONT,
+    rs_desc.ScissorEnable = 0;
+    ID3D11Device_CreateRasterizerState(D3D11.device, *rs_desc, *D3D11.rasterizer_default);
 
-        DepthClipEnable = 1,
-    };
-    ID3D11Device_CreateRasterizerState(D3D11.device, *rs_front_cull_desc, *D3D11.rasterizer_front_cull);
+    rs_desc.CullMode = .FRONT;
+    ID3D11Device_CreateRasterizerState(D3D11.device, *rs_desc, *D3D11.rasterizer_front_cull);
 
-    rs_default_desc := D3D11_RASTERIZER_DESC.{
-        FillMode = .SOLID,
-        CullMode = .BACK,
-    };
-    ID3D11Device_CreateRasterizerState(D3D11.device, *rs_default_desc, *D3D11.rasterizer_default);
-
+    rs_desc.CullMode = .NONE;
+    ID3D11Device_CreateRasterizerState(D3D11.device, *rs_desc, *D3D11.rasterizer_no_cull);
 
     blend_alpha_desc : D3D11_BLEND_DESC;
     blend_alpha_desc.RenderTarget[0] = .{
@@ -248,7 +242,7 @@ bind_buffer :: (buffer: Buffer(.Index)) {
     ID3D11DeviceContext_IASetIndexBuffer(D3D11.device_context, buffer.buffer, format, 0);
 }
 
-bind_buffer :: (buffer: Buffer(.Constant), bind_to: Shader_Type, slot : u32 = 0) {
+bind_buffer :: (buffer: Buffer(.Constant), slot : u32 = 0, bind_to: Shader_Type) {
     if bind_to == .Unspecified {
         log_error("Gaco: Unspecified shader type to bind a constant buffer.");
         return;
@@ -540,7 +534,7 @@ set_blend_state :: (state: Blend_State) {
 }
 
 set_rasterizer_state :: (state: Rasterizer_State) {
-    states := (*ID3D11RasterizerState).[D3D11.rasterizer_default, D3D11.rasterizer_front_cull, D3D11.rasterizer_scissor];
+    states := (*ID3D11RasterizerState).[D3D11.rasterizer_default, D3D11.rasterizer_front_cull, D3D11.rasterizer_no_cull, D3D11.rasterizer_scissor];
     ID3D11DeviceContext_RSSetState(D3D11.device_context, states[state]);
 }
 
@@ -911,6 +905,7 @@ D3D11 : struct {
     rasterizer_default: *ID3D11RasterizerState;
     rasterizer_front_cull: *ID3D11RasterizerState;
     rasterizer_scissor: *ID3D11RasterizerState;
+    rasterizer_no_cull: *ID3D11RasterizerState;
 
     blend_alpha_state: *ID3D11BlendState;
 
