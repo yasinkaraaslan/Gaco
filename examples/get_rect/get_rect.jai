@@ -68,14 +68,16 @@ gr_immediate_quad :: (p0: Vector2, p1: Vector2, p2: Vector2, p3: Vector2, color 
 }
 
 gr_immediate_flush :: () {
+    Gaco.set_rasterizer_state(.No_Cull);
     if VerticesToDraw {
         Gaco.write_buffer(*VerticesBuffer, VerticesToDraw);
         Gaco.bind_buffer(VerticesBuffer);
-        Gaco.bind_buffer(WindowProjConstantBuffer, .Vertex, 0);
+        Gaco.bind_buffer(WindowProjConstantBuffer, 0, .Vertex);
         Gaco.draw(false, cast(u32)VerticesToDraw.count);
         array_reset(*VerticesToDraw);
     }
     Gaco.set_blend_state(.None);
+    Gaco.set_rasterizer_state(.Default);
 }
 
 gr_texture_load_from_memory :: (texture: *Gaco.Texture, memory: []u8, srgb: bool, build_mipmaps: bool) -> bool {

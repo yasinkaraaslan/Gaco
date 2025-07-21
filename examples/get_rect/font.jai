@@ -51,7 +51,9 @@ load_font_from_memory :: (memory: []u8, size: int) -> *Font {
     metrics := font.face.size.metrics;
     font.character_height = xx size;
     font.em_width = xx metrics.x_ppem;
-    font.ascent = metrics.ascender / 64.0 + metrics.descender / 64.0;
+    font.typical_ascender = metrics.ascender / 64.0;
+    font.typical_descender = metrics.descender / 64.0;
+    font.ascent = font.typical_ascender + font.typical_descender;
     texture_width, texture_height : u32;
     for 32..126 {
         if FT_Load_Char(font.face, cast(u32)it, FT_LOAD_BITMAP_METRICS_ONLY) != 0 {
@@ -83,7 +85,7 @@ load_font_from_memory :: (memory: []u8, size: int) -> *Font {
         };
 
         glyph := *font.glyphs[it];
-        glyph.advance_x = advance.x / 64.0;
+        glyph.advance = advance.x / 64.0;
 
 
         glyph.bitmap_width = bitmap.width;
@@ -145,7 +147,7 @@ prepare_text :: (using font: *Font, text: string, effect_flags: Font_Effects = 0
 
             y_addition := y - glyph.bitmap_top;
             x_addition := x + glyph.bitmap_left;
-            x += glyph.advance_x;
+            x += glyph.advance;
 
             if has_kerning && it_index != 0 {
                 kerning: FT_Vector;
@@ -161,7 +163,7 @@ prepare_text :: (using font: *Font, text: string, effect_flags: Font_Effects = 0
             if char == " " {
                 continue;
             }
-            if x > width  width += glyph.advance_x;
+            if x > width  width += glyph.advance;
 
             for 0..3 {
                 glyph.vertices[it].position += Vector2.{x_addition, y_addition};
@@ -171,7 +173,7 @@ prepare_text :: (using font: *Font, text: string, effect_flags: Font_Effects = 0
             num_chars += 1;
         }
         else if char == "\n" {
-            y += font.character_height;
+            y += character_height;
             x = 0;
         }
 
@@ -180,12 +182,17 @@ prepare_text :: (using font: *Font, text: string, effect_flags: Font_Effects = 0
     assert(num_chars <= MAX_CHARACTERS);
 
     Gaco.write_buffer(*TextVertexBuffer, vertices);
-    font.num_chars_to_render = num_chars;
+    num_chars_to_render = num_chars;
+    temporary_glyphs_width_in_pixels = cast(s64)width;
     return cast(s64)width;
 }
 
+
 draw_prepared_text :: (font: *Font, x: s64, y: s64, color := Vector4.{1, 1, 1, 1}, effects: Font_Effects = 0) {
-    pos := Vector2.{x=xx x, y=xx y};
+    draw_prepared_text(font, cast(float)x, cast(float)y, color, effects);
+}
+draw_prepared_text :: (font: *Font, x: float, y: float, color := Vector4.{1, 1, 1, 1}, effects: Font_Effects = 0) {
+    pos := Vector2.{x, y};
     Gaco.write_buffer(*TextPosConstantBuffer, *pos);
 
 
@@ -199,10 +206,10 @@ draw_prepared_text :: (font: *Font, x: s64, y: s64, color := Vector4.{1, 1, 1, 1
     Gaco.bind_buffer(TextVertexBuffer);
     Gaco.bind_buffer(TextIndexBuffer);
 
-    Gaco.bind_buffer(WindowProjConstantBuffer, .Vertex, 0);
-    Gaco.bind_buffer(TextPosConstantBuffer,  .Vertex, 1);
+    Gaco.bind_buffer(WindowProjConstantBuffer, 0, .Vertex);
+    Gaco.bind_buffer(TextPosConstantBuffer, 1, .Vertex);
 
-    Gaco.bind_buffer(font.constant_buffer, .Fragment);
+    Gaco.bind_buffer(font.constant_buffer, 0, .Fragment);
     Gaco.bind_texture(font.texture, 0);
     Gaco.draw(true, font.num_chars_to_render * 6);
     Gaco.set_blend_state(.None);
@@ -213,8 +220,9 @@ draw_text :: inline (font: *Font, text: string, x: s64, y: s64, color := Vector4
     draw_prepared_text(font, x, y, color);
 }
 
-draw_text_ascended :: inline (font: *Font, text: string, x: s64, y: s64, color := Vector4.{1,1,1,1}) {
-    draw_text(font, text, x, y + cast(s64)font.ascent, color);
+draw_text_ascended :: inline (font: *Font, text: string, x: float, y: float, color := Vector4.{1,1,1,1}) {
+    prepare_text(font, text);
+    draw_prepared_text(font, x, y + font.ascent, color);
 }
 
 Font_Effects :: enum{};
@@ -223,6 +231,9 @@ Font_Effects :: enum{};
 Font :: struct {
     face: FT_Face;
     ascent: float;
+    typical_descender: float;
+    typical_ascender: float;
+
     character_height: u32;
     em_width: float;
     constant_buffer: Gaco.Buffer(.Constant);
@@ -233,10 +244,16 @@ Font :: struct {
     num_chars_to_render: u32;
 
     has_kerning: bool;
+
+
+    // Unused but they are here because GetRect needs them for some reason.
+    temporary_glyphs: [..]Glyph_Info;
+    temporary_glyphs_byte_offsets: [..]int;
+    temporary_glyphs_width_in_pixels: int;
 }
 
 Glyph_Info :: struct {
-    advance_x: float;
+    advance: float;
     vertices: [4]Text_Vertex_Data;
     bitmap_width, bitmap_height: u32;
     bitmap_left, bitmap_top: s32;
