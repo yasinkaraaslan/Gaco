@@ -255,7 +255,7 @@ bind_buffer :: (buffer: Buffer(.Constant), slot : u32 = 0, bind_to: Shader_Type)
         ID3D11DeviceContext_CSSetConstantBuffers(D3D11.device_context, slot, 1, *buffer.buffer);
 }
 
-bind_buffer :: (buffer: Buffer(.Structured), bind_to: Shader_Type, slot : u32 = 0) {
+bind_buffer :: (buffer: Buffer(.Structured), slot : u32 = 0, bind_to: Shader_Type) {
     if bind_to == .Unspecified {
         log_error("Gaco: Unspecified shader type to bind a structured buffer.");
         return;
@@ -364,10 +364,11 @@ write_buffer :: inline (buffer: *Buffer, data: []$T) {
     write_buffer(buffer, data.data, data.count * size_of(T));
 }
 
-write_buffer :: inline (buffer: *Buffer, data: *void) {
-    // I guess you could change the stride and not notice.
+write_buffer :: inline (buffer: *Buffer, data: *$T) {
+    // We shouldn't be changing the stride because we might want to just write the
+    // first 3 values of a Vector4, for example. (Since D3D11 requires 16 byte aligned structures)
 
-    write_buffer(buffer, data, buffer.size);
+    write_buffer(buffer, data, size_of(T));
 }
 
 copy_buffer :: (from: *Buffer, to: *Buffer) {

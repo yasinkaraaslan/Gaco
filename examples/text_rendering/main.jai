@@ -68,7 +68,7 @@ main :: () {
         draw_shadowed_text(*font, tprint("FPS: %", fps), .{0, 0});
 
         draw_shadowed_text(*big_font, IMPORTANT_TEXT, .{0, WindowHeight * 0.1});
-        Gaco.present(1);
+        Gaco.present(0);
 
     }
 }

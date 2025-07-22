@@ -25,7 +25,7 @@ Fragment_Input vertex_main(Vertex_Input input) {
 Texture2D shader_texture: register(t0);
 SamplerState texture_sampler: register(s0);
 
-float4 fragment_main(Fragment_Input input, uint tid: SV_PrimitiveID) : SV_Target {
+float4 fragment_main(Fragment_Input input) : SV_Target {
 
     float4 color = shader_texture.Sample(texture_sampler, input.tex);
     return color;
