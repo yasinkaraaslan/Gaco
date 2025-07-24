@@ -1,14 +1,14 @@
-MAX_VERTEX_COUNT :: 1024; // Increase this number if you need, or... generate vertex buffers on the fly.
+MAX_VERTEX_COUNT :: 2048; // Increase this number if you need
 
 #import "GetRect_LeftHanded"()(Type_Indicator);
 
 gr_init :: () {
     ColorShader = Gaco.load_shader("shaders/color", .Vertex | .Fragment);
     ImageShader = Gaco.load_shader("shaders/image", .Vertex | .Fragment);
-    {
-        vertices: [MAX_VERTEX_COUNT]Vertex_Data;
-        VerticesBuffer = Gaco.create_buffer(*vertices, .Vertex, .Dynamic);
-    }
+    VerticesBuffer = Gaco.create_buffer(null, MAX_VERTEX_COUNT, size_of(Vertex_Data), .Vertex, .Dynamic);
+
+    VerticesToDraw.allocator = temp;
+
     procs := Draw_Procs.{
         texture_load_from_memory = gr_texture_load_from_memory,
         set_scissor = gr_set_scissor,
@@ -43,7 +43,7 @@ gr_set_shader_for_images :: (texture: *Gaco.Texture) {
 }
 
 gr_immediate_triangle :: (p0: Vector3, p1: Vector3, p2: Vector3, c0 := Vector4.{1,1,1,1}, c1 := Vector4.{1,1,1,1}, c2 := Vector4.{1,1,1,1}, uv0 := Vector2.{}, uv1 := Vector2.{}, uv2 := Vector2.{}, normal := Vector3.{z=1}) {
-    // Normal is ignored for now.
+    // Normal is ignored
 
     vertices := Vertex_Data.[
     .{p0.xy, c0, uv0},
@@ -68,25 +68,29 @@ gr_immediate_quad :: (p0: Vector2, p1: Vector2, p2: Vector2, p3: Vector2, color 
 }
 
 gr_immediate_flush :: () {
-    Gaco.set_rasterizer_state(.No_Cull);
     if VerticesToDraw {
+        Gaco.set_blend_state(.Alpha);
+        defer Gaco.set_blend_state(.None);
+
+        Gaco.set_rasterizer_state(.No_Cull);
+        defer Gaco.set_rasterizer_state(.Default);
+
         Gaco.write_buffer(*VerticesBuffer, VerticesToDraw);
         Gaco.bind_buffer(VerticesBuffer);
         Gaco.bind_buffer(WindowProjConstantBuffer, 0, .Vertex);
         Gaco.draw(false, cast(u32)VerticesToDraw.count);
         array_reset(*VerticesToDraw);
     }
-    Gaco.set_blend_state(.None);
-    Gaco.set_rasterizer_state(.Default);
 }
 
 gr_texture_load_from_memory :: (texture: *Gaco.Texture, memory: []u8, srgb: bool, build_mipmaps: bool) -> bool {
     result := Gaco.create_texture_from_memory(cast(string)memory, flags=ifx srgb then .SRGB else .None);
-    if result.texture != null {
-        texture.* = result;
-        return true;
+
+    if Gaco.is_empty(result) {
+        return false;
     }
-    return false;
+    texture.* = result;
+    return true;
 }
 
 gr_set_scissor :: (x0: s32, y0: s32, x1: s32, y1: s32) {

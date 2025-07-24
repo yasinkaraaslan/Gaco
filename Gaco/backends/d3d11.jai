@@ -35,6 +35,18 @@ Texture :: struct {
 };
 
 
+is_empty :: (texture: Texture) -> bool {
+    return texture.texture == null;
+}
+
+is_empty :: (using shader: Shader) -> bool {
+    empty_vs := type & .Vertex   && (!vertex_shader || !input_layout);
+    empty_fs := type & .Fragment && !pixel_shader;
+    empty_cs := type & .Compute  && !compute_shader;
+
+    return empty_vs || empty_fs || empty_cs;
+}
+
 init :: (window: HWND, wanted_msaa : u32 = 4) {
     flags : D3D11_CREATE_DEVICE_FLAG;
     #if DEBUG flags |= .DEBUG;
@@ -739,7 +751,7 @@ bind_texture :: (texture: Texture, slot: u32) {
 }
 
 // @Incomplete: give more options
-create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Wrap) -> Sampler {
+create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Wrap, max_anisotropy : u32 = 1) -> Sampler {
     d3d11_filter: D3D11_FILTER;
     if filtering == {
     case .Linear;  d3d11_filter = .MIN_MAG_MIP_LINEAR;
@@ -759,8 +771,9 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
     sampler_desc := D3D11_SAMPLER_DESC.{
         Filter = d3d11_filter,
         AddressU = address_mode, AddressV = address_mode, AddressW = address_mode,
-        MaxAnisotropy = 1,
+        MaxAnisotropy = max_anisotropy,
         ComparisonFunc = .ALWAYS,
+        MinLOD = 0,
         MaxLOD = cast(float32)D3D11_FLOAT32_MAX,
     };
 
