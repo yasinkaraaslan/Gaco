@@ -414,7 +414,6 @@ destroy_texture :: (texture: *Texture) {
 load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> Shader {
     shader: Shader;
     if type & .Compute {
-        defer free(bytecode.cs);
         assert(type == .Compute, "Compute shader cannot be used with other shader types.");
         hr := ID3D11Device_CreateComputeShader(D3D11.device, bytecode.cs.data, xx bytecode.cs.count, null, *shader.compute_shader);
         check_hr("ID3D11Device.CreateComputeShader", #code `return .{});
@@ -425,7 +424,6 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> S
     }
 
     if type & .Vertex {
-        defer free(bytecode.vs);
         hr := ID3D11Device_CreateVertexShader(D3D11.device, bytecode.vs.data, xx bytecode.vs.count, null, *shader.vertex_shader);
         check_hr("ID3D11Device.CreateVertexShader", #code `return .{});
 
@@ -437,7 +435,6 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> S
     }
 
     if type & .Fragment {
-        defer free(bytecode.fs);
         hr := ID3D11Device_CreatePixelShader(D3D11.device, bytecode.fs.data, xx bytecode.fs.count, null, *shader.fragment_shader);
         check_hr("ID3D11Device.CreatePixelShader", #code `return .{});
 
@@ -459,7 +456,7 @@ destroy_shader :: (using shader: Shader) {
         IUnknown_Release(compute_shader);
 }
 
-compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_file_name: string) -> Shader_Bytecode, bool {
+compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, bool {
     bytecode: Shader_Bytecode;
     flags := D3DCOMPILE.ENABLE_STRICTNESS;
     defines: []string;
@@ -479,7 +476,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_file_na
             entry_point = CS_ENTRY_POINT;
             target = "cs_5_0";
         }
-        output, errors, hr := D3DCompile(source, shader_file_name, defines, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry_point, target, xx flags, 0);
+        output, errors, hr := D3DCompile(source, shader_name, defines, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry_point, target, xx flags, 0);
         defer free(errors);
         check_hr("D3DCompile", #code {
             // free(bytecode); @Leak
@@ -496,6 +493,12 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_file_na
     return bytecode, true;
 }
 
+clear :: (r: float, g: float, b: float, a: float, depth := 1.0, stencil : u8 = 0) {
+    color := float.[r, g, b, a];
+    ID3D11DeviceContext_ClearRenderTargetView(D3D11.device_context, D3D11.render_target_view, *color);
+    ID3D11DeviceContext_ClearDepthStencilView(D3D11.device_context, D3D11.depth_stencil_view, cast(u32) D3D11_CLEAR_FLAG.DEPTH  | D3D11_CLEAR_FLAG.STENCIL, depth, stencil);
+}
+
 set_shader :: (shader: Shader) {
     if shader.type & .Vertex {
         ID3D11DeviceContext_IASetInputLayout(D3D11.device_context, shader.input_layout);
@@ -507,12 +510,6 @@ set_shader :: (shader: Shader) {
     if shader.type & .Compute {
         ID3D11DeviceContext_CSSetShader(D3D11.device_context, shader.compute_shader, null, 0);
     }
-}
-
-clear :: (r: float, g: float, b: float, a: float, depth := 1.0, stencil : u8 = 0) {
-    color := float.[r, g, b, a];
-    ID3D11DeviceContext_ClearRenderTargetView(D3D11.device_context, D3D11.render_target_view, *color);
-    ID3D11DeviceContext_ClearDepthStencilView(D3D11.device_context, D3D11.depth_stencil_view, cast(u32) D3D11_CLEAR_FLAG.DEPTH  | D3D11_CLEAR_FLAG.STENCIL, depth, stencil);
 }
 
 set_primitive_type :: (primitive_type : Primitive_Type) {

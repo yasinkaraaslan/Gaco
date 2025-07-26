@@ -93,33 +93,59 @@ Rect :: struct {
     x, y, w, h : s32 = 0;
 }
 
-compile_shader :: (file_name: string, output_path: string, type: Shader_Type) -> bool {
+// compile_shader and load_shader create and load separate files for each shader type.
+// If you want to implement something like a single package file for your shaders,
+// consider using compile_shader_to_bytecode and load_shader_from_bytecode.
+
+compile_shader :: (file_name: string, output_file_without_extension: string, type: Shader_Type) -> bool {
+    push_allocator(temp);
     source, read_ok := read_entire_file(file_name, zero_terminated=true);
-    defer free(source);
     if !read_ok return false;
 
-    // SPIR-V or DXIL or something...
     bytecode, compile_ok := compile_shader_to_bytecode(source, type, path_filename(file_name));
     if !compile_ok return false;
     if type & .Vertex {
-        write_ok := write_entire_file(join(output_path, VS_EXTENSION), bytecode.vs);
+        write_ok := write_entire_file(join(output_file_without_extension, VS_EXTENSION), bytecode.vs);
         if !write_ok return false;
-        free(bytecode.vs);
     }
 
     if type & .Fragment {
-        write_ok := write_entire_file(join(output_path, FS_EXTENSION), bytecode.fs);
+        write_ok := write_entire_file(join(output_file_without_extension, FS_EXTENSION), bytecode.fs);
         if !write_ok return false;
-        free(bytecode.fs);
     }
 
     if type & .Compute {
-        write_ok := write_entire_file(join(output_path, CS_EXTENSION), bytecode.cs);
+        write_ok := write_entire_file(join(output_file_without_extension, CS_EXTENSION), bytecode.cs);
         if !write_ok return false;
-        free(bytecode.cs);
     }
 
     return true;
+}
+
+
+load_shader :: (file_name_without_extension: string, type: Shader_Type) -> Shader {
+    push_allocator(temp);
+    bytecode: Shader_Bytecode;
+    ok := false;
+
+    if type & .Vertex {
+        file_name := join(file_name_without_extension, VS_EXTENSION);
+        bytecode.vs, ok = read_entire_file(file_name);
+        if !ok return .{};
+    }
+
+    if type & .Fragment {
+        file_name := join(file_name_without_extension, FS_EXTENSION);
+        bytecode.fs, ok = read_entire_file(file_name);
+        if !ok return .{};
+    }
+
+    if type & .Compute {
+        file_name := join(file_name_without_extension, CS_EXTENSION);
+        bytecode.cs, ok = read_entire_file(file_name);
+        if !ok return .{};
+    }
+    return load_shader_from_bytecode(bytecode, type);
 }
 
 create_buffer :: (data: *$T, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {
@@ -145,30 +171,6 @@ create_buffer :: (data: *$T, $type: Buffer_Type, usage := Buffer_Usage.Default) 
     }
     return create_buffer(data_pointer, count, stride, type, usage);
 }
-
-load_shader :: (file_name_without_extension: string, type: Shader_Type) -> Shader {
-    bytecode: Shader_Bytecode;
-    ok := false;
-    if type & .Vertex {
-        file_name := join(file_name_without_extension, VS_EXTENSION);
-        bytecode.vs, ok = read_entire_file(file_name);
-        if !ok return .{};
-    }
-
-    if type & .Fragment {
-        file_name := join(file_name_without_extension, FS_EXTENSION);
-        bytecode.fs, ok = read_entire_file(file_name);
-        if !ok return .{};
-    }
-
-    if type & .Compute {
-        file_name := join(file_name_without_extension, CS_EXTENSION);
-        bytecode.cs, ok = read_entire_file(file_name);
-        if !ok return .{};
-    }
-    return load_shader_from_bytecode(bytecode, type);
-}
-
 
 create_texture_from_file :: (file_name: string, mip_levels : u32 = 1, flags := Texture_Flags.None, desired_channels : u32 = 0) -> Texture {
     bytes, ok := read_entire_file(file_name,, temp);
@@ -202,7 +204,7 @@ create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, f
 
         data[it_index] = stbi_load_from_memory(bytes.data, cast(s32)bytes.count, *width, *height, *channels, cast(s32)desired_channels);
 
-        if it_index == 1 {
+        if it_index == 0 {
             texture_width    = cast(u32)width;
             texture_height   = cast(u32)height;
             texture_channels = ifx desired_channels desired_channels else cast(u32)channels;
