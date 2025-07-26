@@ -3,7 +3,7 @@ Shader :: struct {
     union {
         struct {
             vertex_shader: *ID3D11VertexShader;
-            pixel_shader: *ID3D11PixelShader;
+            fragment_shader: *ID3D11PixelShader;
             input_layout: *ID3D11InputLayout;
         }
         compute_shader: *ID3D11ComputeShader;
@@ -41,10 +41,10 @@ is_empty :: (texture: Texture) -> bool {
 
 is_empty :: (using shader: Shader) -> bool {
     empty_vs := type & .Vertex   && (!vertex_shader || !input_layout);
-    empty_fs := type & .Fragment && !pixel_shader;
+    empty_fs := type & .Fragment && !fragment_shader;
     empty_cs := type & .Compute  && !compute_shader;
 
-    return empty_vs || empty_fs || empty_cs;
+    return type == .Unspecified || empty_vs || empty_fs || empty_cs;
 }
 
 init :: (window: HWND, wanted_msaa : u32 = 4) {
@@ -411,10 +411,8 @@ destroy_texture :: (texture: *Texture) {
     texture.flags = .None;
 }
 
-load_shader :: (file_name: string, type: Shader_Type) -> Shader {
+load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> Shader {
     shader: Shader;
-
-    bytecode := load_shader_bytecode(file_name, type);
     if type & .Compute {
         defer free(bytecode.cs);
         assert(type == .Compute, "Compute shader cannot be used with other shader types.");
@@ -440,16 +438,25 @@ load_shader :: (file_name: string, type: Shader_Type) -> Shader {
 
     if type & .Fragment {
         defer free(bytecode.fs);
-        hr := ID3D11Device_CreatePixelShader(D3D11.device, bytecode.fs.data, xx bytecode.fs.count, null, *shader.pixel_shader);
+        hr := ID3D11Device_CreatePixelShader(D3D11.device, bytecode.fs.data, xx bytecode.fs.count, null, *shader.fragment_shader);
         check_hr("ID3D11Device.CreatePixelShader", #code `return .{});
 
         #if DEBUG {
-            ID3D11DeviceChild_SetPrivateData(shader.pixel_shader,*uid(WKPDID_D3DDebugObjectName), FS_ENTRY_POINT.count, FS_ENTRY_POINT.data);
+            ID3D11DeviceChild_SetPrivateData(shader.fragment_shader,*uid(WKPDID_D3DDebugObjectName), FS_ENTRY_POINT.count, FS_ENTRY_POINT.data);
         }
     }
-
     shader.type = type;
     return shader;
+}
+
+
+destroy_shader :: (using shader: Shader) {
+    if type & .Vertex && vertex_shader
+        IUnknown_Release(vertex_shader);
+    if type & .Fragment && fragment_shader
+        IUnknown_Release(fragment_shader);
+    if type & .Compute && compute_shader
+        IUnknown_Release(compute_shader);
 }
 
 compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_file_name: string) -> Shader_Bytecode, bool {
@@ -495,7 +502,7 @@ set_shader :: (shader: Shader) {
         ID3D11DeviceContext_VSSetShader(D3D11.device_context, shader.vertex_shader, null, 0);
     }
     if shader.type & .Fragment {
-        ID3D11DeviceContext_PSSetShader(D3D11.device_context, shader.pixel_shader, null, 0);
+        ID3D11DeviceContext_PSSetShader(D3D11.device_context, shader.fragment_shader, null, 0);
     }
     if shader.type & .Compute {
         ID3D11DeviceContext_CSSetShader(D3D11.device_context, shader.compute_shader, null, 0);

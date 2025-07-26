@@ -146,28 +146,29 @@ create_buffer :: (data: *$T, $type: Buffer_Type, usage := Buffer_Usage.Default) 
     return create_buffer(data_pointer, count, stride, type, usage);
 }
 
-load_shader_bytecode :: (shader_file: string, type: Shader_Type) -> Shader_Bytecode {
+load_shader :: (file_name_without_extension: string, type: Shader_Type) -> Shader {
     bytecode: Shader_Bytecode;
     ok := false;
     if type & .Vertex {
-        file_name := join(shader_file, VS_EXTENSION);
+        file_name := join(file_name_without_extension, VS_EXTENSION);
         bytecode.vs, ok = read_entire_file(file_name);
         if !ok return .{};
     }
 
     if type & .Fragment {
-        file_name := join(shader_file, FS_EXTENSION);
+        file_name := join(file_name_without_extension, FS_EXTENSION);
         bytecode.fs, ok = read_entire_file(file_name);
         if !ok return .{};
     }
 
     if type & .Compute {
-        file_name := join(shader_file, CS_EXTENSION);
+        file_name := join(file_name_without_extension, CS_EXTENSION);
         bytecode.cs, ok = read_entire_file(file_name);
         if !ok return .{};
     }
-    return bytecode;
+    return load_shader_from_bytecode(bytecode, type);
 }
+
 
 create_texture_from_file :: (file_name: string, mip_levels : u32 = 1, flags := Texture_Flags.None, desired_channels : u32 = 0) -> Texture {
     bytes, ok := read_entire_file(file_name,, temp);
