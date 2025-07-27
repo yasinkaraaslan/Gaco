@@ -9,7 +9,7 @@ fonts_init :: () {
     TextShader = Gaco.load_shader("shaders/text", .Vertex | .Fragment);
     assert(!error);
 
-    TextVertexBuffer = Gaco.create_buffer(null, MAX_CHARACTERS * size_of(Text_Vertex_Data) * 4, size_of(Text_Vertex_Data), .Vertex, .Dynamic);
+    TextVertexBuffer = Gaco.create_buffer(null, MAX_CHARACTERS * 4, size_of(Text_Vertex_Data), .Vertex, .Dynamic);
     index_data : [6*MAX_CHARACTERS]u16;
     for 0..MAX_CHARACTERS-1 {
         base := cast(u16) (it*4);

@@ -5,7 +5,7 @@ fonts_init :: () {
     Shader = Gaco.load_shader("shaders/text", .Vertex | .Fragment);
     assert(!error);
 
-    VertexBuffer = Gaco.create_buffer(null, MAX_CHARACTERS * size_of(Text_Vertex_Data) * 4, size_of(Text_Vertex_Data), .Vertex, .Dynamic);
+    VertexBuffer = Gaco.create_buffer(null, MAX_CHARACTERS * 4, size_of(Text_Vertex_Data), .Vertex, .Dynamic);
     index_data : [6*MAX_CHARACTERS]u16;
     for 0..MAX_CHARACTERS-1 {
         base := cast(u16) (it*4);
@@ -156,6 +156,7 @@ prepare_quads_for_text :: (using font: *Font, text: string, position: Vector2) -
 
 fonts_window_resize :: (width: int, height: int) {
     // Map window coordinates to -> [-1, 1]
+
     proj := Matrix4_Identity;
     proj._11 = 2.0 / xx width;
     proj._14 = -1;
