@@ -31,6 +31,9 @@ Shader_Bytecode :: struct {
 }
 
 Primitive_Type :: enum {
+    Line_List;
+    Line_Strip;
+    
     Triangle_List;
     Triangle_Strip;
 }

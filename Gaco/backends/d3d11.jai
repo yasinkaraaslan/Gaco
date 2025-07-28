@@ -83,12 +83,12 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
         hr = IDXGIObject_GetParent(dxgi_adapter, *uid(IDXGIFactory2_UUID), xx *dxgi_factory);
         check_hr("IDXGIObject.GetParent");
 
-        IUnknown_Release(dxgi_adapter);
-        IUnknown_Release(dxgi_device);
+        safe_release(dxgi_adapter);
+        safe_release(dxgi_device);
     }
     hr = IDXGIFactory2_CreateSwapChainForHwnd(dxgi_factory, D3D11.device, window, *swap_chain_desc, null, null, *D3D11.swap_chain);
     check_hr("IDXGIFactory2.CreateSwapChainForHwnd");
-    IUnknown_Release(dxgi_factory);
+    safe_release(dxgi_factory);
 
 
     D3D11.msaa = wanted_msaa;
@@ -121,7 +121,7 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
     check_hr("ID3D11Device.CreateDepthStencilState");
 
     ID3D11DeviceContext_OMSetDepthStencilState(D3D11.device_context, depth_stencil_state, 0xFF);
-    IUnknown_Release(depth_stencil_state);
+    safe_release(depth_stencil_state);
 
     rs_desc := D3D11_RASTERIZER_DESC.{
         FillMode = .SOLID,
@@ -139,6 +139,7 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
 
     rs_desc.CullMode = .NONE;
     ID3D11Device_CreateRasterizerState(D3D11.device, *rs_desc, *D3D11.rasterizer_no_cull);
+
 
     blend_alpha_desc : D3D11_BLEND_DESC;
     blend_alpha_desc.RenderTarget[0] = .{
@@ -158,19 +159,17 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
 }
 
 deinit :: () {
-    IUnknown_Release(D3D11.device);
-    IUnknown_Release(D3D11.device_context);
-    IUnknown_Release(D3D11.swap_chain);
-    IUnknown_Release(D3D11.render_target_view);
-    IUnknown_Release(D3D11.depth_stencil_view);
-
-    IUnknown_Release(D3D11.rasterizer_scissor);
-    IUnknown_Release(D3D11.rasterizer_front_cull);
-
-    IUnknown_Release(D3D11.blend_alpha_state);
-
     #if DEBUG
         log_messages_and_get_last();
+
+    safe_release_and_reset(*D3D11.blend_alpha_state);
+    safe_release_and_reset(*D3D11.rasterizer_front_cull);
+    safe_release_and_reset(*D3D11.rasterizer_scissor);
+    safe_release_and_reset(*D3D11.depth_stencil_view);
+    safe_release_and_reset(*D3D11.render_target_view);
+    safe_release_and_reset(*D3D11.swap_chain);
+    safe_release_and_reset(*D3D11.device_context);
+    safe_release_and_reset(*D3D11.device);
 }
 
 create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {
@@ -388,25 +387,21 @@ copy_buffer :: (from: *Buffer, to: *Buffer) {
 }
 
 destroy_buffer :: (buffer: *Buffer) {
-    IUnknown_Release(buffer.buffer);
-    buffer.buffer = null;
+    safe_release_and_reset(*buffer.buffer);
 
     #if buffer.type == .Structured   {
-        IUnknown_Release(buffer.srv);
-        buffer.srv = null;
+        safe_release_and_reset(*buffer.srv);
     }
     else #if buffer.type == .RWStructured {
-        IUnknown_Release(buffer.uav);
-        buffer.uav = null;
+        safe_release_and_reset(*buffer.uav);
     }
 
     buffer.size, buffer.stride = 0;
 }
 
 destroy_texture :: (texture: *Texture) {
-    IUnknown_Release(texture.texture);
-    IUnknown_Release(texture.resource_view);
-    texture.texture, texture.resource_view = null;
+    safe_release_and_reset(*texture.texture);
+    safe_release_and_reset(*texture.resource_view);
     texture.width, texture.height, texture.channels = 0;
     texture.flags = .None;
 }
@@ -448,12 +443,12 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> S
 
 
 destroy_shader :: (using shader: Shader) {
-    if type & .Vertex && vertex_shader
-        IUnknown_Release(vertex_shader);
-    if type & .Fragment && fragment_shader
-        IUnknown_Release(fragment_shader);
-    if type & .Compute && compute_shader
-        IUnknown_Release(compute_shader);
+    if type & .Vertex
+        safe_release(vertex_shader);
+    if type & .Fragment
+        safe_release(fragment_shader);
+    if type & .Compute
+        safe_release(compute_shader);
 }
 
 compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, bool {
@@ -515,6 +510,10 @@ set_shader :: (shader: Shader) {
 set_primitive_type :: (primitive_type : Primitive_Type) {
     topology: D3D11_PRIMITIVE_TOPOLOGY;
     if #complete primitive_type == {
+    case .Line_List;
+        topology = .TRIANGLELIST;
+    case .Line_Strip;
+        topology = .LINESTRIP;
     case .Triangle_List;
         topology = .TRIANGLELIST;
     case .Triangle_Strip;
@@ -580,15 +579,10 @@ present :: (interval: u32 = 1) {
 }
 
 resize :: (width: int, height: int) {
+    safe_release_and_reset(*D3D11.render_target_view);
+    safe_release_and_reset(*D3D11.depth_stencil_view);
     if D3D11.render_target_view {
         ID3D11DeviceContext_OMSetRenderTargets(D3D11.device_context, 0, null, null);
-        IUnknown_Release(D3D11.render_target_view);
-        D3D11.render_target_view = null;
-    }
-
-    if D3D11.depth_stencil_view {
-        IUnknown_Release(D3D11.depth_stencil_view);
-        D3D11.depth_stencil_view = null;
     }
 
     hr := IDXGISwapChain_ResizeBuffers(D3D11.swap_chain, 0, cast(u32)width, cast(u32)height, .UNKNOWN, 0);
@@ -599,7 +593,7 @@ resize :: (width: int, height: int) {
     check_hr("IDXGISwapChain.GetBuffer");
 
     hr = ID3D11Device_CreateRenderTargetView(D3D11.device, back_buffer_texture, null, *D3D11.render_target_view);
-    IUnknown_Release(back_buffer_texture);
+    safe_release(back_buffer_texture);
     check_hr("ID3D11Device.CreateRenderTargetView");
 
 
@@ -619,11 +613,16 @@ resize :: (width: int, height: int) {
     check_hr("ID3D11Device.CreateTexture2D");
 
     hr = ID3D11Device_CreateDepthStencilView(D3D11.device, depth_stencil_texture, null, *D3D11.depth_stencil_view);
-    IUnknown_Release(depth_stencil_texture);
+
+    safe_release(depth_stencil_texture);
     check_hr("ID3D11Device.CreateDepthStencilView");
 
     ID3D11DeviceContext_OMSetRenderTargets(D3D11.device_context, 1, *D3D11.render_target_view, D3D11.depth_stencil_view);
     set_viewport(.{0, 0, cast(s32)width, cast(s32)height});
+}
+
+// @Unimplemented
+set_render_target :: (render_texture: Texture) {
 }
 
 dispatch_compute :: (num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) {
@@ -680,7 +679,7 @@ create_texture_array :: (data: []*u8, width: u32, height: u32, channels: u32, mi
 
     init_data : []D3D11_SUBRESOURCE_DATA;
     if !(flags & .Generate_Mips) && data {
-        init_data = NewArray(data.count, D3D11_SUBRESOURCE_DATA);
+        init_data = NewArray(data.count, D3D11_SUBRESOURCE_DATA,, temp);
         for * init_data {
             it.* = D3D11_SUBRESOURCE_DATA.{
                 pSysMem = data[it_index],
@@ -799,7 +798,7 @@ CS_EXTENSION :: ".dxcs";
 #scope_file
 get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
     reflector: *ID3D11ShaderReflection;
-    hr := D3DReflect(bytecode.data, xx bytecode.count, uid(ID3D11ShaderReflection_UUID), cast(**void)*reflector);
+    hr := D3DReflect(bytecode.data, xx bytecode.count, *uid(ID3D11ShaderReflection_UUID), cast(**void)*reflector);
     check_hr("D3DReflect", #code `return null);
 
     shader_desc: D3D11_SHADER_DESC;
@@ -877,7 +876,7 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
     hr = ID3D11Device_CreateInputLayout(D3D11.device, input_layout_desc.data, cast(u32) input_layout_desc.count, bytecode.data, cast(u64) bytecode.count, *input_layout);
     check_hr("ID3D11Device.CreateInputLayout", #code `return null);
 
-    IUnknown_Release(reflector);
+    safe_release(reflector);
     return input_layout;
 }
 
@@ -944,7 +943,7 @@ D3D11 : struct {
             ID3D11InfoQueue_SetBreakOnSeverity(info, .CORRUPTION, 1);
             ID3D11InfoQueue_SetBreakOnSeverity(info, .ERROR, 1);
         }
-        IUnknown_Release(info);
+        safe_release(info);
         kernel32 :: #system_library "kernel32";
         SetUnhandledExceptionFilter :: (lpTopLevelExceptionFilter: *void) -> *void #foreign kernel32;
         SetUnhandledExceptionFilter(xx handle_exception);
@@ -990,7 +989,7 @@ D3D11 : struct {
             log("Gaco: % - %\n", message.ID, message_str, flags=flags);
         }
         ID3D11InfoQueue_ClearStoredMessages(info);
-        IUnknown_Release(info);
+        safe_release(info);
         return message_str, error;
     }
 }
