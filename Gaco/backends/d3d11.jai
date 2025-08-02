@@ -1,13 +1,12 @@
+// NOTE(Yasin): D3D11 just spins a bunch of threads for lots of different things and
+// there doesn't seem way to turn them off. Should investigate more.
+
 Shader :: struct {
     type : Shader_Type;
-    union {
-        struct {
-            vertex_shader: *ID3D11VertexShader;
-            fragment_shader: *ID3D11PixelShader;
-            input_layout: *ID3D11InputLayout;
-        }
-        compute_shader: *ID3D11ComputeShader;
-    }
+    vertex_shader: *ID3D11VertexShader;
+    input_layout: *ID3D11InputLayout;
+    fragment_shader: *ID3D11PixelShader;
+    compute_shader: *ID3D11ComputeShader;
 }
 
 Buffer :: struct (type: Buffer_Type) {
@@ -56,6 +55,8 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
     check_hr("D3D11CreateDevice");
 
     #if DEBUG {
+        // When you call SetBreakOnSeverity, D3D11 crashes on the specified severity.
+        // So we have to put our own exception handler to tell what is going on.
         init_exception_handler();
     }
 
@@ -88,6 +89,7 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
     }
     hr = IDXGIFactory2_CreateSwapChainForHwnd(dxgi_factory, D3D11.device, window, *swap_chain_desc, null, null, *D3D11.swap_chain);
     check_hr("IDXGIFactory2.CreateSwapChainForHwnd");
+
     safe_release(dxgi_factory);
 
 
@@ -409,7 +411,6 @@ destroy_texture :: (texture: *Texture) {
 load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> Shader {
     shader: Shader;
     if type & .Compute {
-        assert(type == .Compute, "Compute shader cannot be used with other shader types.");
         hr := ID3D11Device_CreateComputeShader(D3D11.device, bytecode.cs.data, xx bytecode.cs.count, null, *shader.compute_shader);
         check_hr("ID3D11Device.CreateComputeShader", #code `return .{});
 
@@ -796,8 +797,13 @@ FS_EXTENSION :: ".dxfs";
 CS_EXTENSION :: ".dxcs";
 
 #scope_file
+// This spins up like... 20 threads
+// Threads remain alive indefinitely after shader reflection.
+// Sad.
 get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
     reflector: *ID3D11ShaderReflection;
+    defer safe_release(reflector);
+
     hr := D3DReflect(bytecode.data, xx bytecode.count, *uid(ID3D11ShaderReflection_UUID), cast(**void)*reflector);
     check_hr("D3DReflect", #code `return null);
 
@@ -876,7 +882,6 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
     hr = ID3D11Device_CreateInputLayout(D3D11.device, input_layout_desc.data, cast(u32) input_layout_desc.count, bytecode.data, cast(u64) bytecode.count, *input_layout);
     check_hr("ID3D11Device.CreateInputLayout", #code `return null);
 
-    safe_release(reflector);
     return input_layout;
 }
 
