@@ -92,8 +92,7 @@ Draw_Indirect_Args :: struct(indexed: bool) {
     first_instance: u32;
 }
 
-// NOTE(Yasin): If you want to add a new state or change an existing one, remember to do it on set_blend_state as well.
-// @Refactor: Create arrays for gpu states.
+// NOTE(Yasin): If you want to add a new state or change an existing one, remember to do it on init as well.
 Blend_State :: enum u32 #specified {
     None  :: 0;
     Alpha :: 1;
