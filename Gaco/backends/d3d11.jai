@@ -406,6 +406,10 @@ destroy_buffer :: (buffer: *Buffer) {
 destroy_texture :: (texture: *Texture) {
     safe_release_and_reset(*texture.texture);
     safe_release_and_reset(*texture.resource_view);
+    if texture.flags & .RWCompute {
+        safe_release_and_reset(*texture.unordered_access_view);
+    }
+
     texture.width, texture.height, texture.channels = 0;
     texture.flags = .None;
 }
@@ -557,8 +561,8 @@ set_rasterizer_state :: (state: Rasterizer_State) {
     ID3D11DeviceContext_RSSetState(D3D11.device_context, states[state]);
 }
 
-draw :: (indexed := false, count: u32, first: u32 = 0) {
-    if indexed {
+draw :: ($indexed: bool, count: u32, first: u32 = 0) {
+    #if indexed {
         ID3D11DeviceContext_DrawIndexed(D3D11.device_context, count, first, 0);
     }
     else {
@@ -567,12 +571,21 @@ draw :: (indexed := false, count: u32, first: u32 = 0) {
 }
 
 
-draw_instanced :: (indexed := false, count: u32, instance_count: u32, first: u32 = 0, first_instance: u32 = 0) {
-    if indexed {
+draw_instanced :: ($indexed: bool, count: u32, instance_count: u32, first: u32 = 0, first_instance: u32 = 0) {
+    #if indexed {
         ID3D11DeviceContext_DrawIndexedInstanced(D3D11.device_context, count, instance_count, first, 0, first_instance);
     }
     else {
         ID3D11DeviceContext_DrawInstanced(D3D11.device_context, count, instance_count, first, first_instance);
+    }
+}
+
+draw_indirect :: ($indexed: bool, buffer: Buffer, byte_offset: u32 = 0) {
+    #if indexed {
+        ID3D11DeviceContext_DrawIndexedInstancedIndirect(buffer.buffer, byte_offset);
+    }
+    else {
+        ID3D11DeviceContext_DrawInstancedIndirect(buffer.buffer, byte_offset);
     }
 }
 
@@ -902,18 +915,13 @@ check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
         fail_message: string;
         // https://learn.microsoft.com/tr-tr/windows/win32/direct3d11/d3d11-graphics-reference-returnvalues
         if `hr == {
-        case 0x887C0002; fail_message = "The file was not found.";
-        case 0x887C0001; fail_message = "There are too many unique instances of a particular type of state object.";
-        case 0x887C0003; fail_message = "There are too many unique instances of a particular type of view object.";
-        case 0x887C0004; fail_message = "The first call to ID3D11DeviceContext::Map was not D3D11_MAP_WRITE_DISCARD.";
-        case 0x887A0001; fail_message = "The procedure call is invalid.";
-        case 0x887A000A; fail_message = "The previous blit operation that is transferring information to or from this surface is incomplete.";
+        case 0x887C0002;                   fail_message = "The file was not found.";
+        case 0x887C0001;                   fail_message = "There are too many unique instances of a particular type of state object.";
+        case 0x887C0003;                   fail_message = "There are too many unique instances of a particular type of view object.";
+        case 0x887C0004;                   fail_message = "The first call to ID3D11DeviceContext::Map was not D3D11_MAP_WRITE_DISCARD.";
 
-        case 0x80004005; fail_message = "The procedure failed.";
-        case 0x80070057; fail_message = "An invalid argument was passed to the procedure.";
-        case 0x8007000E; fail_message = "Direct3D could not allocate sufficient memory to complete the call.";
-        case 0x80004001; fail_message = "The procedure call isn't implemented with the passed parameter combination.";
-
+        case DXGI_ERROR_INVALID_CALL;      fail_message = "The procedure call is invalid.";
+        case DXGI_ERROR_WAS_STILL_DRAWING; fail_message = "The previous blit operation that is transferring information to or from this surface is incomplete.";
         case;
             System :: #import "System";
             _, fail_message = System.get_error_value_and_string();

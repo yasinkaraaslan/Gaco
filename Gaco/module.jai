@@ -43,6 +43,8 @@ Buffer_Type :: enum u32 {
     Vertex;
     Index;
     Constant;
+    // Draw_Indirect;
+    // Dispatch_Indirect;
     Structured;
     RWStructured;
     Copy;
@@ -79,7 +81,19 @@ Sampler_Edge_Handling :: enum u32 {
     Border;
 }
 
+// Helper struct for creating Draw_Indirect buffers.
+Draw_Indirect_Args :: struct(indexed: bool) {
+    count: u32;
+    instance_count: u32;
+    first: u32;
+    #if indexed {
+        base_vertex: u32; // This is s32 in D3D but u32 in OpenGL and Vulkan, should be fine in 99% of the cases. (I hope)
+    }
+    first_instance: u32;
+}
+
 // NOTE(Yasin): If you want to add a new state or change an existing one, remember to do it on set_blend_state as well.
+// @Refactor: Create arrays for gpu states.
 Blend_State :: enum u32 #specified {
     None  :: 0;
     Alpha :: 1;
@@ -231,8 +245,10 @@ case .Metal;
 VS_ENTRY_POINT :: "vertex_main";
 FS_ENTRY_POINT :: "fragment_main";
 CS_ENTRY_POINT :: "compute_main";
+
 #import "String";
 #import "File";
 #import "Basic";
+
 #scope_file
 #import "stb_image";
