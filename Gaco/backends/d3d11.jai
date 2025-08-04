@@ -1,5 +1,5 @@
 // NOTE(Yasin): D3D11 just spins a bunch of threads for lots of different things and
-// there doesn't seem way to turn them off. Should investigate more.
+// there doesn't seem to be a way to turn them off. Should investigate more.
 
 Shader :: struct {
     type : Shader_Type;
@@ -165,8 +165,11 @@ deinit :: () {
         log_messages_and_get_last();
 
     safe_release_and_reset(*D3D11.blend_alpha_state);
+    safe_release_and_reset(*D3D11.rasterizer_no_cull);
     safe_release_and_reset(*D3D11.rasterizer_front_cull);
+    safe_release_and_reset(*D3D11.rasterizer_default);
     safe_release_and_reset(*D3D11.rasterizer_scissor);
+
     safe_release_and_reset(*D3D11.depth_stencil_view);
     safe_release_and_reset(*D3D11.render_target_view);
     safe_release_and_reset(*D3D11.swap_chain);
@@ -211,8 +214,8 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
         bd.Usage = .STAGING;
         bd.CPUAccessFlags |= .READ;
     }
-    init_data : *D3D11_SUBRESOURCE_DATA = null;
 
+    init_data : *D3D11_SUBRESOURCE_DATA = null;
     if data != null {
         init_data = * (D3D11_SUBRESOURCE_DATA.{
             pSysMem = data
@@ -230,7 +233,6 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
         hr = ID3D11Device_CreateShaderResourceView(D3D11.device, buffer.buffer, *srv_desc, *buffer.srv);
         check_hr("ID3D11Device.CreateShaderResourceView", #code `return .{});
     }
-
     else #if type == .RWStructured {
         uav_desc := D3D11_UNORDERED_ACCESS_VIEW_DESC.{
             ViewDimension = .BUFFER,
@@ -309,7 +311,7 @@ update_buffer :: (buffer: *Buffer, data: *void) {
 }
 
 // If you create a texture array, this can only update the first one, for now.
-update_texture :: (texture: *Texture, data: *void, rect : Rect) {
+update_texture :: (texture: *Texture, data: *void, rect: Rect) {
     rows : u32 = cast(u32)rect.w * texture.channels;
 
     box: D3D11_BOX;
@@ -330,7 +332,7 @@ update_texture :: inline (texture: *Texture, data: *void) {
 }
 
 // Allocates on temp
-// Note(Yasin): This creates a huge performance penalty.
+// NOTE(Yasin): This creates a huge performance penalty.
 read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *void {
     buffer_to_map : *Buffer(.Copy) = ---;
 
@@ -379,7 +381,7 @@ write_buffer :: inline (buffer: *Buffer, data: []$T) {
 
 write_buffer :: inline (buffer: *Buffer, data: *$T) {
     // We shouldn't be changing the stride because we might want to just write the
-    // first 3 values of a Vector4, for example. (Since D3D11 requires 16 byte aligned structures)
+    // first 3 values of a Vector4, for example. (Since D3D11 requires 16 byte aligned constant buffers)
 
     write_buffer(buffer, data, size_of(T));
 }
@@ -443,13 +445,13 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> S
 }
 
 
-destroy_shader :: (using shader: Shader) {
+destroy_shader :: (using shader: *Shader) {
     if type & .Vertex
-        safe_release(vertex_shader);
+        safe_release_and_reset(*vertex_shader);
     if type & .Fragment
-        safe_release(fragment_shader);
+        safe_release_and_reset(*fragment_shader);
     if type & .Compute
-        safe_release(compute_shader);
+        safe_release_and_reset(*compute_shader);
 }
 
 compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, bool {
@@ -461,7 +463,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
     }
     compile :: (type: Shader_Type) -> string #expand {
         entry_point, target: string;
-        if type == {
+        #if type == {
         case .Vertex;
             entry_point = VS_ENTRY_POINT;
             target = "vs_5_0";
@@ -580,11 +582,13 @@ present :: (interval: u32 = 1) {
 }
 
 resize :: (width: int, height: int) {
-    safe_release_and_reset(*D3D11.render_target_view);
-    safe_release_and_reset(*D3D11.depth_stencil_view);
+    // This doesn't seem to be necessary, but just to be safe...
     if D3D11.render_target_view {
         ID3D11DeviceContext_OMSetRenderTargets(D3D11.device_context, 0, null, null);
     }
+
+    safe_release_and_reset(*D3D11.render_target_view);
+    safe_release_and_reset(*D3D11.depth_stencil_view);
 
     hr := IDXGISwapChain_ResizeBuffers(D3D11.swap_chain, 0, cast(u32)width, cast(u32)height, .UNKNOWN, 0);
     check_hr("IDXGISwapChain.ResizeBuffers");
@@ -622,7 +626,7 @@ resize :: (width: int, height: int) {
     set_viewport(.{0, 0, cast(s32)width, cast(s32)height});
 }
 
-// @Unimplemented
+// @NotImplemented
 set_render_target :: (render_texture: Texture) {
 }
 
@@ -693,11 +697,12 @@ create_texture_array :: (data: []*u8, width: u32, height: u32, channels: u32, mi
     hr := ID3D11Device_CreateTexture2D(D3D11.device, *texture_desc, init_data.data, *texture.texture );
     check_hr("ID3D11Device.CreateTexture2D", #code return .{});
 
+    // :Multithreading:
+    // https://learn.microsoft.com/en-us/windows/win32/direct3d11/overviews-direct3d-11-render-multi-thread-intro
     if flags & .Generate_Mips {
         for data {
             index := cast(u32)it_index * mip_levels;
             ID3D11DeviceContext_UpdateSubresource(D3D11.device_context, texture.texture, index, null, it, width * channels, 1);
-
         }
     }
 
@@ -721,6 +726,7 @@ create_texture_array :: (data: []*u8, width: u32, height: u32, channels: u32, mi
         hr = ID3D11Device_CreateShaderResourceView(D3D11.device, texture.texture, *srv_desc, *texture.resource_view);
         check_hr("ID3D11Device.CreateShaderResourceView", #code return .{});
 
+        // :Multithreading:
         if flags & .Generate_Mips {
             ID3D11DeviceContext_GenerateMips(D3D11.device_context, texture.resource_view);
         }
@@ -734,8 +740,7 @@ create_texture :: inline (data: *u8, width: u32, height: u32, channels: u32, mip
     data_array: []*u8;
     if data {
         if flags & .Cubemap {
-            data_array = NewArray(6, *u8);
-            for * data_array  it.* = data;
+            data_array = .[data,data,data,data,data,data];
         }
         else {
             data_array = .[data];
@@ -757,21 +762,23 @@ bind_texture :: (texture: Texture, slot: u32) {
 // @Incomplete: give more options
 create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Wrap, max_anisotropy : u32 = 1) -> Sampler {
     d3d11_filter: D3D11_FILTER;
-    if filtering == {
+    if #complete filtering == {
     case .Linear;  d3d11_filter = .MIN_MAG_MIP_LINEAR;
     case .Nearest; d3d11_filter = .MIN_MAG_MIP_POINT;
     }
 
     address_mode: D3D11_TEXTURE_ADDRESS_MODE;
-    if edge_handling == {
+    if #complete edge_handling == {
     case .Wrap;   address_mode = .WRAP;
     case .Mirror; address_mode = .MIRROR;
     case .Clamp;  address_mode = .CLAMP;
     case .Border; address_mode = .BORDER;
     }
 
-    address_mode := cast(D3D11_TEXTURE_ADDRESS_MODE)edge_handling;
-
+    // @Incomplete
+    // Max anisotropy requires a specific filter (.ANISOTROPY) on D3D11, while there isn't such a requirement on OpenGL.
+    // So I am not sure on how to handle this.
+    // We just pass it to the sampler without changing the filtering for now, which does nothing.
     sampler_desc := D3D11_SAMPLER_DESC.{
         Filter = d3d11_filter,
         AddressU = address_mode, AddressV = address_mode, AddressW = address_mode,
@@ -791,6 +798,10 @@ bind_sampler :: (sampler: Sampler, slot: u32) {
     ID3D11DeviceContext_PSSetSamplers(D3D11.device_context, slot, 1, *sampler.sampler_state);
 }
 
+destroy_sampler :: (sampler: *Sampler) {
+    safe_release_and_reset(*sampler.sampler_state);
+}
+
 #scope_module
 VS_EXTENSION :: ".dxvs";
 FS_EXTENSION :: ".dxfs";
@@ -798,7 +809,7 @@ CS_EXTENSION :: ".dxcs";
 
 #scope_file
 // This spins up like... 20 threads
-// Threads remain alive indefinitely after shader reflection.
+// Threads remain alive indefinitely even after we destroy the reflection object.
 // Sad.
 get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
     reflector: *ID3D11ShaderReflection;
@@ -924,11 +935,13 @@ D3D11 : struct {
     render_target_view: *ID3D11RenderTargetView;
     depth_stencil_view: *ID3D11DepthStencilView;
 
+    // TODO(Yasin): rasterizer_states array with num of Rasterizer_State enum values.
     rasterizer_default: *ID3D11RasterizerState;
     rasterizer_front_cull: *ID3D11RasterizerState;
     rasterizer_scissor: *ID3D11RasterizerState;
     rasterizer_no_cull: *ID3D11RasterizerState;
 
+    // TODO(Yasin): ^^
     blend_alpha_state: *ID3D11BlendState;
 
     msaa : u32;

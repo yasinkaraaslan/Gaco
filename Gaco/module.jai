@@ -1,5 +1,5 @@
 #module_parameters (BACKEND := DEFAULT_BACKEND, DEBUG:=false) {
-    Backend_Type :: enum #specified {
+    Backend_Type :: enum u32 #specified {
         OpenGL :: 0;
         D3D11  :: 1;
         Metal  :: 2;
@@ -17,11 +17,11 @@
     //
 }
 
-Shader_Type :: enum_flags #specified {
+Shader_Type :: enum_flags u32 {
     Unspecified :: 0;
-    Vertex :: 0x1;
-    Fragment :: 0x2;
-    Compute :: 0x4;
+    Vertex :: 1;
+    Fragment;
+    Compute;
 };
 
 Shader_Bytecode :: struct {
@@ -30,16 +30,16 @@ Shader_Bytecode :: struct {
     cs: string;
 }
 
-Primitive_Type :: enum {
+Primitive_Type :: enum u32 {
     Line_List;
     Line_Strip;
-    
+
     Triangle_List;
     Triangle_Strip;
 }
 
 // We use HLSL naming here since we expect it to be used for all backends.
-Buffer_Type :: enum {
+Buffer_Type :: enum u32 {
     Vertex;
     Index;
     Constant;
@@ -48,16 +48,17 @@ Buffer_Type :: enum {
     Copy;
 }
 
-Buffer_Usage :: enum {
+Buffer_Usage :: enum u32 {
     Default;
     Dynamic;
     Immutable;
 }
 
-Map_Flags :: enum_flags {
+Map_Flags :: enum_flags u32 {
     Read;
     Write;
 }
+
 Texture_Flags :: enum_flags u32 {
     None :: 0;
     SRGB :: 1;
@@ -66,25 +67,25 @@ Texture_Flags :: enum_flags u32 {
     RWCompute; // @Rename
 }
 
-Sampler_Filtering :: enum {
+Sampler_Filtering :: enum u32 {
     Linear;
     Nearest;
 }
 
-Sampler_Edge_Handling :: enum #specified {
-    Wrap   :: 1;
-    Mirror :: 2;
-    Clamp  :: 3;
-    Border :: 4;
+Sampler_Edge_Handling :: enum u32 {
+    Wrap;
+    Mirror;
+    Clamp;
+    Border;
 }
 
-// Note(Yasin): If you want to add a new state or change an existing one, remember to do it on set_blend_state as well.
+// NOTE(Yasin): If you want to add a new state or change an existing one, remember to do it on set_blend_state as well.
 Blend_State :: enum u32 #specified {
     None  :: 0;
     Alpha :: 1;
 }
 
-// @@
+// ^^
 Rasterizer_State :: enum u32 #specified {
     Default    :: 0;
     Front_Cull :: 1;
@@ -185,7 +186,7 @@ create_texture_from_file :: (file_name: string, mip_levels : u32 = 1, flags := T
 create_texture_from_memory :: (memory: string, mip_levels : u32 = 1, flags := Texture_Flags.None, desired_channels: u32 = 0) -> Texture {
     width, height, channels: s32;
 
-    // Note(Yasin): Unfortunately, this is allocated with malloc and there is no way to read into an existing buffer.
+    // NOTE(Yasin): Unfortunately, this is allocated with malloc and there is no way to read into an existing buffer.
     // https://github.com/nothings/stb/issues/58
 
     buffer := stbi_load_from_memory(memory.data, cast(s32)memory.count, *width, *height, *channels, cast(s32) desired_channels);
