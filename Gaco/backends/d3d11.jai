@@ -556,7 +556,7 @@ set_blend_state :: (state: Blend_State) {
 }
 
 set_rasterizer_state :: (state: Rasterizer_State) {
-    ID3D11DeviceContext_RSSetState(device_context, null);//rasterizer_states[state]);
+    ID3D11DeviceContext_RSSetState(device_context, rasterizer_states[state]);
 }
 
 draw :: ($indexed: bool, count: u32, first: u32 = 0) {
@@ -945,11 +945,13 @@ using D3D11_State : struct {
     render_target_view: *ID3D11RenderTargetView;
     depth_stencil_view: *ID3D11DepthStencilView;
 
+    // Should we expose a way to create these states?
     rasterizer_states: [#run enum_highest_value(Rasterizer_State) + 1]*ID3D11RasterizerState;
     blend_states: [#run enum_highest_value(Blend_State) + 1]*ID3D11BlendState;
 
     msaa : u32;
 }
+
 #import "d3d11";
 #import "d3d_compiler";
 #import "dxgi";
@@ -966,8 +968,6 @@ using D3D11_State : struct {
             ID3D11InfoQueue_SetBreakOnSeverity(info, .ERROR, 1);
         }
         safe_release(info);
-        kernel32 :: #system_library "kernel32";
-        SetUnhandledExceptionFilter :: (lpTopLevelExceptionFilter: *void) -> *void #foreign kernel32;
         SetUnhandledExceptionFilter(xx handle_exception);
     }
 
