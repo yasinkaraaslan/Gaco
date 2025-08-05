@@ -43,11 +43,13 @@ Buffer_Type :: enum u32 {
     Vertex;
     Index;
     Constant;
-    // Draw_Indirect;
-    // Dispatch_Indirect;
+    Copy;
+
+    Draw_Indirect;
+    Dispatch_Indirect;
+
     Structured;
     RWStructured;
-    Copy;
 }
 
 Buffer_Usage :: enum u32 {
@@ -82,12 +84,13 @@ Sampler_Edge_Handling :: enum u32 {
 }
 
 // Helper struct for creating Draw_Indirect buffers.
+// These are the same for all rendering APIs out there.
 Draw_Indirect_Args :: struct(indexed: bool) {
     count: u32;
     instance_count: u32;
     first: u32;
     #if indexed {
-        base_vertex: u32; // This is s32 in D3D but u32 in OpenGL and Vulkan, should be fine in 99% of the cases. (I hope)
+        base_vertex: s32;
     }
     first_instance: u32;
 }

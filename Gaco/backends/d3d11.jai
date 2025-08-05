@@ -13,9 +13,12 @@ Buffer :: struct (type: Buffer_Type) {
     buffer: *ID3D11Buffer;
     size: u32;
     stride: u32;
-    #if type == {
-    case .Structured;   srv: *ID3D11ShaderResourceView;
-    case .RWStructured; uav: *ID3D11UnorderedAccessView;
+    #if type == .Structured {
+        srv: *ID3D11ShaderResourceView;
+    }
+    else #if type == .RWStructured {
+        // @Incomplete: INDIRECT
+        uav: *ID3D11UnorderedAccessView;
     }
 };
 
@@ -195,6 +198,9 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
         bd.Usage = .IMMUTABLE;
     }
 
+    // These are seperate in OpenGL while the same in D3D11
+    INDIRECT :: type == .Draw_Indirect || type == .Dispatch_Indirect;
+
     #if type == {
     case .Vertex;
         bd.BindFlags = .VERTEX_BUFFER;
@@ -215,6 +221,14 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
         bd.CPUAccessFlags |= .READ;
     }
 
+    #if INDIRECT {
+        // If you are creating a draw indirect buffer you probably want unordered access.
+        // But I am not sure about the performance implications, so this is @Incomplete.
+        // bd.BindFlags = .UNORDERED_ACCESS;
+
+        bd.MiscFlags = .DRAWINDIRECT_ARGS;
+    }
+
     init_data : *D3D11_SUBRESOURCE_DATA = null;
     if data != null {
         init_data = * (D3D11_SUBRESOURCE_DATA.{
@@ -233,7 +247,7 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
         hr = ID3D11Device_CreateShaderResourceView(device, buffer.buffer, *srv_desc, *buffer.srv);
         check_hr("ID3D11Device.CreateShaderResourceView", #code `return .{});
     }
-    else #if type == .RWStructured {
+    else #if type == .RWStructured { // @Incomplete: || INDIRECT
         uav_desc := D3D11_UNORDERED_ACCESS_VIEW_DESC.{
             ViewDimension = .BUFFER,
             Buffer.NumElements = count
@@ -354,6 +368,7 @@ read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *
     return data;
 }
 
+// Use write_buffer for buffers with .Dynamic usage and update_buffer for those with .Default usage.
 write_buffer :: (buffer: *Buffer, data: *void, size: int) {
     write :: (buffer_to_write: *Buffer) #expand {
         mapped_data := map_buffer(buffer_to_write, .Write);
@@ -361,7 +376,7 @@ write_buffer :: (buffer: *Buffer, data: *void, size: int) {
         unmap_buffer(buffer_to_write);
     }
 
-    #if buffer.type == .Structured || buffer.type == .RWStructured {
+    #if buffer.type == .RWStructured {
         buffer_to_write := * (create_buffer(null, buffer.size / buffer.stride, buffer.stride, .Copy, .Dynamic));
         write(buffer_to_write);
         copy_buffer(buffer_to_write, buffer);
@@ -559,9 +574,10 @@ set_rasterizer_state :: (state: Rasterizer_State) {
     ID3D11DeviceContext_RSSetState(device_context, rasterizer_states[state]);
 }
 
-draw :: ($indexed: bool, count: u32, first: u32 = 0) {
+// base_vertex only makes sense in indexed drawing.
+draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex : s32 = 0) {
     #if indexed {
-        ID3D11DeviceContext_DrawIndexed(device_context, count, first, 0);
+        ID3D11DeviceContext_DrawIndexed(device_context, count, first, base_vertex);
     }
     else {
         ID3D11DeviceContext_Draw(device_context, count, first);
@@ -569,22 +585,32 @@ draw :: ($indexed: bool, count: u32, first: u32 = 0) {
 }
 
 
-draw_instanced :: ($indexed: bool, count: u32, instance_count: u32, first: u32 = 0, first_instance: u32 = 0) {
+draw_instanced :: ($indexed: bool, count: u32, instance_count: u32, first: u32 = 0, first_instance: u32 = 0, base_vertex : s32 = 0) {
     #if indexed {
-        ID3D11DeviceContext_DrawIndexedInstanced(device_context, count, instance_count, first, 0, first_instance);
+        ID3D11DeviceContext_DrawIndexedInstanced(device_context, count, instance_count, first, base_vertex, first_instance);
     }
     else {
         ID3D11DeviceContext_DrawInstanced(device_context, count, instance_count, first, first_instance);
     }
 }
 
-draw_indirect :: ($indexed: bool, buffer: Buffer, byte_offset: u32 = 0) {
+draw_indirect :: ($indexed: bool, buffer: Buffer(.Draw_Indirect), byte_offset: u32 = 0) {
     #if indexed {
-        ID3D11DeviceContext_DrawIndexedInstancedIndirect(buffer.buffer, byte_offset);
+        ID3D11DeviceContext_DrawIndexedInstancedIndirect(device_context, buffer.buffer, byte_offset);
     }
     else {
-        ID3D11DeviceContext_DrawInstancedIndirect(buffer.buffer, byte_offset);
+        ID3D11DeviceContext_DrawInstancedIndirect(device_context, buffer.buffer, byte_offset);
     }
+}
+
+dispatch_compute :: (num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) {
+    ID3D11DeviceContext_Dispatch(device_context, num_groups_x, num_groups_y, num_groups_z);
+}
+
+// Actually, both Draw_Indirect and Dispatch_Indirect would work here since they are the same in D3D11.
+// But just to be compatible with a potential OpenGL backend.
+dispatch_compute_indirect :: (buffer: Buffer(.Dispatch_Indirect), byte_offset : u32 = 0) {
+    ID3D11DeviceContext_DispatchIndirect(device_context, buffer.buffer, byte_offset);
 }
 
 present :: (interval: u32 = 1) {
@@ -639,10 +665,6 @@ resize :: (width: int, height: int) {
 
 // @NotImplemented
 set_render_target :: (render_texture: Texture) {
-}
-
-dispatch_compute :: (num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) {
-    ID3D11DeviceContext_Dispatch(device_context, num_groups_x, num_groups_y, num_groups_z);
 }
 
 create_texture_array :: (data: []*u8, width: u32, height: u32, channels: u32, mip_levels: u32 = 1, flags := Texture_Flags.None) -> Texture {
