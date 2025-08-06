@@ -1,6 +1,7 @@
 // NOTE(Yasin): D3D11 just spins a bunch of threads for lots of different things and
 // there doesn't seem to be a way to turn them off. Should investigate more.
 
+// This is more akin to something like an OpenGL 'program' I guess.
 Shader :: struct {
     type : Shader_Type;
     vertex_shader: *ID3D11VertexShader;
@@ -23,7 +24,7 @@ Buffer :: struct (type: Buffer_Type) {
 };
 
 Sampler :: struct {
-    sampler_state: *ID3D11SamplerState;
+    state: *ID3D11SamplerState;
 }
 
 Texture :: struct {
@@ -533,7 +534,7 @@ set_primitive_type :: (primitive_type : Primitive_Type) {
     topology: D3D11_PRIMITIVE_TOPOLOGY;
     if #complete primitive_type == {
     case .Line_List;
-        topology = .TRIANGLELIST;
+        topology = .LINELIST;
     case .Line_Strip;
         topology = .LINESTRIP;
     case .Triangle_List;
@@ -826,17 +827,17 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
     };
 
     sampler: Sampler;
-    hr := ID3D11Device_CreateSamplerState(device, *sampler_desc,*sampler.sampler_state);
+    hr := ID3D11Device_CreateSamplerState(device, *sampler_desc,*sampler.state);
     check_hr("ID3D11Device.CreateSamplerState", #code `return .{});
     return sampler;
 }
 
 bind_sampler :: (sampler: Sampler, slot: u32) {
-    ID3D11DeviceContext_PSSetSamplers(device_context, slot, 1, *sampler.sampler_state);
+    ID3D11DeviceContext_PSSetSamplers(device_context, slot, 1, *sampler.state);
 }
 
 destroy_sampler :: (sampler: *Sampler) {
-    safe_release_and_reset(*sampler.sampler_state);
+    safe_release_and_reset(*sampler.state);
 }
 
 #scope_module
@@ -860,6 +861,7 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
 
     input_layout: *ID3D11InputLayout;
     input_layout_desc: [..]D3D11_INPUT_ELEMENT_DESC;
+    input_layout_desc.allocator = temp;
 
     for 0..shader_desc.InputParameters-1 {
         using param_desc: D3D11_SIGNATURE_PARAMETER_DESC;
@@ -876,7 +878,7 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
         // to pass an input layout.
 
         // Instance data is passed to the slot 1 (in bind_buffer) and vertex data to the slot 0.
-        if starts_with(to_string(SemanticName), "INST_") {
+        if starts_with(to_string(SemanticName), "INST_") { // @Document: starting with INST_ makes input instance data.
             element_desc.InputSlot = 1;
             element_desc.InputSlotClass = .INSTANCE_DATA;
             element_desc.InstanceDataStepRate = 1; // How often is something other than 1 is used in instancing?
@@ -936,22 +938,11 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
 
 check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
     if FAILED(`hr) {
-        fail_message: string;
-        // https://learn.microsoft.com/tr-tr/windows/win32/direct3d11/d3d11-graphics-reference-returnvalues
-        if `hr == {
-        case 0x887C0002;                   fail_message = "The file was not found.";
-        case 0x887C0001;                   fail_message = "There are too many unique instances of a particular type of state object.";
-        case 0x887C0003;                   fail_message = "There are too many unique instances of a particular type of view object.";
-        case 0x887C0004;                   fail_message = "The first call to ID3D11DeviceContext::Map was not D3D11_MAP_WRITE_DISCARD.";
+        System :: #import "System";
+        error_code := cast,no_check(OS_Error_Code)`hr; // if it is a failure, we are sure it is less than 0, and OS_Error_Code is a u32.
+        fail_message := System.get_error_string(error_code);
 
-        case DXGI_ERROR_INVALID_CALL;      fail_message = "The procedure call is invalid.";
-        case DXGI_ERROR_WAS_STILL_DRAWING; fail_message = "The previous blit operation that is transferring information to or from this surface is incomplete.";
-        case;
-            System :: #import "System";
-            _, fail_message = System.get_error_value_and_string();
-        }
-
-        log_error("% failed with code 0x%: %\n", from, FormatInt.{value = `hr, base=16}, fail_message);
+        log_error("% failed with code 0x%: %\n", from, FormatInt.{value = error_code, base=16}, fail_message);
         #if !DEBUG {
             log("Pass DEBUG=true when importing Gaco to learn more.");
         }
