@@ -96,17 +96,25 @@ Draw_Indirect_Args :: struct(indexed: bool) {
 }
 
 // NOTE(Yasin): If you want to add a new state or change an existing one, remember to do it on init as well.
-Blend_State :: enum u32 #specified {
-    None  :: 0;
-    Alpha :: 1;
+Blend_State :: enum u32 {
+    None;
+    Alpha;
 }
 
 // ^^
-Rasterizer_State :: enum u32 #specified {
-    Default    :: 0;
-    Front_Cull :: 1;
-    No_Cull    :: 2;
-    Scissor    :: 3;
+Rasterizer_State :: enum u32 {
+    Default;
+    Front_Cull;
+    No_Cull;
+    Scissor;
+}
+
+// ...
+Depth_Stencil_State :: enum u32 {
+    Depth_Stencil;
+    No_Depth;
+    No_Stencil;
+    No_Depth_Stencil;
 }
 
 Rect :: struct {
@@ -247,6 +255,13 @@ case .Metal;
 VS_ENTRY_POINT :: "vertex_main";
 FS_ENTRY_POINT :: "fragment_main";
 CS_ENTRY_POINT :: "compute_main";
+
+
+// This name wouldn't make sense if the enum values jump, but whatever.
+enum_count :: ($T: Type) -> s64 {
+    low, high := enum_range_given_info(type_info(T));
+    return high + 1;
+}
 
 #import "String";
 #import "File";

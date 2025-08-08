@@ -99,66 +99,10 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
 
     msaa = wanted_msaa;
 
-    // --- States ---
+    init_states();
 
-    depth_stencil_desc := D3D11_DEPTH_STENCIL_DESC.{
-        DepthEnable = cast(BOOL) true,
-        DepthWriteMask = .ALL,
-        DepthFunc = .LESS_EQUAL,
-        StencilEnable = cast(BOOL) true,
-
-        StencilReadMask = D3D11_DEFAULT_STENCIL_READ_MASK,
-        StencilWriteMask = D3D11_DEFAULT_STENCIL_WRITE_MASK,
-
-        FrontFace.StencilFunc = .ALWAYS,
-        FrontFace.StencilFailOp = .KEEP,
-        FrontFace.StencilDepthFailOp = .KEEP,
-        FrontFace.StencilPassOp = .KEEP,
-
-        BackFace.StencilFunc = .ALWAYS,
-        BackFace.StencilFailOp = .KEEP,
-        BackFace.StencilDepthFailOp = .KEEP,
-        BackFace.StencilPassOp = .KEEP,
-    };
-
-    // TODO(Yasin): Add more depth-stencil states.
-    depth_stencil_state: *ID3D11DepthStencilState;
-    hr = ID3D11Device_CreateDepthStencilState(device, *depth_stencil_desc, *depth_stencil_state);
-    check_hr("ID3D11Device.CreateDepthStencilState");
-
-    ID3D11DeviceContext_OMSetDepthStencilState(device_context, depth_stencil_state, 0xFF);
-    safe_release(depth_stencil_state);
-
-    rs_desc := D3D11_RASTERIZER_DESC.{
-        FillMode = .SOLID,
-        CullMode = .BACK,
-        DepthClipEnable = 1,
-        ScissorEnable = 1,
-    };
-    ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Rasterizer_State.Scissor]);
-
-    rs_desc.ScissorEnable = 0;
-    ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Rasterizer_State.Default]);
-
-    rs_desc.CullMode = .FRONT;
-    ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Rasterizer_State.Front_Cull]);
-
-    rs_desc.CullMode = .NONE;
-    ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Rasterizer_State.No_Cull]);
-
-    blend_alpha_desc : D3D11_BLEND_DESC;
-    blend_alpha_desc.RenderTarget[0] = .{
-        BlendEnable = 1,
-        SrcBlend = .SRC_ALPHA,
-        DestBlend = .INV_SRC_ALPHA,
-        BlendOp = .ADD,
-        SrcBlendAlpha = .ONE,
-        DestBlendAlpha = .ZERO,
-        BlendOpAlpha = .ADD,
-        RenderTargetWriteMask = xx D3D11_COLOR_WRITE_ENABLE.ALL,
-    };
-
-    ID3D11Device_CreateBlendState(device, *blend_alpha_desc, *blend_states[Blend_State.Alpha]);
+    // There are very few cases where you wouldn't want depth testing, so we enable it by default.
+    set_depth_stencil_state(.Depth_Stencil);
 
     set_primitive_type(.Triangle_List);
 }
@@ -171,6 +115,9 @@ deinit :: () {
         safe_release_and_reset(it);
     }
     for * rasterizer_states {
+        safe_release_and_reset(it);
+    }
+    for * depth_stencil_states {
         safe_release_and_reset(it);
     }
 
@@ -567,6 +514,7 @@ set_viewport :: (using rect: Rect) {
     ID3D11DeviceContext_RSSetViewports(device_context, 1, *vp);
 }
 
+
 set_blend_state :: (state: Blend_State) {
     ID3D11DeviceContext_OMSetBlendState(device_context, blend_states[state], null, SampleMask=0xFFFFFFFF);
 }
@@ -575,6 +523,9 @@ set_rasterizer_state :: (state: Rasterizer_State) {
     ID3D11DeviceContext_RSSetState(device_context, rasterizer_states[state]);
 }
 
+set_depth_stencil_state :: (state: Depth_Stencil_State) {
+    ID3D11DeviceContext_OMSetDepthStencilState(device_context, depth_stencil_states[state], StencilRef=0xFF);
+}
 // base_vertex only makes sense in indexed drawing.
 draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex : s32 = 0) {
     #if indexed {
@@ -846,6 +797,78 @@ FS_EXTENSION :: ".dxfs";
 CS_EXTENSION :: ".dxcs";
 
 #scope_file
+init_states :: () {
+    ds_desc := D3D11_DEPTH_STENCIL_DESC.{
+        DepthEnable = .TRUE,
+        DepthWriteMask = .ALL,
+        DepthFunc = .LESS_EQUAL,
+        StencilEnable = .TRUE,
+
+        StencilReadMask = D3D11_DEFAULT_STENCIL_READ_MASK,
+        StencilWriteMask = D3D11_DEFAULT_STENCIL_WRITE_MASK,
+
+        FrontFace.StencilFunc = .ALWAYS,
+        FrontFace.StencilFailOp = .KEEP,
+        FrontFace.StencilDepthFailOp = .KEEP,
+        FrontFace.StencilPassOp = .KEEP,
+
+        BackFace.StencilFunc = .ALWAYS,
+        BackFace.StencilFailOp = .KEEP,
+        BackFace.StencilDepthFailOp = .KEEP,
+        BackFace.StencilPassOp = .KEEP,
+    };
+    {
+        using Depth_Stencil_State;
+        ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_states[Depth_Stencil]);
+
+        ds_desc.DepthEnable = .FALSE;
+        ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_states[No_Depth]);
+
+        ds_desc.StencilEnable = .FALSE;
+        // Should we disable other stencil stuff too?
+        ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_states[No_Stencil]);
+
+        // depth_stencil_states[No_Depth_Stencil] = null;
+    }
+    rs_desc := D3D11_RASTERIZER_DESC.{
+        FillMode = .SOLID,
+        CullMode = .BACK,
+        DepthClipEnable = .TRUE,
+        ScissorEnable = .TRUE,
+    };
+    {
+        using Rasterizer_State;
+        ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Scissor]);
+
+        rs_desc.ScissorEnable = .FALSE;
+        ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Default]);
+
+        rs_desc.CullMode = .FRONT;
+        ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Front_Cull]);
+
+        rs_desc.CullMode = .NONE;
+        ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[No_Cull]);
+    }
+    blend_alpha_desc : D3D11_BLEND_DESC;
+    blend_alpha_desc.RenderTarget[0] = .{
+        BlendEnable = .TRUE,
+        SrcBlend = .SRC_ALPHA,
+        DestBlend = .INV_SRC_ALPHA,
+        BlendOp = .ADD,
+        SrcBlendAlpha = .ONE,
+        DestBlendAlpha = .ZERO,
+        BlendOpAlpha = .ADD,
+        RenderTargetWriteMask = xx D3D11_COLOR_WRITE_ENABLE.ALL,
+    };
+    {
+        using Blend_State;
+        ID3D11Device_CreateBlendState(device, *blend_alpha_desc, *blend_states[Alpha]);
+
+        // blend_states[None] = null;
+    }
+}
+
+
 // This spins up like... 20 threads
 // Threads remain alive indefinitely even after we destroy the reflection object.
 // Sad.
@@ -958,10 +981,13 @@ using D3D11_State : struct {
     render_target_view: *ID3D11RenderTargetView;
     depth_stencil_view: *ID3D11DepthStencilView;
 
-    // Should we expose a way to create these states?
-    rasterizer_states: [#run enum_highest_value(Rasterizer_State) + 1]*ID3D11RasterizerState;
-    blend_states: [#run enum_highest_value(Blend_State) + 1]*ID3D11BlendState;
 
+    // Should we expose a way to create these states?
+    rasterizer_states: [#run enum_count(Rasterizer_State)]*ID3D11RasterizerState;
+    blend_states: [#run enum_count(Blend_State)]*ID3D11BlendState;
+
+    // TODO(Yasin): Experiment more with stencil buffers to figure out the best options here.
+    depth_stencil_states: [#run enum_count(Depth_Stencil_State)]*ID3D11DepthStencilState;
     msaa : u32;
 }
 
