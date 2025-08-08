@@ -413,8 +413,10 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> S
 
 
 destroy_shader :: (using shader: *Shader) {
-    if type & .Vertex
+    if type & .Vertex {
         safe_release_and_reset(*vertex_shader);
+        safe_release_and_reset(*input_layout);
+    }
     if type & .Fragment
         safe_release_and_reset(*fragment_shader);
     if type & .Compute
@@ -428,7 +430,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
     #if DEBUG {
         flags |= .DEBUG | .SKIP_OPTIMIZATION;
     }
-    compile :: (type: Shader_Type) -> string #expand {
+    compile :: ($type: Shader_Type) -> string #expand {
         entry_point, target: string;
         #if type == {
         case .Vertex;
@@ -443,8 +445,9 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
         }
         output, errors, hr := D3DCompile(source, shader_name, defines, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry_point, target, xx flags, 0);
         defer free(errors);
+
         check_hr("D3DCompile", #code {
-            // free(bytecode); @Leak
+            free(bytecode);
             log_error(errors);
             `return .{}, false;
         });

@@ -242,6 +242,12 @@ create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, f
     return create_texture_array(data, texture_width, texture_height, texture_channels, mip_levels, flags);
 }
 
+free :: (bytecode: Shader_Bytecode) {
+    if bytecode.vs free(bytecode.vs);
+    if bytecode.fs free(bytecode.fs);
+    if bytecode.cs free(bytecode.cs);
+}
+
 #if BACKEND == {
 case .D3D11;
 #load "backends/d3d11.jai";
