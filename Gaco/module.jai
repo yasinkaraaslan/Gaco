@@ -66,9 +66,11 @@ Map_Flags :: enum_flags u32 {
 Texture_Flags :: enum_flags u32 {
     None :: 0;
     SRGB :: 1;
+    Float16;
+    Float32;
     Cubemap;
     Generate_Mips;
-    RWCompute; // @Rename
+    Compute_RW; // RWTexture2D
 }
 
 Sampler_Filtering :: enum u32 {

@@ -221,7 +221,7 @@ bind_buffer :: (buffer: Buffer(.Index)) {
 
 bind_buffer :: (buffer: Buffer(.Constant), slot : u32 = 0, bind_to: Shader_Type) {
     if bind_to == .Unspecified {
-        log_error("Gaco: Unspecified shader type to bind a constant buffer.");
+        log_error("[Gaco] Unspecified shader type to bind a constant buffer.");
         return;
     }
     if bind_to & .Vertex
@@ -234,7 +234,7 @@ bind_buffer :: (buffer: Buffer(.Constant), slot : u32 = 0, bind_to: Shader_Type)
 
 bind_buffer :: (buffer: Buffer(.Structured), slot : u32 = 0, bind_to: Shader_Type) {
     if bind_to == .Unspecified {
-        log_error("Gaco: Unspecified shader type to bind a structured buffer.");
+        log_error("[Gaco] Unspecified shader type to bind a structured buffer.");
         return;
     }
     if bind_to & .Vertex
@@ -369,7 +369,7 @@ destroy_buffer :: (buffer: *Buffer) {
 destroy_texture :: (texture: *Texture) {
     safe_release_and_reset(*texture.texture);
     safe_release_and_reset(*texture.resource_view);
-    if texture.flags & .RWCompute {
+    if texture.flags & .Compute_RW {
         safe_release_and_reset(*texture.unordered_access_view);
     }
 
@@ -618,16 +618,12 @@ resize :: (width: int, height: int) {
     set_viewport(.{0, 0, cast(s32)width, cast(s32)height});
 }
 
-// @NotImplemented
-set_render_target :: (render_texture: Texture) {
-}
-
 create_texture_array :: (data: []*u8, width: u32, height: u32, channels: u32, mip_levels: u32 = 1, flags := Texture_Flags.None) -> Texture {
     cpu_flags: D3D11_CPU_ACCESS_FLAG;
 
     bind_flags := D3D11_BIND_FLAG.SHADER_RESOURCE;
     misc_flags : D3D11_RESOURCE_MISC_FLAG;
-    if flags & .RWCompute
+    if flags & .Compute_RW
         bind_flags |= .UNORDERED_ACCESS;
     if flags & .Generate_Mips {
         // @Speed: We would probably want to create a seperate render target texture
@@ -639,10 +635,20 @@ create_texture_array :: (data: []*u8, width: u32, height: u32, channels: u32, mi
     if flags & .Cubemap
         misc_flags |= .TEXTURECUBE;
 
-    formats : [4]DXGI_FORMAT = ---;
+    formats : [4]DXGI_FORMAT;
 
     if flags & .SRGB {
-        formats = DXGI_FORMAT.[.UNKNOWN, .UNKNOWN, .UNKNOWN, .R8G8B8A8_UNORM_SRGB];
+        if flags & .Float32 || flags & .Float16 {
+            log_error("[Gaco] Cannot specify both SRGB and Float in Texture_Flags");
+            return .{};
+        }
+        formats[3] = .R8G8B8A8_UNORM_SRGB;
+    }
+    else if flags & .Float32 {
+        formats = DXGI_FORMAT.[.R32_FLOAT, .R32G32_FLOAT, .R32G32B32_FLOAT, .R32G32B32A32_FLOAT];
+    }
+    else if flags & .Float16 {
+        formats = DXGI_FORMAT.[.R16_FLOAT, .R16G16_FLOAT, .UNKNOWN, .R16G16B16A16_FLOAT];
     }
     else {
         formats = DXGI_FORMAT.[.R8_UNORM, .R8G8_UNORM, .UNKNOWN, .R8G8B8A8_UNORM];
@@ -650,8 +656,7 @@ create_texture_array :: (data: []*u8, width: u32, height: u32, channels: u32, mi
 
     texture_format := formats[channels-1];
     if texture_format == .UNKNOWN {
-        recommended_channels := ifx flags & .SRGB "4" else "4, 2 or 1";
-        log_error("Gaco: Error while creating texture - % channels is not compatible with  Please create your image with % channels.", channels, recommended_channels);
+        log_error("[Gaco] Error while creating texture - % channels with flags % is not compatible with D3D11.", channels, flags);
         return .{};
     }
 
@@ -694,7 +699,7 @@ create_texture_array :: (data: []*u8, width: u32, height: u32, channels: u32, mi
         }
     }
 
-    if flags & .RWCompute {
+    if flags & .Compute_RW {
         uav_desc := D3D11_UNORDERED_ACCESS_VIEW_DESC.{
             Format = texture_format,
             ViewDimension = .TEXTURE2D,
@@ -739,7 +744,7 @@ create_texture :: inline (data: *u8, width: u32, height: u32, channels: u32, mip
 }
 
 bind_texture :: (texture: Texture, slot: u32) {
-    if texture.flags & .RWCompute {
+    if texture.flags & .Compute_RW {
         ID3D11DeviceContext_CSSetUnorderedAccessViews(device_context, slot, 1, *texture.unordered_access_view, null);
     }
     else {
@@ -1050,7 +1055,7 @@ using D3D11_State : struct {
 
             message_str = string.{data=message.pDescription, count=xx message.DescriptionByteLength-1};
             flags := ifx error Log_Flags.ERROR else .WARNING;
-            log("Gaco: % - %\n", message.ID, message_str, flags=flags);
+            log("[Gaco] % - %\n", message.ID, message_str, flags=flags);
         }
         ID3D11InfoQueue_ClearStoredMessages(info);
         safe_release(info);
