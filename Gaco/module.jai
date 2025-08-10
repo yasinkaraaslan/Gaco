@@ -1,5 +1,5 @@
 #module_parameters (BACKEND := DEFAULT_BACKEND, DEBUG:=false) {
-    Backend_Type :: enum u32 #specified {
+    Backend_Type :: enum u32 {
         OpenGL :: 0;
         D3D11  :: 1;
         Metal  :: 2;
@@ -190,9 +190,9 @@ create_buffer :: (data: *$T, $type: Buffer_Type, usage := Buffer_Usage.Default) 
     DATA_INFO :: type_info(T);
     count, stride: u32;
     #if DATA_INFO.type == .ARRAY {
-        if type == .Index {
-            element_info := (cast(*Type_Info_Array)DATA_INFO).element_type;
-            assert(element_info == type_info(u32) || element_info == type_info(u16), "Index buffers can only be created with u16 or u32 arrays. Got: %\n", T);
+        #if type == .Index {
+            ELEMENT_INFO :: (cast(*Type_Info_Array)DATA_INFO);
+            #assert ELEMENT_INFO.element_type == type_info(u32) || ELEMENT_INFO.element_type == type_info(u16) "Index buffers can only be created with u16 or u32 arrays.";
         }
 
         stride = cast(u32)size_of(type_of(data.*[0]));
@@ -200,7 +200,7 @@ create_buffer :: (data: *$T, $type: Buffer_Type, usage := Buffer_Usage.Default) 
         data_pointer = data.data;
     }
     else {
-        assert(type != .Index, "Index buffers can only be created with u16 or u32 arrays. Got: %\n", T);
+        #assert type != .Index "Index buffers can only be created with u16 or u32 arrays.";
 
         stride = cast(u32)size_of(type_of(data.*));
         count = 1;
