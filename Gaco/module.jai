@@ -119,6 +119,13 @@ Depth_Stencil_State :: enum u32 {
     No_Depth_Stencil;
 }
 
+Clear_Flags :: enum_flags u32 {
+    None :: 0;
+    Color :: 1;
+    Depth;
+    Stencil;
+}
+
 Rect :: struct {
     x, y, w, h : s32 = 0;
 }
@@ -129,24 +136,24 @@ Rect :: struct {
 
 compile_shader :: (file_name: string, output_file_without_extension: string, type: Shader_Type) -> bool {
     push_allocator(temp);
-    source, read_ok := read_entire_file(file_name, zero_terminated=true);
-    if !read_ok return false;
+    source, ok := read_entire_file(file_name, zero_terminated=true);
+    if !ok return false;
 
-    bytecode, compile_ok := compile_shader_to_bytecode(source, type, path_filename(file_name));
-    if !compile_ok return false;
+    bytecode:, ok = compile_shader_to_bytecode(source, type, path_filename(file_name));
+    if !ok return false;
     if type & .Vertex {
-        write_ok := write_entire_file(join(output_file_without_extension, VS_EXTENSION), bytecode.vs);
-        if !write_ok return false;
+        ok = write_entire_file(join(output_file_without_extension, VS_EXTENSION), bytecode.vs);
+        if !ok return false;
     }
 
     if type & .Fragment {
-        write_ok := write_entire_file(join(output_file_without_extension, FS_EXTENSION), bytecode.fs);
-        if !write_ok return false;
+        ok = write_entire_file(join(output_file_without_extension, FS_EXTENSION), bytecode.fs);
+        if !ok return false;
     }
 
     if type & .Compute {
-        write_ok := write_entire_file(join(output_file_without_extension, CS_EXTENSION), bytecode.cs);
-        if !write_ok return false;
+        ok = write_entire_file(join(output_file_without_extension, CS_EXTENSION), bytecode.cs);
+        if !ok return false;
     }
 
     return true;

@@ -430,19 +430,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
     #if DEBUG {
         flags |= .DEBUG | .SKIP_OPTIMIZATION;
     }
-    compile :: ($type: Shader_Type) -> string #expand {
-        entry_point, target: string;
-        #if type == {
-        case .Vertex;
-            entry_point = VS_ENTRY_POINT;
-            target = "vs_5_0";
-        case .Fragment;
-            entry_point = FS_ENTRY_POINT;
-            target = "ps_5_0";
-        case .Compute;
-            entry_point = CS_ENTRY_POINT;
-            target = "cs_5_0";
-        }
+    compile :: (entry_point: string, target: string) -> string #expand {
         output, errors, hr := D3DCompile(source, shader_name, defines, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry_point, target, xx flags, 0);
         defer free(errors);
 
@@ -454,17 +442,27 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
         return output;
     }
 
-    if type & .Vertex    bytecode.vs = compile(.Vertex);
-    if type & .Fragment  bytecode.fs = compile(.Fragment);
-    if type & .Compute   bytecode.cs = compile(.Compute);
+    if type & .Vertex    bytecode.vs = compile(VS_ENTRY_POINT, "vs_5_0");
+    if type & .Fragment  bytecode.fs = compile(FS_ENTRY_POINT, "ps_5_0");
+    if type & .Compute   bytecode.cs = compile(CS_ENTRY_POINT, "cs_5_0");
 
     return bytecode, true;
 }
 
-clear :: (render_target: Render_Target, r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0) {
-    color := float.[r, g, b, a];
-    ID3D11DeviceContext_ClearRenderTargetView(device_context, render_target.rtv, *color);
-    ID3D11DeviceContext_ClearDepthStencilView(device_context, render_target.dsv, cast(u32) D3D11_CLEAR_FLAG.DEPTH  | D3D11_CLEAR_FLAG.STENCIL, depth, stencil);
+clear :: inline (render_target: Render_Target, r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
+    #if flags & .Color {
+        color := float.[r, g, b, a];
+        ID3D11DeviceContext_ClearRenderTargetView(device_context, render_target.rtv, *color);
+    }
+
+    d3d11_clear: D3D11_CLEAR_FLAG;
+    #if flags & .Depth
+        d3d11_clear |= .DEPTH;
+    #if flags & .Stencil
+        d3d11_clear |= .STENCIL;
+    if d3d11_clear { // This should be optimized out by the compiler, hopefully
+        ID3D11DeviceContext_ClearDepthStencilView(device_context, render_target.dsv, cast(u32) D3D11_CLEAR_FLAG.DEPTH  | D3D11_CLEAR_FLAG.STENCIL, depth, stencil);
+    }
 }
 
 clear :: inline (r: float, g: float, b: float, a: float, depth := 1.0, stencil : u8 = 0) {
