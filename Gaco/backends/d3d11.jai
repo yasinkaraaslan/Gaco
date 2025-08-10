@@ -1,7 +1,4 @@
-// NOTE(Yasin): D3D11 just spins a bunch of threads for lots of different things and
-// there doesn't seem to be a way to turn them off. Should investigate more.
-
-// This is more akin to something like an OpenGL 'program' I guess.
+// This is more akin to an OpenGL 'program' I guess.
 Shader :: struct {
     type : Shader_Type;
     vertex_shader: *ID3D11VertexShader;
@@ -37,6 +34,10 @@ Texture :: struct {
     flags: Texture_Flags;
 };
 
+Render_Target :: struct {
+    rtv: *ID3D11RenderTargetView;
+    dsv: *ID3D11DepthStencilView;
+}
 
 is_empty :: (texture: Texture) -> bool {
     return texture.texture == null;
@@ -54,6 +55,12 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
     flags : D3D11_CREATE_DEVICE_FLAG;
     #if DEBUG flags |= .DEBUG;
     feature_levels := D3D_FEATURE_LEVEL.[._11_1];
+
+    // NOTE(Yasin): D3D11 just spins a bunch of threads for lots of different things.
+    // MSDN says we can prevent it by passing .PREVENT_INTERNAL_THREADING_OPTIMIZATIONS but it still
+    // seems to create about 20 threads (can probably disabled in some driver setting),
+    // this isn't recommended also. I don't know man...
+    // flags |= .PREVENT_INTERNAL_THREADING_OPTIMIZATIONS;
 
     hr := D3D11CreateDevice(null, .HARDWARE, null, xx flags, feature_levels.data, feature_levels.count, D3D11_SDK_VERSION, *device, null, *device_context);
     check_hr("D3D11CreateDevice");
@@ -74,7 +81,6 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
         BufferUsage = .RENDER_TARGET_OUTPUT,
         SampleDesc = .{Count = wanted_msaa, Quality = 0},
     };
-
 
     dxgi_factory: *IDXGIFactory2;
     {
@@ -100,11 +106,6 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
     msaa = wanted_msaa;
 
     init_states();
-
-    // There are very few cases where you wouldn't want depth testing, so we enable it by default.
-    set_depth_stencil_state(.Depth_Stencil);
-
-    set_primitive_type(.Triangle_List);
 }
 
 deinit :: () {
@@ -121,8 +122,7 @@ deinit :: () {
         safe_release_and_reset(it);
     }
 
-    safe_release_and_reset(*depth_stencil_view);
-    safe_release_and_reset(*render_target_view);
+    destroy_render_target(*window_render_target);
     safe_release_and_reset(*swap_chain);
     safe_release_and_reset(*device_context);
     safe_release_and_reset(*device);
@@ -461,13 +461,22 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
     return bytecode, true;
 }
 
-clear :: (r: float, g: float, b: float, a: float, depth := 1.0, stencil : u8 = 0) {
+clear :: (render_target: Render_Target, r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0) {
     color := float.[r, g, b, a];
-    ID3D11DeviceContext_ClearRenderTargetView(device_context, render_target_view, *color);
-    ID3D11DeviceContext_ClearDepthStencilView(device_context, depth_stencil_view, cast(u32) D3D11_CLEAR_FLAG.DEPTH  | D3D11_CLEAR_FLAG.STENCIL, depth, stencil);
+    ID3D11DeviceContext_ClearRenderTargetView(device_context, render_target.rtv, *color);
+    ID3D11DeviceContext_ClearDepthStencilView(device_context, render_target.dsv, cast(u32) D3D11_CLEAR_FLAG.DEPTH  | D3D11_CLEAR_FLAG.STENCIL, depth, stencil);
+}
+
+clear :: inline (r: float, g: float, b: float, a: float, depth := 1.0, stencil : u8 = 0) {
+    clear(window_render_target, r, g, b, a, depth, stencil);
 }
 
 set_shader :: (shader: Shader) {
+    // NOTE(Yasin): We might stop checking types to be compatible with a future OpenGL backend.
+    // This would make it impossible to mix shaders, but I don't want to overcomplicate the
+    // API just for that.
+    // Maybe this isn't a good idea.
+
     if shader.type & .Vertex {
         ID3D11DeviceContext_IASetInputLayout(device_context, shader.input_layout);
         ID3D11DeviceContext_VSSetShader(device_context, shader.vertex_shader, null, 0);
@@ -573,25 +582,40 @@ present :: (interval: u32 = 1) {
     check_hr("IDXGISwapChain_Present", #code {});
 }
 
-resize :: (width: int, height: int) {
-    // This doesn't seem to be necessary, but just to be safe...
-    if render_target_view {
+// TODO(Yasin): Create render targets from textures.
+
+set_render_target :: (render_target: *Render_Target) {
+    if render_target {
+        ID3D11DeviceContext_OMSetRenderTargets(device_context, 1, *render_target.rtv, render_target.dsv);
+    }
+    else {
         ID3D11DeviceContext_OMSetRenderTargets(device_context, 0, null, null);
     }
+}
 
-    safe_release_and_reset(*render_target_view);
-    safe_release_and_reset(*depth_stencil_view);
+destroy_render_target :: (render_target: *Render_Target) {
+    safe_release_and_reset(*render_target.rtv);
+    safe_release_and_reset(*render_target.dsv);
+}
+
+// This returns the window's render target
+resize :: (width: int, height: int) -> *Render_Target {
+    // This doesn't seem to be necessary, but just to be safe...
+    set_render_target(null);
+    destroy_render_target(*window_render_target);
+
+    using window_render_target;
 
     hr := IDXGISwapChain_ResizeBuffers(swap_chain, 0, cast(u32)width, cast(u32)height, .UNKNOWN, 0);
-    check_hr("IDXGISwapChain.ResizeBuffers");
+    check_hr("IDXGISwapChain.ResizeBuffers", #code `return null);
 
     back_buffer_texture: *ID3D11Texture2D;
     hr = IDXGISwapChain_GetBuffer(swap_chain, 0, *uid(ID3D11Texture2D_UUID), xx *back_buffer_texture);
-    check_hr("IDXGISwapChain.GetBuffer");
+    check_hr("IDXGISwapChain.GetBuffer", #code `return null);
 
-    hr = ID3D11Device_CreateRenderTargetView(device, back_buffer_texture, null, *render_target_view);
+    hr = ID3D11Device_CreateRenderTargetView(device, back_buffer_texture, null, *rtv);
     safe_release(back_buffer_texture);
-    check_hr("ID3D11Device.CreateRenderTargetView");
+    check_hr("ID3D11Device.CreateRenderTargetView", #code `return null);
 
 
     depth_stencil_texture: *ID3D11Texture2D;
@@ -607,15 +631,17 @@ resize :: (width: int, height: int) {
         BindFlags = .DEPTH_STENCIL
     };
     hr = ID3D11Device_CreateTexture2D(device, *depth_stencil_texture_desc, null, *depth_stencil_texture);
-    check_hr("ID3D11Device.CreateTexture2D");
+    check_hr("ID3D11Device.CreateTexture2D", #code `return null);
 
-    hr = ID3D11Device_CreateDepthStencilView(device, depth_stencil_texture, null, *depth_stencil_view);
+    hr = ID3D11Device_CreateDepthStencilView(device, depth_stencil_texture, null, *dsv);
 
     safe_release(depth_stencil_texture);
-    check_hr("ID3D11Device.CreateDepthStencilView");
+    check_hr("ID3D11Device.CreateDepthStencilView", #code `return null);
 
-    ID3D11DeviceContext_OMSetRenderTargets(device_context, 1, *render_target_view, depth_stencil_view);
+    set_render_target(*window_render_target);
     set_viewport(.{0, 0, cast(s32)width, cast(s32)height});
+
+    return *window_render_target;
 }
 
 create_texture_array :: (data: []*u8, width: u32, height: u32, channels: u32, mip_levels: u32 = 1, flags := Texture_Flags.None) -> Texture {
@@ -775,7 +801,7 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
     // @Incomplete
     // Max anisotropy requires a specific filter (.ANISOTROPY) on D3D11, while there isn't such a requirement on OpenGL.
     // So I am not sure on how to handle this.
-    // We just pass it to the sampler without changing the filtering for now, which does nothing.
+    // We just pass it to the sampler_desc without changing the filtering for now, which does nothing.
     sampler_desc := D3D11_SAMPLER_DESC.{
         Filter = d3d11_filter,
         AddressU = address_mode, AddressV = address_mode, AddressW = address_mode,
@@ -805,6 +831,23 @@ FS_EXTENSION :: ".dxfs";
 CS_EXTENSION :: ".dxcs";
 
 #scope_file
+using D3D11_State : struct {
+    device: *ID3D11Device;
+    device_context: *ID3D11DeviceContext;
+    swap_chain: *IDXGISwapChain1;
+
+    window_render_target: Render_Target;
+    // bound_render_target: *Render_Target;
+
+    // Should we expose a way to create these states?
+    rasterizer_states: [#run enum_count(Rasterizer_State)]*ID3D11RasterizerState;
+    blend_states: [#run enum_count(Blend_State)]*ID3D11BlendState;
+
+    // TODO(Yasin): Experiment more with stencil buffers to figure out the best options here.
+    depth_stencil_states: [#run enum_count(Depth_Stencil_State)]*ID3D11DepthStencilState;
+    msaa: u32;
+}
+
 init_states :: () {
     ds_desc := D3D11_DEPTH_STENCIL_DESC.{
         DepthEnable = .TRUE,
@@ -876,10 +919,6 @@ init_states :: () {
     }
 }
 
-
-// This spins up like... 20 threads
-// Threads remain alive indefinitely even after we destroy the reflection object.
-// Sad.
 get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
     reflector: *ID3D11ShaderReflection;
     defer safe_release(reflector);
@@ -970,33 +1009,16 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
 check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
     if FAILED(`hr) {
         System :: #import "System";
-        error_code := cast,no_check(OS_Error_Code)`hr; // if it is a failure, we are sure it is less than 0, and OS_Error_Code is a u32.
+        error_code := cast,no_check(OS_Error_Code)`hr; // We know that it is less than 0 if it's a failure. OS_Error_Code is a u32
         fail_message := System.get_error_string(error_code);
 
-        log_error("% failed with code 0x%: %\n", from, FormatInt.{value = error_code, base=16}, fail_message);
+        log_error("% failed with code 0x%: %", from, FormatInt.{value = error_code, base=16}, fail_message);
         #if !DEBUG {
             log("Pass DEBUG=true when importing Gaco to learn more.");
         }
 
         #insert code_to_insert_after_fail;
     }
-}
-
-using D3D11_State : struct {
-    device: *ID3D11Device;
-    device_context: *ID3D11DeviceContext;
-    swap_chain: *IDXGISwapChain1;
-    render_target_view: *ID3D11RenderTargetView;
-    depth_stencil_view: *ID3D11DepthStencilView;
-
-
-    // Should we expose a way to create these states?
-    rasterizer_states: [#run enum_count(Rasterizer_State)]*ID3D11RasterizerState;
-    blend_states: [#run enum_count(Blend_State)]*ID3D11BlendState;
-
-    // TODO(Yasin): Experiment more with stencil buffers to figure out the best options here.
-    depth_stencil_states: [#run enum_count(Depth_Stencil_State)]*ID3D11DepthStencilState;
-    msaa : u32;
 }
 
 #import "d3d11";
