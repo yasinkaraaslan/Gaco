@@ -193,8 +193,8 @@ create_buffer :: (data: *$T, $type: Buffer_Type, usage := Buffer_Usage.Default) 
     count, stride: u32;
     #if DATA_INFO.type == .ARRAY {
         #if type == .Index {
-            ELEMENT_INFO :: (cast(*Type_Info_Array)DATA_INFO);
-            #assert ELEMENT_INFO.element_type == type_info(u32) || ELEMENT_INFO.element_type == type_info(u16) "Index buffers can only be created with u16 or u32 arrays.";
+            ARRAY_INFO :: (cast(*Type_Info_Array)DATA_INFO);
+            #assert ARRAY_INFO.element_type == type_info(u32) || ARRAY_INFO.element_type == type_info(u16) "Index buffers can only be created with u16 or u32 arrays.";
         }
 
         stride = cast(u32)size_of(type_of(data.*[0]));

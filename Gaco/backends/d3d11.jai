@@ -35,7 +35,7 @@ Texture :: struct {
 };
 
 Render_Target :: struct {
-    // We hardcode could hardcode 8 here because that is the maximum number of color views D3D11 supports.
+    // We could hardcode 8 here because that is the maximum number of color views D3D11 supports.
     // Which would increase the struct size but wouldn't require heap allocation.
     color_views: []*ID3D11RenderTargetView;
     depth_stencil_view: *ID3D11DepthStencilView;
@@ -746,19 +746,31 @@ create_texture_array :: (data: []*u8, width: u32, height: u32, channels: u32, mi
         }
     }
 
+    // Hmm, maybe this is not the greatest way to determine if we are a texture array.
+    // We might have a flag for this, and combine create_texture and create_texture_array somehow.
+    is_array := ifx data.count > mip_levels && !(flags & .Cubemap);
+
     if bind_flags & .UNORDERED_ACCESS {
+        view_dimension := ifx is_array D3D11_UAV_DIMENSION.TEXTURE2DARRAY else .TEXTURE2D;
+
         uav_desc := D3D11_UNORDERED_ACCESS_VIEW_DESC.{
             Format = texture_format,
-            ViewDimension = .TEXTURE2D,
+            ViewDimension = view_dimension,
             Texture2D.MipSlice = 0
         };
         hr = ID3D11Device_CreateUnorderedAccessView(device, texture.texture, *uav_desc, *texture.unordered_access_view);
         check_hr("ID3D11Device.CreateUnorderedAccessView", #code return .{});
     }
-    else if bind_flags & .SHADER_RESOURCE {
+    else if bind_flags & .SHADER_RESOURCE { // Maybe not else?
+        view_dimension := D3D11_SRV_DIMENSION.TEXTURE2D;
+        if flags & .Cubemap view_dimension = .TEXTURECUBE;
+        else if is_array {
+            view_dimension = .TEXTURE2DARRAY;
+        }
+
         srv_desc := D3D11_SHADER_RESOURCE_VIEW_DESC.{
             Format = texture_format,
-            ViewDimension = ifx flags & .Cubemap then .TEXTURECUBE else .TEXTURE2D,
+            ViewDimension = view_dimension,
             Texture2D.MostDetailedMip = 0,
             Texture2D.MipLevels = mip_levels
         };
@@ -775,7 +787,7 @@ create_texture_array :: (data: []*u8, width: u32, height: u32, channels: u32, mi
 
 }
 
-// Actually, mip_levels without .Generate_Mips doesn't make any sense in here
+// Mip_levels without .Generate_Mips doesn't make any sense in here
 create_texture :: inline (data: *u8, width: u32, height: u32, channels: u32, mip_levels: u32 = 1, msaa : u32 = 1, flags := Texture_Flags.None) -> Texture {
     data_array: []*u8;
     if data {
