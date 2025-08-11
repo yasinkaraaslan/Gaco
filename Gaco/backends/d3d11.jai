@@ -25,7 +25,10 @@ Sampler :: struct {
 }
 
 Texture :: struct {
-    texture: *ID3D11Texture2D;
+    union {
+        texture2d: *ID3D11Texture2D;
+        texture3d: *ID3D11Texture3D;
+    }
     union {
         resource_view: *ID3D11ShaderResourceView;
         unordered_access_view: *ID3D11UnorderedAccessView;
@@ -42,7 +45,7 @@ Render_Target :: struct {
 }
 
 is_empty :: (texture: Texture) -> bool {
-    return texture.texture == null;
+    return texture.texture2d == null;
 }
 
 is_empty :: (using shader: Shader) -> bool {
@@ -109,6 +112,10 @@ init :: (window: HWND, wanted_msaa : u32 = 4) {
 
     init_states();
     set_primitive_type(.Triangle_List);
+
+    // There are very few cases where one wouldn't want depth testing.
+    // So we enable it by default.
+    set_depth_stencil_state(.Depth_Stencil);
 }
 
 deinit :: () {
@@ -274,8 +281,8 @@ update_buffer :: (buffer: *Buffer, data: *void) {
     ID3D11DeviceContext_UpdateSubresource(device_context, buffer.buffer, 0, null, data, buffer.stride, 0);
 }
 
-// If you create a texture array, this can only update the first one, for now.
-update_texture :: (texture: *Texture, data: *void, rect: Rect) {
+// Incomplete: Cannot update texture3d
+update_texture :: (texture: *Texture, data: *void, rect: Rect, array_slice: u32 = 0) {
     rows : u32 = cast(u32)rect.w * texture.channels;
 
     box: D3D11_BOX;
@@ -285,14 +292,14 @@ update_texture :: (texture: *Texture, data: *void, rect: Rect) {
     box.right = xx (rect.x + rect.w);
     box.back = 1;
 
-    ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture, 0, *box, data, rows, 0);
+    ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture2d, array_slice, *box, data, rows, 0);
 }
 
-update_texture :: inline (texture: *Texture, data: *void) {
+update_texture :: inline (texture: *Texture, data: *void, array_slice : u32 = 0) {
     rect: Rect;
     rect.w = texture.width;
     rect.h = texture.height;
-    update_texture(texture, data,rect);
+    update_texture(texture, data, rect, array_slice);
 }
 
 // Allocates on temp
@@ -369,10 +376,12 @@ destroy_buffer :: (buffer: *Buffer) {
 }
 
 destroy_texture :: (texture: *Texture) {
-    safe_release_and_reset(*texture.texture);
-    safe_release_and_reset(*texture.resource_view);
+    safe_release_and_reset(*texture.texture2d);
     if texture.flags & .Compute_RW {
         safe_release_and_reset(*texture.unordered_access_view);
+    }
+    else {
+        safe_release_and_reset(*texture.resource_view);
     }
 
     texture.width, texture.height, texture.channels = 0;
@@ -591,13 +600,13 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: *Text
         render_target.color_views = NewArray(color_textures.count, *ID3D11RenderTargetView);
 
         for color_textures {
-            hr := ID3D11Device_CreateRenderTargetView(device, it.texture, null, *render_target.color_views[it_index]);
+            hr := ID3D11Device_CreateRenderTargetView(device, it.texture2d, null, *render_target.color_views[it_index]);
             check_hr("ID3D11Device.CreateRenderTargetView", #code return .{});
         }
     }
 
     if !is_empty(depth_stencil_texture) {
-        hr := ID3D11Device_CreateDepthStencilView(device, depth_stencil_texture.texture, null, *render_target.depth_stencil_view);
+        hr := ID3D11Device_CreateDepthStencilView(device, depth_stencil_texture.texture2d, null, *render_target.depth_stencil_view);
         check_hr("ID3D11Device.CreateDepthStencilView", #code return .{});
     }
     return render_target;
@@ -633,10 +642,10 @@ resize :: (width: int, height: int) -> *Render_Target {
     check_hr("IDXGISwapChain.ResizeBuffers", #code `return null);
 
     back_buffer: Texture;
-    hr = IDXGISwapChain_GetBuffer(swap_chain, 0, *uid(ID3D11Texture2D_UUID), xx *back_buffer.texture);
+    hr = IDXGISwapChain_GetBuffer(swap_chain, 0, *uid(ID3D11Texture2D_UUID), xx *back_buffer.texture2d);
     check_hr("IDXGISwapChain.GetBuffer", #code `return null);
 
-    depth_stencil_texture := create_texture(null, cast(u32)width, cast(u32)height, 1, 1, msaa, .Depth_Stencil);
+    depth_stencil_texture := create_texture(.[], cast(u32)width, cast(u32)height, 1, 1, msaa, .Depth_Stencil | .Multisample);
     window_render_target = create_render_target(.[back_buffer], *depth_stencil_texture);
 
     destroy_texture(*depth_stencil_texture);
@@ -648,158 +657,191 @@ resize :: (width: int, height: int) -> *Render_Target {
     return *window_render_target;
 }
 
-create_texture_array :: (data: []*u8, width: u32, height: u32, channels: u32, mip_levels: u32 = 1, msaa : u32 = 1, flags := Texture_Flags.None) -> Texture {
-    cpu_flags: D3D11_CPU_ACCESS_FLAG;
+create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa : u32 = 1, flags := Texture_Flags.None) -> Texture {
+    bytes_per_channel: u32 = 1;
 
-    bind_flags := D3D11_BIND_FLAG.SHADER_RESOURCE;
-    misc_flags : D3D11_RESOURCE_MISC_FLAG;
+    generate_mips := flags & .Generate_Mips && mip_levels_or_msaa > 1;
 
-    if flags & .Compute_RW {
-        bind_flags |= .UNORDERED_ACCESS;
-    }
-    if flags & .Generate_Mips {
+    format: DXGI_FORMAT;
+    bind_flags: D3D11_BIND_FLAG;
+    misc_flags: D3D11_RESOURCE_MISC_FLAG;
+
+    // Pick the flags
+    if flags & .Compute_RW
+        bind_flags = .UNORDERED_ACCESS;
+    else if flags & .Render_Target
+        bind_flags = .RENDER_TARGET;
+    else if flags & .Depth_Stencil
+        bind_flags = .DEPTH_STENCIL;
+    else
+        bind_flags = .SHADER_RESOURCE;
+
+    if generate_mips {
         // @Speed: We would probably want to create a seperate render target texture
         // and copy it to our newly generated texture.
         bind_flags |= .RENDER_TARGET;
         misc_flags |= .GENERATE_MIPS;
     }
-    if flags & .Render_Target {
-        bind_flags |= .RENDER_TARGET;
-        bind_flags &= ~.SHADER_RESOURCE;
-    }
-    if flags & .Depth_Stencil {
-        bind_flags |= .DEPTH_STENCIL;
-        bind_flags &= ~.SHADER_RESOURCE;
-    }
-
     if flags & .Cubemap
         misc_flags |= .TEXTURECUBE;
 
-    formats : [4]DXGI_FORMAT;
 
-    if flags & .Depth_Stencil {
-        // We do not care about the channels, it will always be 32 bits.
-        // TODO(Yasin): D32_FLOAT
-        formats[channels-1] = .D24_UNORM_S8_UINT;
-    }
+    // Pick the format
+    if flags & .Depth_Stencil
+        format = .D24_UNORM_S8_UINT;
     else {
+        formats: [4]DXGI_FORMAT;
         if flags & .SRGB {
             if flags & .Float32 || flags & .Float16 {
-                log_error("[Gaco] Cannot specify both SRGB and Float in Texture_Flags");
+                log_error("[Gaco] Error while creating texture: Cannot specify both SRGB and Float in Texture_Flags");
                 return .{};
             }
             formats[3] = .R8G8B8A8_UNORM_SRGB;
         }
         else if flags & .Float32 {
             formats = DXGI_FORMAT.[.R32_FLOAT, .R32G32_FLOAT, .R32G32B32_FLOAT, .R32G32B32A32_FLOAT];
+            bytes_per_channel = 4;
         }
         else if flags & .Float16 {
             formats = DXGI_FORMAT.[.R16_FLOAT, .R16G16_FLOAT, .UNKNOWN, .R16G16B16A16_FLOAT];
+            bytes_per_channel = 2;
         }
         else {
             formats = DXGI_FORMAT.[.R8_UNORM, .R8G8_UNORM, .UNKNOWN, .R8G8B8A8_UNORM];
         }
+
+        format = formats[channels-1];
     }
 
-    texture_format := formats[channels-1];
-    if texture_format == .UNKNOWN {
-        log_error("[Gaco] Error while creating texture - % channels with flags % is not compatible with D3D11.", channels, flags);
+    if format == .UNKNOWN {
+        log_error("[Gaco] Error while creating texture: % channels with flags % is not compatible with D3D11.", channels, flags);
         return .{};
     }
 
-    texture_desc := D3D11_TEXTURE2D_DESC.{
-        Width = width,
-        Height = height,
-        SampleDesc.Count = msaa,
-        MipLevels = mip_levels,
-        ArraySize = ifx data cast(u32)data.count else 1,
-        Format = texture_format,
-        Usage = .DEFAULT,
-        BindFlags = bind_flags,
-        CPUAccessFlags = cpu_flags,
-        MiscFlags = misc_flags
-    };
+    // Create the thing
 
-    texture := Texture.{width = width, height = height, channels = channels, flags = flags};
+    texture := Texture.{width=width, height=height,channels=channels,flags=flags};
 
-    init_data : []D3D11_SUBRESOURCE_DATA;
-    if !(flags & .Generate_Mips) && data {
-        init_data = NewArray(data.count, D3D11_SUBRESOURCE_DATA,, temp);
-        for * init_data {
-            it.* = D3D11_SUBRESOURCE_DATA.{
-                pSysMem = data[it_index],
-                SysMemPitch = width * channels,
-                SysMemSlicePitch = 0,
+    init_data: []D3D11_SUBRESOURCE_DATA;
+    if data && !generate_mips {
+        init_data = NewArray(data.count, D3D11_SUBRESOURCE_DATA);
+        for data {
+            init_data[it_index] = D3D11_SUBRESOURCE_DATA.{
+                pSysMem = it,
+                SysMemPitch = width * channels * bytes_per_channel,
+                SysMemSlicePitch = width * height * channels * bytes_per_channel, // Only used with 3D textures.
             };
         }
     }
+    if flags & .Is_3D {
+        if flags & .Multisample {
+            log_error("[Gaco] Error while creating texture: .Multisample cannot be mixed with .Is_3D.");
+            return .{};
+        }
 
-    hr := ID3D11Device_CreateTexture2D(device, *texture_desc, init_data.data, *texture.texture );
-    check_hr("ID3D11Device.CreateTexture2D", #code return .{});
+        desc := D3D11_TEXTURE3D_DESC.{
+            Width = width,
+            Height = height,
+            Depth = array_count_or_depth,
+            MipLevels = mip_levels_or_msaa,
+            Format = format,
+            BindFlags = bind_flags,
+            MiscFlags = misc_flags,
+            Usage = .DEFAULT, // @@
+            CPUAccessFlags = 0,
+        };
 
-    // :Multithreading:
-    // https://learn.microsoft.com/en-us/windows/win32/direct3d11/overviews-direct3d-11-render-multi-thread-intro
-    if flags & .Generate_Mips {
+
+        hr := ID3D11Device_CreateTexture3D(device, *desc, init_data.data, *texture.texture3d);
+        check_hr("ID3D11Device.CreateTexture3D", #code return .{});
+    }
+    else {
+        mip_levels: u32 = 1;
+        msaa: u32 = 1;
+        if flags & .Multisample {
+            msaa = mip_levels_or_msaa;
+        }
+        else {
+            mip_levels = mip_levels_or_msaa;
+        }
+
+        desc := D3D11_TEXTURE2D_DESC.{
+            Width = width,
+            Height = height,
+            SampleDesc.Count = msaa,
+            MipLevels = mip_levels,
+            ArraySize = ifx flags & .Cubemap 6 * array_count_or_depth else array_count_or_depth,
+            Format = format,
+            BindFlags = bind_flags,
+            MiscFlags = misc_flags,
+            Usage = .DEFAULT, // @@
+            CPUAccessFlags = 0,
+        };
+
+        hr := ID3D11Device_CreateTexture2D(device, *desc, init_data.data, *texture.texture2d);
+        check_hr("ID3D11Device.CreateTexture2D", #code return .{});
+    }
+
+    if generate_mips {
         for data {
-            index := cast(u32)it_index * mip_levels;
-            ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture, index, null, it, width * channels, 1);
+            // D3D11CalcSubresource
+            index := mip_levels_or_msaa * cast(u32)it_index;
+            ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture2d, index, null, it, width * channels, 1);
         }
     }
 
-    // Hmm, maybe this is not the greatest way to determine if we are a texture array.
-    // We might have a flag for this, and combine create_texture and create_texture_array somehow.
-    is_array := ifx data.count > mip_levels && !(flags & .Cubemap);
+    // Create the view
 
-    if bind_flags & .UNORDERED_ACCESS {
-        view_dimension := ifx is_array D3D11_UAV_DIMENSION.TEXTURE2DARRAY else .TEXTURE2D;
+    if bind_flags & .SHADER_RESOURCE {
+        srv_desc: D3D11_SHADER_RESOURCE_VIEW_DESC;
+        srv_desc.Format = format;
 
-        uav_desc := D3D11_UNORDERED_ACCESS_VIEW_DESC.{
-            Format = texture_format,
-            ViewDimension = view_dimension,
-            Texture2D.MipSlice = 0
-        };
-        hr = ID3D11Device_CreateUnorderedAccessView(device, texture.texture, *uav_desc, *texture.unordered_access_view);
-        check_hr("ID3D11Device.CreateUnorderedAccessView", #code return .{});
-    }
-    else if bind_flags & .SHADER_RESOURCE { // Maybe not else?
-        view_dimension := D3D11_SRV_DIMENSION.TEXTURE2D;
-        if flags & .Cubemap view_dimension = .TEXTURECUBE;
-        else if is_array {
-            view_dimension = .TEXTURE2DARRAY;
+        if flags & .Is_3D {
+            srv_desc.ViewDimension = .TEXTURE3D;
+            srv_desc.Texture3D.MostDetailedMip = 0;
+            srv_desc.Texture3D.MipLevels = mip_levels_or_msaa;
         }
-
-        srv_desc := D3D11_SHADER_RESOURCE_VIEW_DESC.{
-            Format = texture_format,
-            ViewDimension = view_dimension,
-            Texture2D.MostDetailedMip = 0,
-            Texture2D.MipLevels = mip_levels
-        };
-
-        hr = ID3D11Device_CreateShaderResourceView(device, texture.texture, *srv_desc, *texture.resource_view);
+        else if array_count_or_depth > 1 {
+            if flags & .Cubemap {
+                srv_desc.ViewDimension = .TEXTURECUBEARRAY;
+                srv_desc.TextureCubeArray.MipLevels = mip_levels_or_msaa;
+                srv_desc.TextureCubeArray.NumCubes = array_count_or_depth;
+            }
+            else if flags & .Multisample {
+                srv_desc.ViewDimension = .TEXTURE2DMSARRAY;
+                srv_desc.Texture2DMSArray.ArraySize = array_count_or_depth;
+            }
+            else {
+                srv_desc.ViewDimension = .TEXTURE2DARRAY;
+                srv_desc.Texture2DArray = .{
+                    MipLevels = mip_levels_or_msaa,
+                    ArraySize = array_count_or_depth,
+                };
+            }
+        }
+        else if flags & .Cubemap {
+            srv_desc.ViewDimension = .TEXTURECUBE;
+            srv_desc.TextureCube.MipLevels = mip_levels_or_msaa;
+        }
+        else if flags & .Multisample {
+            srv_desc.ViewDimension = .TEXTURE2DMS;
+        }
+        else {
+            srv_desc.ViewDimension = .TEXTURE2D;
+            srv_desc.Texture2D.MipLevels = mip_levels_or_msaa;
+        }
+        hr := ID3D11Device_CreateShaderResourceView(device, texture.texture2d, *srv_desc, *texture.resource_view);
         check_hr("ID3D11Device.CreateShaderResourceView", #code return .{});
 
-        // :Multithreading:
-        if flags & .Generate_Mips {
+        if generate_mips {
             ID3D11DeviceContext_GenerateMips(device_context, texture.resource_view);
         }
     }
-    return texture;
-
-}
-
-// Mip_levels without .Generate_Mips doesn't make any sense in here
-create_texture :: inline (data: *u8, width: u32, height: u32, channels: u32, mip_levels: u32 = 1, msaa : u32 = 1, flags := Texture_Flags.None) -> Texture {
-    data_array: []*u8;
-    if data {
-        if flags & .Cubemap {
-            data_array = .[data,data,data,data,data,data];
-        }
-        else {
-            data_array = .[data];
-        }
+    else if bind_flags & .UNORDERED_ACCESS {
+        // TODO(Yasin)!!
     }
 
-    return create_texture_array(data_array, width, height, channels, mip_levels, msaa, flags);
+    return texture;
 }
 
 bind_texture :: (texture: Texture, slot: u32) {

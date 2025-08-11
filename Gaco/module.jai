@@ -70,6 +70,9 @@ Texture_Flags :: enum_flags u32 {
     Float32;
     Cubemap;
     Generate_Mips;
+    // Compressed_BC; TODO(Yasin): BC7, BC6
+    Is_3D;
+    Multisample;
     Render_Target;
     Depth_Stencil;
     Compute_RW; // RWTexture2D
@@ -88,7 +91,7 @@ Sampler_Edge_Handling :: enum u32 {
 }
 
 // Helper struct for creating Draw_Indirect buffers.
-// These are the same for all rendering APIs out there.
+// This is the same for all rendering APIs out there.
 Draw_Indirect_Args :: struct(indexed: bool) {
     count: u32;
     instance_count: u32;
@@ -211,14 +214,14 @@ create_buffer :: (data: *$T, $type: Buffer_Type, usage := Buffer_Usage.Default) 
     return create_buffer(data_pointer, count, stride, type, usage);
 }
 
-create_texture_from_file :: (file_name: string, mip_levels : u32 = 1, msaa : u32 = 1, flags := Texture_Flags.None, desired_channels : u32 = 0) -> Texture {
+create_texture_from_file :: (file_name: string, mip_levels : u32 = 1, flags := Texture_Flags.None, desired_channels : u32 = 0) -> Texture {
     bytes, ok := read_entire_file(file_name,, temp);
 
     if !ok return .{};
-    return create_texture_from_memory(bytes, mip_levels, msaa, flags, desired_channels);
+    return create_texture_from_memory(bytes, mip_levels, flags, desired_channels);
 }
 
-create_texture_from_memory :: (memory: string, mip_levels : u32 = 1, msaa : u32 = 1, flags := Texture_Flags.None, desired_channels: u32 = 0) -> Texture {
+create_texture_from_memory :: (memory: string, mip_levels : u32 = 1, flags := Texture_Flags.None, desired_channels: u32 = 0) -> Texture {
     width, height, channels: s32;
 
     // NOTE(Yasin): Unfortunately, this is allocated with malloc and there is no way to read into an existing buffer.
@@ -226,10 +229,10 @@ create_texture_from_memory :: (memory: string, mip_levels : u32 = 1, msaa : u32 
 
     buffer := stbi_load_from_memory(memory.data, cast(s32)memory.count, *width, *height, *channels, cast(s32) desired_channels);
     defer stbi_image_free(buffer);
-    return create_texture(buffer, cast(u32)width, cast(u32)height, ifx desired_channels desired_channels else cast(u32)channels, mip_levels, msaa, flags);
+    return create_texture(.[buffer], cast(u32)width, cast(u32)height, ifx desired_channels desired_channels else cast(u32)channels, 1, mip_levels, flags);
 }
 
-create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, msaa : u32 = 1, flags := Texture_Flags.None, desired_channels : u32 = 0) -> Texture {
+create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, flags := Texture_Flags.None, desired_channels : u32 = 0) -> Texture {
     data := NewArray(file_names.count, *u8,, temp);
     defer for data {
         if it  stbi_image_free(it);
@@ -249,8 +252,8 @@ create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, m
             texture_channels = ifx desired_channels desired_channels else cast(u32)channels;
         }
     }
-
-    return create_texture_array(data, texture_width, texture_height, texture_channels, mip_levels, msaa, flags);
+    count : u32 = xx ifx flags & .Cubemap data.count / 6 else data.count;
+    return create_texture(data, texture_width, texture_height, texture_channels, count, mip_levels, flags);
 }
 
 free :: (bytecode: Shader_Bytecode) {
@@ -272,7 +275,6 @@ case .Metal;
 VS_ENTRY_POINT :: "vertex_main";
 FS_ENTRY_POINT :: "fragment_main";
 CS_ENTRY_POINT :: "compute_main";
-
 
 // This name wouldn't make sense if the enum values jump, but whatever.
 enum_count :: ($T: Type) -> s64 {
