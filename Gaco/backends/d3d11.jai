@@ -724,7 +724,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
 
     init_data: []D3D11_SUBRESOURCE_DATA;
     if data && !generate_mips {
-        init_data = NewArray(data.count, D3D11_SUBRESOURCE_DATA);
+        init_data = NewArray(data.count, D3D11_SUBRESOURCE_DATA,, temp);
         for data {
             init_data[it_index] = D3D11_SUBRESOURCE_DATA.{
                 pSysMem = it,
