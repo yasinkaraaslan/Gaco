@@ -65,17 +65,31 @@ Map_Flags :: enum_flags u32 {
 
 Texture_Flags :: enum_flags u32 {
     None :: 0;
-    SRGB :: 1;
-    Float16;
-    Float32;
-    Cubemap;
+    Cubemap :: 1;
     Generate_Mips;
-    // Compressed_BC; TODO(Yasin): BC7, BC6
     Is_3D;
     Multisample;
     Render_Target;
     Depth_Stencil;
     Compute_RW; // RWTexture2D
+}
+
+// I only put the most common formats here, for simplicity sake.
+// You may extend this if you need more.
+// Some combinations (e.g. RGB8) have equivalents
+// in OpenGL but not in D3D11.
+Texture_Format :: enum u32 {
+    Default; // Default one according to the flags, 8 bits per channel most of the time.
+    SRGB;
+    Float16;
+    Float32;
+
+    // Block compression formats. These do not care about
+    // the channels argument passed to create_texture.
+    BC6U; // Unsigned float16
+    BC6S; // Signed float16
+    BC7;
+    BC7_SRGB;
 }
 
 Sampler_Filtering :: enum u32 {
@@ -214,14 +228,14 @@ create_buffer :: (data: *$T, $type: Buffer_Type, usage := Buffer_Usage.Default) 
     return create_buffer(data_pointer, count, stride, type, usage);
 }
 
-create_texture_from_file :: (file_name: string, mip_levels : u32 = 1, flags := Texture_Flags.None, desired_channels : u32 = 0) -> Texture {
+create_texture_from_file :: (file_name: string, mip_levels : u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None, desired_channels : u32 = 0) -> Texture {
     bytes, ok := read_entire_file(file_name,, temp);
 
     if !ok return .{};
-    return create_texture_from_memory(bytes, mip_levels, flags, desired_channels);
+    return create_texture_from_memory(bytes, mip_levels, format, flags, desired_channels);
 }
 
-create_texture_from_memory :: (memory: string, mip_levels : u32 = 1, flags := Texture_Flags.None, desired_channels: u32 = 0) -> Texture {
+create_texture_from_memory :: (memory: string, mip_levels : u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None, desired_channels: u32 = 0) -> Texture {
     width, height, channels: s32;
 
     // NOTE(Yasin): Unfortunately, this is allocated with malloc and there is no way to read into an existing buffer.
@@ -229,10 +243,10 @@ create_texture_from_memory :: (memory: string, mip_levels : u32 = 1, flags := Te
 
     buffer := stbi_load_from_memory(memory.data, cast(s32)memory.count, *width, *height, *channels, cast(s32) desired_channels);
     defer stbi_image_free(buffer);
-    return create_texture(.[buffer], cast(u32)width, cast(u32)height, ifx desired_channels desired_channels else cast(u32)channels, 1, mip_levels, flags);
+    return create_texture(.[buffer], cast(u32)width, cast(u32)height, ifx desired_channels desired_channels else cast(u32)channels, 1, mip_levels, format, flags);
 }
 
-create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, flags := Texture_Flags.None, desired_channels : u32 = 0) -> Texture {
+create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None, desired_channels : u32 = 0) -> Texture {
     data := NewArray(file_names.count, *u8,, temp);
     defer for data {
         if it  stbi_image_free(it);
@@ -252,8 +266,8 @@ create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, f
             texture_channels = ifx desired_channels desired_channels else cast(u32)channels;
         }
     }
-    count : u32 = xx ifx flags & .Cubemap data.count / 6 else data.count;
-    return create_texture(data, texture_width, texture_height, texture_channels, count, mip_levels, flags);
+    count : u32 = cast(u32)file_names.count;
+    return create_texture(data, texture_width, texture_height, texture_channels, count, mip_levels, format, flags);
 }
 
 free :: (bytecode: Shader_Bytecode) {
@@ -280,6 +294,10 @@ CS_ENTRY_POINT :: "compute_main";
 enum_count :: ($T: Type) -> s64 {
     low, high := enum_range_given_info(type_info(T));
     return high + 1;
+}
+
+is_block_compression :: inline (format: Texture_Format) -> bool {
+    return format >= .BC6U && format <= .BC7_SRGB;
 }
 
 #import "String";

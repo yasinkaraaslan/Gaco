@@ -1,6 +1,6 @@
 // This is more akin to an OpenGL 'program' I guess.
 Shader :: struct {
-    type : Shader_Type;
+    type: Shader_Type;
     vertex_shader: *ID3D11VertexShader;
     input_layout: *ID3D11InputLayout;
     fragment_shader: *ID3D11PixelShader;
@@ -33,7 +33,8 @@ Texture :: struct {
         resource_view: *ID3D11ShaderResourceView;
         unordered_access_view: *ID3D11UnorderedAccessView;
     }
-    width, height, channels: u32;
+    width, height, stride: u32;
+    depth: u32 = 1;
     flags: Texture_Flags;
 };
 
@@ -56,8 +57,8 @@ is_empty :: (using shader: Shader) -> bool {
     return type == .Unspecified || empty_vs || empty_fs || empty_cs;
 }
 
-init :: (window: HWND, wanted_msaa : u32 = 4) {
-    flags : D3D11_CREATE_DEVICE_FLAG;
+init :: (window: HWND, wanted_msaa: u32 = 4) {
+    flags: D3D11_CREATE_DEVICE_FLAG;
     #if DEBUG flags |= .DEBUG;
     feature_levels := D3D_FEATURE_LEVEL.[._11_1];
 
@@ -187,7 +188,7 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
         bd.MiscFlags = .DRAWINDIRECT_ARGS;
     }
 
-    init_data : *D3D11_SUBRESOURCE_DATA = null;
+    init_data: *D3D11_SUBRESOURCE_DATA = null;
     if data != null {
         init_data = * (D3D11_SUBRESOURCE_DATA.{
             pSysMem = data
@@ -217,18 +218,18 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
     return buffer;
 }
 
-bind_buffer :: (buffer: Buffer(.Vertex), slot : u32 = 0, offset : u32 = 0) {
+bind_buffer :: (buffer: Buffer(.Vertex), slot: u32 = 0, offset: u32 = 0) {
     ID3D11DeviceContext_IASetVertexBuffers(device_context, slot, 1, *buffer.buffer, *buffer.stride, *offset);
 }
 
 bind_buffer :: (buffer: Buffer(.Index)) {
-    format : DXGI_FORMAT;
+    format: DXGI_FORMAT;
     if      buffer.stride == 2 format = .R16_UINT;
     else if buffer.stride == 4 format = .R32_UINT;
     ID3D11DeviceContext_IASetIndexBuffer(device_context, buffer.buffer, format, 0);
 }
 
-bind_buffer :: (buffer: Buffer(.Constant), slot : u32 = 0, bind_to: Shader_Type) {
+bind_buffer :: (buffer: Buffer(.Constant), slot: u32 = 0, bind_to: Shader_Type) {
     if bind_to == .Unspecified {
         log_error("[Gaco] Unspecified shader type to bind a constant buffer.");
         return;
@@ -241,7 +242,7 @@ bind_buffer :: (buffer: Buffer(.Constant), slot : u32 = 0, bind_to: Shader_Type)
         ID3D11DeviceContext_CSSetConstantBuffers(device_context, slot, 1, *buffer.buffer);
 }
 
-bind_buffer :: (buffer: Buffer(.Structured), slot : u32 = 0, bind_to: Shader_Type) {
+bind_buffer :: (buffer: Buffer(.Structured), slot: u32 = 0, bind_to: Shader_Type) {
     if bind_to == .Unspecified {
         log_error("[Gaco] Unspecified shader type to bind a structured buffer.");
         return;
@@ -255,13 +256,13 @@ bind_buffer :: (buffer: Buffer(.Structured), slot : u32 = 0, bind_to: Shader_Typ
 }
 
 // TODO(Yasin): OMSetRenderTargetsAndUnorderedAccessViews
-bind_buffer :: (buffer: Buffer(.RWStructured), slot : u32 = 0) {
+bind_buffer :: (buffer: Buffer(.RWStructured), slot: u32 = 0) {
     ID3D11DeviceContext_CSSetUnorderedAccessViews(device_context, slot, 1, *buffer.uav, null);
 }
 
 map_buffer :: (buffer: *Buffer, flags: Map_Flags) -> *void {
-        subresource : D3D11_MAPPED_SUBRESOURCE;
-        d3d11_flags : D3D11_MAP;
+        subresource: D3D11_MAPPED_SUBRESOURCE;
+        d3d11_flags: D3D11_MAP;
         if flags & .Read  d3d11_flags |= .READ;
         if flags & .Write {
             #if buffer.type == .Copy d3d11_flags |= .WRITE;
@@ -281,10 +282,9 @@ update_buffer :: (buffer: *Buffer, data: *void) {
     ID3D11DeviceContext_UpdateSubresource(device_context, buffer.buffer, 0, null, data, buffer.stride, 0);
 }
 
-// Incomplete: Cannot update texture3d
+// @Incomplete: Cannot update sub texture3d
 update_texture :: (texture: *Texture, data: *void, rect: Rect, array_slice: u32 = 0) {
-    rows : u32 = cast(u32)rect.w * texture.channels;
-
+    row: u32 = cast(u32)rect.w * texture.stride;
     box: D3D11_BOX;
     box.top = xx rect.y;
     box.left = xx rect.x;
@@ -292,20 +292,19 @@ update_texture :: (texture: *Texture, data: *void, rect: Rect, array_slice: u32 
     box.right = xx (rect.x + rect.w);
     box.back = 1;
 
-    ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture2d, array_slice, *box, data, rows, 0);
+    ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture2d, array_slice, *box, data, row, 0);
 }
 
-update_texture :: inline (texture: *Texture, data: *void, array_slice : u32 = 0) {
-    rect: Rect;
-    rect.w = texture.width;
-    rect.h = texture.height;
-    update_texture(texture, data, rect, array_slice);
+update_texture :: inline (using texture: *Texture, data: *void, array_slice: u32 = 0) {
+    resource := ifx flags & .Is_3D cast(*ID3D11Resource) texture3d else texture2d;
+    row := width * stride;
+    ID3D11DeviceContext_UpdateSubresource(device_context, resource, array_slice, null, data, row, row * depth);
 }
 
 // Allocates on temp
 // NOTE(Yasin): This creates a huge performance penalty.
 read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *void {
-    buffer_to_map : *Buffer(.Copy) = ---;
+    buffer_to_map: *Buffer(.Copy) = ---;
 
     if copy_buffer_to_use {
         buffer_to_map = copy_buffer_to_use;
@@ -376,7 +375,13 @@ destroy_buffer :: (buffer: *Buffer) {
 }
 
 destroy_texture :: (texture: *Texture) {
-    safe_release_and_reset(*texture.texture2d);
+    if texture.flags & .Is_3D {
+        safe_release_and_reset(*texture.texture3d);
+    }
+    else {
+        safe_release_and_reset(*texture.texture2d);
+    }
+
     if texture.flags & .Compute_RW {
         safe_release_and_reset(*texture.unordered_access_view);
     }
@@ -384,7 +389,8 @@ destroy_texture :: (texture: *Texture) {
         safe_release_and_reset(*texture.resource_view);
     }
 
-    texture.width, texture.height, texture.channels = 0;
+    texture.width, texture.height, texture.stride = 0;
+    texture.depth = 1;
     texture.flags = .None;
 }
 
@@ -479,7 +485,7 @@ clear :: inline (render_target: Render_Target, r: float, g: float, b: float, a: 
     }
 }
 
-clear :: inline (r: float, g: float, b: float, a: float, depth := 1.0, stencil : u8 = 0) {
+clear :: inline (r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0) {
     clear(window_render_target, r, g, b, a, depth, stencil);
 }
 
@@ -501,7 +507,7 @@ set_shader :: (shader: Shader) {
     }
 }
 
-set_primitive_type :: (primitive_type : Primitive_Type) {
+set_primitive_type :: (primitive_type: Primitive_Type) {
     topology: D3D11_PRIMITIVE_TOPOLOGY;
     if #complete primitive_type == {
     case .Line_List;
@@ -528,7 +534,7 @@ set_scissor :: (rect: Rect) {
 }
 
 set_viewport :: (using rect: Rect) {
-    vp : D3D11_VIEWPORT;
+    vp: D3D11_VIEWPORT;
     vp.Width = cast(float) w;
     vp.Height = cast(float) h;
     vp.MinDepth = 0.0;
@@ -551,7 +557,7 @@ set_depth_stencil_state :: (state: Depth_Stencil_State) {
     ID3D11DeviceContext_OMSetDepthStencilState(device_context, depth_stencil_states[state], StencilRef=0xFF);
 }
 // base_vertex only makes sense in indexed drawing.
-draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex : s32 = 0) {
+draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex: s32 = 0) {
     #if indexed {
         ID3D11DeviceContext_DrawIndexed(device_context, count, first, base_vertex);
     }
@@ -561,7 +567,7 @@ draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex : s32 = 0) {
 }
 
 
-draw_instanced :: ($indexed: bool, count: u32, instance_count: u32, first: u32 = 0, first_instance: u32 = 0, base_vertex : s32 = 0) {
+draw_instanced :: ($indexed: bool, count: u32, instance_count: u32, first: u32 = 0, first_instance: u32 = 0, base_vertex: s32 = 0) {
     #if indexed {
         ID3D11DeviceContext_DrawIndexedInstanced(device_context, count, instance_count, first, base_vertex, first_instance);
     }
@@ -585,7 +591,7 @@ dispatch_compute :: (num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) {
 
 // Actually, both Draw_Indirect and Dispatch_Indirect would work here since they are the same in D3D11.
 // But just to be compatible with a potential OpenGL backend.
-dispatch_compute_indirect :: (buffer: Buffer(.Dispatch_Indirect), byte_offset : u32 = 0) {
+dispatch_compute_indirect :: (buffer: Buffer(.Dispatch_Indirect), byte_offset: u32 = 0) {
     ID3D11DeviceContext_DispatchIndirect(device_context, buffer.buffer, byte_offset);
 }
 
@@ -645,7 +651,7 @@ resize :: (width: int, height: int) -> *Render_Target {
     hr = IDXGISwapChain_GetBuffer(swap_chain, 0, *uid(ID3D11Texture2D_UUID), xx *back_buffer.texture2d);
     check_hr("IDXGISwapChain.GetBuffer", #code `return null);
 
-    depth_stencil_texture := create_texture(.[], cast(u32)width, cast(u32)height, 1, 1, msaa, .Depth_Stencil | .Multisample);
+    depth_stencil_texture := create_texture(.[], cast(u32)width, cast(u32)height, 1, 1, msaa, flags=.Depth_Stencil | .Multisample);
     window_render_target = create_render_target(.[back_buffer], *depth_stencil_texture);
 
     destroy_texture(*depth_stencil_texture);
@@ -657,16 +663,22 @@ resize :: (width: int, height: int) -> *Render_Target {
     return *window_render_target;
 }
 
-create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa : u32 = 1, flags := Texture_Flags.None) -> Texture {
-    bytes_per_channel: u32 = 1;
+// Data is an array for texture arrays and mipmapping.
+// Index = mip slice + (array slice * mip levels)
+// Image 0 mip data | Image 1 mip data | ...
+create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None) -> Texture {
+    // This procedure became more complicated and confusing than I would want.
+    // I guess this is what you have to pay if you want a simple interface
+    // for working with current graphics APIs.
 
     generate_mips := flags & .Generate_Mips && mip_levels_or_msaa > 1;
 
-    format: DXGI_FORMAT;
+    d3d11_format: DXGI_FORMAT;
     bind_flags: D3D11_BIND_FLAG;
     misc_flags: D3D11_RESOURCE_MISC_FLAG;
 
     // Pick the flags
+
     if flags & .Compute_RW
         bind_flags = .UNORDERED_ACCESS;
     else if flags & .Render_Target
@@ -685,54 +697,78 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
     if flags & .Cubemap
         misc_flags |= .TEXTURECUBE;
 
-
     // Pick the format
-    if flags & .Depth_Stencil
-        format = .D24_UNORM_S8_UINT;
-    else {
-        formats: [4]DXGI_FORMAT;
-        if flags & .SRGB {
-            if flags & .Float32 || flags & .Float16 {
-                log_error("[Gaco] Error while creating texture: Cannot specify both SRGB and Float in Texture_Flags");
-                return .{};
-            }
-            formats[3] = .R8G8B8A8_UNORM_SRGB;
-        }
-        else if flags & .Float32 {
-            formats = DXGI_FORMAT.[.R32_FLOAT, .R32G32_FLOAT, .R32G32B32_FLOAT, .R32G32B32A32_FLOAT];
-            bytes_per_channel = 4;
-        }
-        else if flags & .Float16 {
-            formats = DXGI_FORMAT.[.R16_FLOAT, .R16G16_FLOAT, .UNKNOWN, .R16G16B16A16_FLOAT];
-            bytes_per_channel = 2;
-        }
-        else {
-            formats = DXGI_FORMAT.[.R8_UNORM, .R8G8_UNORM, .UNKNOWN, .R8G8B8A8_UNORM];
-        }
 
-        format = formats[channels-1];
+    formats: [4]DXGI_FORMAT;
+    bytes_per_block := channels;
+    if format == {
+    case .SRGB;
+        formats[3] = .R8G8B8A8_UNORM_SRGB;
+    case .Float16;
+        formats = DXGI_FORMAT.[.R16_FLOAT, .R16G16_FLOAT, .UNKNOWN, .R16G16B16A16_FLOAT];
+        bytes_per_block *= 2;
+    case .Float32;
+        formats = DXGI_FORMAT.[.R32_FLOAT, .R32G32_FLOAT, .R32G32B32_FLOAT, .R32G32B32A32_FLOAT];
+        bytes_per_block *= 4;
+    case .BC6U;
+        d3d11_format = .BC6H_UF16;
+    case .BC6S;
+        d3d11_format = .BC6H_SF16;
+    case .BC7;
+        d3d11_format = .BC7_UNORM;
+    case .BC7_SRGB;
+        d3d11_format = .BC7_UNORM_SRGB;
+    case;
+        if flags & .Depth_Stencil
+            d3d11_format = .D24_UNORM_S8_UINT;
+        else
+            formats = DXGI_FORMAT.[.R8_UNORM, .R8G8_UNORM, .UNKNOWN, .R8G8B8A8_UNORM];
     }
 
-    if format == .UNKNOWN {
-        log_error("[Gaco] Error while creating texture: % channels with flags % is not compatible with D3D11.", channels, flags);
+    if is_block_compression(format)
+        bytes_per_block = 16;
+
+    if !d3d11_format {
+        d3d11_format = formats[channels-1];
+    }
+
+    if !d3d11_format {
+        log_error("[Gaco] Error while creating texture: % channels with format % is not compatible with D3D11.", channels, format);
         return .{};
     }
 
     // Create the thing
 
-    texture := Texture.{width=width, height=height,channels=channels,flags=flags};
+    texture := Texture.{width=width, height=height, stride=bytes_per_block, flags=flags};
 
     init_data: []D3D11_SUBRESOURCE_DATA;
+
     if data && !generate_mips {
         init_data = NewArray(data.count, D3D11_SUBRESOURCE_DATA,, temp);
-        for data {
-            init_data[it_index] = D3D11_SUBRESOURCE_DATA.{
-                pSysMem = it,
-                SysMemPitch = width * channels * bytes_per_channel,
-                SysMemSlicePitch = width * height * channels * bytes_per_channel, // Only used with 3D textures.
-            };
+
+        // If we are multisampled, we cannot pass initial data anyway.
+        for i: 0..array_count_or_depth-1 {
+            for j: 0..mip_levels_or_msaa-1 {
+                // D3D11CalcSubresource
+                index := j + i * mip_levels_or_msaa;
+                block_width : u32 = width >> j;
+                block_height: u32 = height >> j;
+
+                if is_block_compression(format) {
+                    block_width  = (block_width + 3) / 4;
+                    block_height = (block_height + 3) / 4;
+                }
+
+                pitch := block_width * bytes_per_block;
+                init_data[index] = D3D11_SUBRESOURCE_DATA.{
+                    pSysMem = data[index],
+                    SysMemPitch = pitch,
+                    SysMemSlicePitch = pitch * block_height,
+                };
+            }
         }
     }
+
     if flags & .Is_3D {
         if flags & .Multisample {
             log_error("[Gaco] Error while creating texture: .Multisample cannot be mixed with .Is_3D.");
@@ -744,7 +780,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
             Height = height,
             Depth = array_count_or_depth,
             MipLevels = mip_levels_or_msaa,
-            Format = format,
+            Format = d3d11_format,
             BindFlags = bind_flags,
             MiscFlags = misc_flags,
             Usage = .DEFAULT, // @@
@@ -770,8 +806,8 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
             Height = height,
             SampleDesc.Count = msaa,
             MipLevels = mip_levels,
-            ArraySize = ifx flags & .Cubemap 6 * array_count_or_depth else array_count_or_depth,
-            Format = format,
+            ArraySize = array_count_or_depth,
+            Format = d3d11_format,
             BindFlags = bind_flags,
             MiscFlags = misc_flags,
             Usage = .DEFAULT, // @@
@@ -782,55 +818,27 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
         check_hr("ID3D11Device.CreateTexture2D", #code return .{});
     }
 
+    resource := ifx flags & .Is_3D cast(*ID3D11Resource) texture.texture3d else texture.texture2d;
+
     if generate_mips {
         for data {
             // D3D11CalcSubresource
             index := mip_levels_or_msaa * cast(u32)it_index;
-            ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture2d, index, null, it, width * channels, 1);
+            block_width := width;
+            block_height := height;
+            if is_block_compression(format) {
+                block_width  = (block_width + 3) / 4;
+                block_height = (block_height + 3) / 4;
+            }
+            pitch := block_width * bytes_per_block;
+            ID3D11DeviceContext_UpdateSubresource(device_context, resource, index, null, it, pitch, pitch * block_height);
         }
     }
 
     // Create the view
 
     if bind_flags & .SHADER_RESOURCE {
-        srv_desc: D3D11_SHADER_RESOURCE_VIEW_DESC;
-        srv_desc.Format = format;
-
-        if flags & .Is_3D {
-            srv_desc.ViewDimension = .TEXTURE3D;
-            srv_desc.Texture3D.MostDetailedMip = 0;
-            srv_desc.Texture3D.MipLevels = mip_levels_or_msaa;
-        }
-        else if array_count_or_depth > 1 {
-            if flags & .Cubemap {
-                srv_desc.ViewDimension = .TEXTURECUBEARRAY;
-                srv_desc.TextureCubeArray.MipLevels = mip_levels_or_msaa;
-                srv_desc.TextureCubeArray.NumCubes = array_count_or_depth;
-            }
-            else if flags & .Multisample {
-                srv_desc.ViewDimension = .TEXTURE2DMSARRAY;
-                srv_desc.Texture2DMSArray.ArraySize = array_count_or_depth;
-            }
-            else {
-                srv_desc.ViewDimension = .TEXTURE2DARRAY;
-                srv_desc.Texture2DArray = .{
-                    MipLevels = mip_levels_or_msaa,
-                    ArraySize = array_count_or_depth,
-                };
-            }
-        }
-        else if flags & .Cubemap {
-            srv_desc.ViewDimension = .TEXTURECUBE;
-            srv_desc.TextureCube.MipLevels = mip_levels_or_msaa;
-        }
-        else if flags & .Multisample {
-            srv_desc.ViewDimension = .TEXTURE2DMS;
-        }
-        else {
-            srv_desc.ViewDimension = .TEXTURE2D;
-            srv_desc.Texture2D.MipLevels = mip_levels_or_msaa;
-        }
-        hr := ID3D11Device_CreateShaderResourceView(device, texture.texture2d, *srv_desc, *texture.resource_view);
+        hr := ID3D11Device_CreateShaderResourceView(device, resource, null, *texture.resource_view);
         check_hr("ID3D11Device.CreateShaderResourceView", #code return .{});
 
         if generate_mips {
@@ -838,7 +846,9 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
         }
     }
     else if bind_flags & .UNORDERED_ACCESS {
-        // TODO(Yasin)!!
+        hr := ID3D11Device_CreateUnorderedAccessView(device, resource, null, * texture.unordered_access_view);
+        check_hr("ID3D11Device.CreateUnorderedAccessView", #code return .{});
+
     }
 
     return texture;
@@ -858,7 +868,7 @@ copy_texture :: (from: *Texture, to: *Texture) {
 }
 
 // @Incomplete: give more options
-create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Wrap, max_anisotropy : u32 = 1) -> Sampler {
+create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Wrap, max_anisotropy: u32 = 1) -> Sampler {
     d3d11_filter: D3D11_FILTER;
     if #complete filtering == {
     case .Linear;  d3d11_filter = .MIN_MAG_MIP_LINEAR;
@@ -906,7 +916,7 @@ FS_EXTENSION :: ".dxfs";
 CS_EXTENSION :: ".dxcs";
 
 #scope_file
-using D3D11_State : struct {
+using D3D11_State: struct {
     device: *ID3D11Device;
     device_context: *ID3D11DeviceContext;
     swap_chain: *IDXGISwapChain1;
@@ -952,7 +962,11 @@ init_states :: () {
 
         ds_desc.StencilEnable = .FALSE;
         // Should we disable other stencil stuff too?
+        ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_states[No_Depth_Stencil]);
+
+        ds_desc.DepthEnable = .TRUE;
         ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_states[No_Stencil]);
+
 
         // depth_stencil_states[No_Depth_Stencil] = null;
     }
@@ -975,7 +989,7 @@ init_states :: () {
         rs_desc.CullMode = .NONE;
         ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[No_Cull]);
     }
-    blend_alpha_desc : D3D11_BLEND_DESC;
+    blend_alpha_desc: D3D11_BLEND_DESC;
     blend_alpha_desc.IndependentBlendEnable = .FALSE;
     blend_alpha_desc.RenderTarget[0] = .{
         BlendEnable = .TRUE,
@@ -1131,12 +1145,12 @@ check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
 
         message_count := ID3D11InfoQueue_GetNumStoredMessages(info);
         if message_count == 0 return .{}, false;
-        logged_ids : [..]D3D11_MESSAGE_ID;
+        logged_ids: [..]D3D11_MESSAGE_ID;
         message_str: string;
         sb: String_Builder;
         error := false;
         for i: 0..message_count-1 {
-            message_size : u64;
+            message_size: u64;
             ID3D11InfoQueue_GetMessageA(info, i, null, *message_size);
 
             message := cast(*D3D11_MESSAGE) alloc(cast(s64)message_size,, temp);
