@@ -666,12 +666,8 @@ resize :: (width: int, height: int) -> *Render_Target {
 // Data is an array for texture arrays and mipmapping.
 // Index = mip slice + (array slice * mip levels)
 // Image 0 mip data | Image 1 mip data | ...
-create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None) -> Texture {
-    // This procedure became more complicated and confusing than I would want.
-    // I guess this is what you have to pay if you want a simple interface
-    // for working with current graphics APIs.
-
-    generate_mips := flags & .Generate_Mips && mip_levels_or_msaa > 1;
+create_texture :: (data: [][]u8, width: u32, height: u32, channels: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None) -> Texture {
+    generate_mips := (flags & .Generate_Mips) && mip_levels_or_msaa > 1;
 
     d3d11_format: DXGI_FORMAT;
     bind_flags: D3D11_BIND_FLAG;
@@ -747,12 +743,13 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
         init_data = NewArray(data.count, D3D11_SUBRESOURCE_DATA,, temp);
 
         // If we are multisampled, we cannot pass initial data anyway.
-        for i: 0..array_count_or_depth-1 {
+        array_count := ifx flags & .Is_3D 1 else array_count_or_depth;
+        for i: 0..array_count-1 {
             for j: 0..mip_levels_or_msaa-1 {
                 // D3D11CalcSubresource
                 index := j + i * mip_levels_or_msaa;
-                block_width : u32 = width >> j;
-                block_height: u32 = height >> j;
+                block_width := cast(u32)max(1, width >> j);
+                block_height:= cast(u32)max(1, height >> j);
 
                 if is_block_compression(format) {
                     block_width  = (block_width + 3) / 4;
@@ -761,7 +758,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
 
                 pitch := block_width * bytes_per_block;
                 init_data[index] = D3D11_SUBRESOURCE_DATA.{
-                    pSysMem = data[index],
+                    pSysMem = data[index].data,
                     SysMemPitch = pitch,
                     SysMemSlicePitch = pitch * block_height,
                 };
@@ -786,7 +783,6 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
             Usage = .DEFAULT, // @@
             CPUAccessFlags = 0,
         };
-
 
         hr := ID3D11Device_CreateTexture3D(device, *desc, init_data.data, *texture.texture3d);
         check_hr("ID3D11Device.CreateTexture3D", #code return .{});
@@ -827,16 +823,17 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
             block_width := width;
             block_height := height;
             if is_block_compression(format) {
-                block_width  = (block_width + 3) / 4;
-                block_height = (block_height + 3) / 4;
+                block_width  = cast(u32)max(1, (block_width + 3) / 4);
+                block_height = cast(u32)max(1, (block_height + 3) / 4);
             }
             pitch := block_width * bytes_per_block;
-            ID3D11DeviceContext_UpdateSubresource(device_context, resource, index, null, it, pitch, pitch * block_height);
+            ID3D11DeviceContext_UpdateSubresource(device_context, resource, index, null, it.data, pitch, pitch * block_height);
         }
     }
 
     // Create the view
 
+    // TODO(Yasin): We do not handle arrays right now, which is not good
     if bind_flags & .SHADER_RESOURCE {
         hr := ID3D11Device_CreateShaderResourceView(device, resource, null, *texture.resource_view);
         check_hr("ID3D11Device.CreateShaderResourceView", #code return .{});
