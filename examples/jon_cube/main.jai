@@ -103,7 +103,8 @@ main :: () {
       for get_window_resizes() {
          Gaco.resize(it.width, it.height);
          Width, Height = it.width, it.height;
-         proj = make_projection_matrix(70 * PI / 180.0, cast(float)it.width / cast(float)it.height, 0.001, 1000.0);
+         DEPTH_RANGE_01 :: Gaco.BACKEND != .OpenGL
+         proj = make_projection_matrix(70 * PI / 180.0, cast(float)it.width / cast(float)it.height, 0.001, 1000.0, depth_range_01 = DEPTH_RANGE_01);
       }
       for events_this_frame if it.type == .QUIT quit = true;
       Gaco.clear(1.0, 0.5, 0.3, 1.0);

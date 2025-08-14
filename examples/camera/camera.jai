@@ -7,8 +7,6 @@ Camera : struct {
 
 update_camera :: () {
     using Camera;
-    success, view := inverse(transform);
-    proj_view = proj * view;
     if !ControllingCamera  return;
     movement : Vector3;
     SPEED :: 5;
@@ -40,6 +38,11 @@ update_camera :: () {
         rotation_quat = pitch*yaw;
         set_rotation(*transform, rotation_quat);
     }
+    success, view := inverse(transform);
+    if !success {
+        log_error("Couldn't inverse camera transform.");
+    }
+    proj_view = proj * view;
 }
 
 set_controlling_camera :: (set: bool, window: Window_Type) {

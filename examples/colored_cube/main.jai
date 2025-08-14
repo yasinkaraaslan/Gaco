@@ -62,7 +62,8 @@ main :: () {
         update_window_events();
         for get_window_resizes() {
             Gaco.resize(it.width, it.height);
-            Proj = make_projection_matrix(FOV * PI / 180.0, cast(float)it.width / cast(float)it.height, 0.001, 1000);
+            DEPTH_RANGE_01 :: Gaco.BACKEND != .OpenGL
+            Proj = make_projection_matrix(FOV * PI / 180.0, cast(float)it.width / cast(float)it.height, 0.001, 1000, depth_range_01 = DEPTH_RANGE_01);
             Width, Height = it.width, it.height;
         }
         for events_this_frame if it.type == .QUIT  quit = true;

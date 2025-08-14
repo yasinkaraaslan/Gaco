@@ -15,7 +15,7 @@ FrameInfo : struct {
 WindowWidth, WindowHeight := 1280, 720;
 
 main :: () {
-    window := create_window(WindowWidth, WindowHeight, "Scimulator", background_color_rgb=.[4.0 / 0xFF, 15.0 / 0xFF, 22.0 / 0xFF]);
+    window := create_window(WindowWidth, WindowHeight, "Text Rendering", background_color_rgb=.[4.0 / 0xFF, 15.0 / 0xFF, 22.0 / 0xFF]);
     Gaco.init(window);
 
     fonts_init();
