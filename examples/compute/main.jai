@@ -14,7 +14,7 @@ main :: () {
         it.* = random_get_zero_to_one();
     }
 
-    compute_input_buffer := Gaco.create_buffer(*init_data, .Structured);
+    compute_input_buffer := Gaco.create_buffer(init_data, .Structured);
 
     out_buffer := Gaco.create_buffer(null, SIZE, size_of(float), .RWStructured);
     Gaco.bind_buffer(compute_input_buffer, bind_to=.Compute);

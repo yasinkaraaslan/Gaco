@@ -204,7 +204,7 @@ load_shader :: (file_name_without_extension: string, type: Shader_Type) -> Shade
     return load_shader_from_bytecode(bytecode, type);
 }
 
-create_buffer :: (data: *$T, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {
+create_buffer :: (data: $T, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {
     data_pointer : *void = ---;
     DATA_INFO :: type_info(T);
     count, stride: u32;
@@ -214,16 +214,16 @@ create_buffer :: (data: *$T, $type: Buffer_Type, usage := Buffer_Usage.Default) 
             #assert ARRAY_INFO.element_type == type_info(u32) || ARRAY_INFO.element_type == type_info(u16) "Index buffers can only be created with u16 or u32 arrays.";
         }
 
-        stride = cast(u32)size_of(type_of(data.*[0]));
+        stride = cast(u32)size_of(type_of(data[0]));
         count = cast(u32)data.count;
         data_pointer = data.data;
     }
     else {
         #assert type != .Index "Index buffers can only be created with u16 or u32 arrays.";
 
-        stride = cast(u32)size_of(type_of(data.*));
+        stride = cast(u32)size_of(type_of(data));
         count = 1;
-        data_pointer = data;
+        data_pointer = *data;
     }
     return create_buffer(data_pointer, count, stride, type, usage);
 }

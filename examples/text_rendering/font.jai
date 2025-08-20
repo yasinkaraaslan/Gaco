@@ -17,10 +17,10 @@ fonts_init :: () {
         index_data[6*it+5]=base+3;
     }
 
-    IndexBuffer = Gaco.create_buffer(*index_data, .Index, .Immutable);
+    IndexBuffer = Gaco.create_buffer(index_data, .Index, .Immutable);
 
-    m := Matrix4_Identity; // This should be replaced in the next resize call.
-    ConstantBuffer = Gaco.create_buffer(*m, .Constant);
+    // This should be replaced in the next resize call.
+    ConstantBuffer = Gaco.create_buffer(Matrix4_Identity, .Constant);
 }
 
 load_font :: (filename: string, size: u32) -> Font {
@@ -99,7 +99,7 @@ load_font :: (filename: string, size: u32) -> Font {
     }
 
     proj : Vector4;
-    font.constant_buffer = Gaco.create_buffer(*proj, .Constant);
+    font.constant_buffer = Gaco.create_buffer(proj, .Constant);
     return font;
 }
 

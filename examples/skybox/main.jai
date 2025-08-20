@@ -26,12 +26,12 @@ main :: () {
         6,2,1, 1,5,6, // Right
     ];
 
-    skybox_vertex_buffer := Gaco.create_buffer(*vertices, .Vertex, .Immutable);
-    skybox_index_buffer := Gaco.create_buffer(*indices, .Index, .Immutable);
+    skybox_vertex_buffer := Gaco.create_buffer(vertices, .Vertex, .Immutable);
+    skybox_index_buffer := Gaco.create_buffer(indices, .Index, .Immutable);
     skybox_texture := Gaco.create_texture_array_from_files(SKYBOX_FILE_NAMES, flags=.Cubemap, desired_channels=4);
 
 
-    transform_buffer := Gaco.create_buffer(*Matrix4_Identity, .Constant, .Dynamic);;
+    transform_buffer := Gaco.create_buffer(Matrix4_Identity, .Constant, .Dynamic);
 
     Gaco.set_shader(skybox_shader);
 

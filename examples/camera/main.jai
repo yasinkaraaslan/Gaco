@@ -56,9 +56,9 @@ main :: () {
 
     constant : Constant_Buffer;
 
-    vertex_buffer := Gaco.create_buffer(*vertex_inputs, .Vertex);
-    index_buffer := Gaco.create_buffer(*indices, .Index);
-    vs_cb := Gaco.create_buffer(*constant, .Constant, .Dynamic);
+    vertex_buffer := Gaco.create_buffer(vertex_inputs, .Vertex);
+    index_buffer := Gaco.create_buffer(indices, .Index);
+    vs_cb := Gaco.create_buffer(constant, .Constant, .Dynamic);
 
     texture := Gaco.create_texture_from_file("images/mc_cube.png");
 

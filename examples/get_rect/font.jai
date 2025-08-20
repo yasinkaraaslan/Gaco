@@ -21,15 +21,15 @@ fonts_init :: () {
         index_data[6*it+5]=base+3;
     }
 
-    TextIndexBuffer = Gaco.create_buffer(*index_data, .Index, .Immutable);
+    TextIndexBuffer = Gaco.create_buffer(index_data, .Index, .Immutable);
 
-    m := Matrix4_Identity; // This should be replaced in the next resize call.
-    WindowProjConstantBuffer = Gaco.create_buffer(*m, .Constant);
+    // This should be replaced in the next resize call.
+    WindowProjConstantBuffer = Gaco.create_buffer(Matrix4_Identity, .Constant);
 
     v : struct {
         v: Vector2 #align 16;
     };
-    TextPosConstantBuffer = Gaco.create_buffer(*v, .Constant, .Dynamic);
+    TextPosConstantBuffer = Gaco.create_buffer(v, .Constant, .Dynamic);
 }
 
 load_font :: (file_name: string, size: int) -> *Font {
@@ -114,8 +114,7 @@ load_font_from_memory :: (memory: []u8, size: int) -> *Font {
         x += bitmap.width;
     }
 
-    proj : Vector4;
-    font.constant_buffer = Gaco.create_buffer(*proj, .Constant);
+    font.constant_buffer = Gaco.create_buffer(Vector4.{}, .Constant);
     return font;
 }
 

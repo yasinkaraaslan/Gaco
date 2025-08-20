@@ -466,7 +466,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
     return bytecode, true;
 }
 
-clear :: inline (render_target: Render_Target, r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
+clear :: (render_target: Render_Target, r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
     #if flags & .Color {
         color := float.[r, g, b, a];
         for render_target.color_views {
@@ -481,7 +481,7 @@ clear :: inline (render_target: Render_Target, r: float, g: float, b: float, a: 
         d3d11_clear |= .STENCIL;
 
     #if flags & .Depth || flags & .Stencil {
-        ID3D11DeviceContext_ClearDepthStencilView(device_context, render_target.depth_stencil_view, cast(u32) D3D11_CLEAR_FLAG.DEPTH  | D3D11_CLEAR_FLAG.STENCIL, depth, stencil);
+        ID3D11DeviceContext_ClearDepthStencilView(device_context, render_target.depth_stencil_view, cast(u32) d3d11_clear, depth, stencil);
     }
 }
 

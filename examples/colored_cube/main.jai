@@ -50,12 +50,11 @@ main :: () {
         ]
     };
 
-    vertex_buffer := Gaco.create_buffer(*vertices, .Vertex);
-    index_buffer := Gaco.create_buffer(*indices, .Index);
+    vertex_buffer := Gaco.create_buffer(vertices, .Vertex);
+    index_buffer := Gaco.create_buffer(indices, .Index);
 
-    empty_transform : Transform_Buffer;
-    vertex_cb := Gaco.create_buffer(*empty_transform, .Constant, .Dynamic);
-    fragment_cb := Gaco.create_buffer(*colors, .Constant);
+    vertex_cb := Gaco.create_buffer(Transform_Buffer.{}, .Constant, .Dynamic);
+    fragment_cb := Gaco.create_buffer(colors, .Constant);
 
     quit := false;
     while !quit {
