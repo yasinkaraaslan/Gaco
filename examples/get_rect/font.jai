@@ -191,8 +191,7 @@ draw_prepared_text :: (font: *Font, x: s64, y: s64, color := Vector4.{1, 1, 1, 1
     draw_prepared_text(font, cast(float)x, cast(float)y, color, effects);
 }
 draw_prepared_text :: (font: *Font, x: float, y: float, color := Vector4.{1, 1, 1, 1}, effects: Font_Effects = 0) {
-    pos := Vector2.{x, y};
-    Gaco.write_buffer(*TextPosConstantBuffer, *pos);
+    Gaco.write_buffer(*TextPosConstantBuffer, Vector2.{x, y});
 
 
     if color != font.selected_color {

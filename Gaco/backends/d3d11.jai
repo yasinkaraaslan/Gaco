@@ -324,7 +324,6 @@ read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *
     return data;
 }
 
-// Use write_buffer for buffers with .Dynamic usage and update_buffer for those with .Default usage.
 write_buffer :: (buffer: *Buffer, data: *void, size: int) {
     write :: (buffer_to_write: *Buffer) #expand {
         mapped_data := map_buffer(buffer_to_write, .Write);
@@ -341,20 +340,6 @@ write_buffer :: (buffer: *Buffer, data: *void, size: int) {
     else {
         write(buffer);
     }
-}
-
-write_buffer :: inline (buffer: *Buffer, data: []$T) {
-    if size_of(T) != buffer.stride {
-        buffer.stride = size_of(T);
-    }
-    write_buffer(buffer, data.data, data.count * size_of(T));
-}
-
-write_buffer :: inline (buffer: *Buffer, data: *$T) {
-    // We shouldn't be changing the stride because we might want to just write the
-    // first 3 values of a Vector4, for example. (Since D3D11 requires 16 byte aligned constant buffers)
-
-    write_buffer(buffer, data, size_of(T));
 }
 
 copy_buffer :: (from: *Buffer, to: *Buffer) {

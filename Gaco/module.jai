@@ -272,6 +272,21 @@ create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, f
     return create_texture(data, texture_width, texture_height, texture_channels, count, mip_levels, format, flags);
 }
 
+// Use write_buffer for buffers with .Dynamic usage and update_buffer for those with .Default usage.
+write_buffer :: inline (buffer: *Buffer, data: $T) {
+    #if type_info(T).type == .ARRAY {
+        ELEMENT_SIZE :: size_of(type_of(data[0]));
+        if ELEMENT_SIZE != buffer.stride {
+            buffer.stride = ELEMENT_SIZE;
+        }
+
+        write_buffer(buffer, data.data, data.count * ELEMENT_SIZE);
+    }
+    else {
+        write_buffer(buffer, *data, size_of(T));
+    }
+}
+
 free :: (bytecode: Shader_Bytecode) {
     if bytecode.vs free(bytecode.vs);
     if bytecode.fs free(bytecode.fs);

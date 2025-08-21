@@ -61,7 +61,7 @@ main :: () {
         update_window_events();
         for get_window_resizes() {
             Gaco.resize(it.width, it.height);
-            DEPTH_RANGE_01 :: Gaco.BACKEND != .OpenGL
+            DEPTH_RANGE_01 :: Gaco.BACKEND != .OpenGL;
             Proj = make_projection_matrix(FOV * PI / 180.0, cast(float)it.width / cast(float)it.height, 0.001, 1000, depth_range_01 = DEPTH_RANGE_01);
             Width, Height = it.width, it.height;
         }
@@ -92,7 +92,7 @@ draw_the_cube :: (transform_cb: Gaco.Buffer, indices_count: u32) {
     transform_buffer: Transform_Buffer;
     transform_buffer.transformation = Proj * model;
 
-    Gaco.write_buffer(*transform_cb, *transform_buffer);
+    Gaco.write_buffer(*transform_cb, transform_buffer);
 
     Gaco.bind_buffer(transform_cb, bind_to=.Vertex);
     Gaco.draw(true, indices_count);

@@ -41,8 +41,7 @@ update_camera :: (transform_buffer: Gaco.Buffer(.Constant)) {
         log_error("Couldn't inverse camera transform.");
     }
 
-    proj_view = proj * view;
-    Gaco.write_buffer(*transform_buffer, *proj_view);
+    Gaco.write_buffer(*transform_buffer, proj * view);
 }
 
 set_controlling_camera :: (set: bool, window: Window_Type) {

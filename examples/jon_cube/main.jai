@@ -103,7 +103,7 @@ main :: () {
       for get_window_resizes() {
          Gaco.resize(it.width, it.height);
          Width, Height = it.width, it.height;
-         DEPTH_RANGE_01 :: Gaco.BACKEND != .OpenGL
+         DEPTH_RANGE_01 :: Gaco.BACKEND != .OpenGL;
          proj = make_projection_matrix(70 * PI / 180.0, cast(float)it.width / cast(float)it.height, 0.001, 1000.0, depth_range_01 = DEPTH_RANGE_01);
       }
       for events_this_frame if it.type == .QUIT quit = true;
@@ -146,7 +146,7 @@ draw_cube :: (position: Vector3, buffer: *Gaco.Buffer, proj: Matrix4, indices_co
    model := make_translation_matrix4(position) * rotation_matrix(Matrix4, rotation);
    transform_b : Transform_Buffer;
    transform_b.transformation = proj * model;
-   Gaco.write_buffer(buffer, *transform_b);
+   Gaco.write_buffer(buffer, transform_b);
 
    Gaco.draw(true, indices_count);
 }

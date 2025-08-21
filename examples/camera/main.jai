@@ -86,8 +86,14 @@ main :: () {
             WindowWidth, WindowHeight = it.width, it.height;
             Gaco.resize(it.width, it.height);
             unclip_cursor();
-            DEPTH_RANGE_01 :: Gaco.BACKEND != .OpenGL
+            DEPTH_RANGE_01 :: Gaco.BACKEND != .OpenGL;
             Camera.proj = make_projection_matrix(PI * FOV / 180.0, cast(float)it.width/cast(float)it.height, 0.001, 1000, depth_range_01 = DEPTH_RANGE_01);
+            success, view := inverse(Camera.transform);
+            if !success {
+                log_error("Couldn't inverse camera transform");
+            }
+
+            Camera.proj_view = Camera.proj * view;
         }
         for events_this_frame {
             if it.type == {
@@ -125,7 +131,7 @@ draw_cube :: (pos: Vector3, constant_buffer: Gaco.Buffer, indices_count: u32) {
     constant : Constant_Buffer;
     constant.transformation = Camera.proj_view*model;
 
-    Gaco.write_buffer(*constant_buffer, *constant);
+    Gaco.write_buffer(*constant_buffer, constant);
     Gaco.draw(true, indices_count);
 }
 
