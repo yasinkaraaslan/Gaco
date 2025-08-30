@@ -71,6 +71,7 @@ Texture_Flags :: enum_flags u32 {
     Multisample;
     Render_Target;
     Depth_Stencil;
+    Copy; // This actually makes the 'Texture' a pixel buffer object on OpenGL and a staging texture on D3D11.
     Compute_RW; // RWTexture2D
 }
 
@@ -80,6 +81,7 @@ Texture_Flags :: enum_flags u32 {
 // in OpenGL but not in D3D11.
 Texture_Format :: enum u32 {
     Default; // Default one according to the flags, 8 bits per channel most of the time.
+    U32; // R32_UINT, R32G32_UINT ...
     SRGB;
     Float16;
     Float32;

@@ -46,7 +46,7 @@ Render_Target :: struct {
 }
 
 is_empty :: (texture: Texture) -> bool {
-    return texture.texture2d == null;
+    return texture.texture2d == null; // and texture3d
 }
 
 is_empty :: (using shader: Shader) -> bool {
@@ -55,6 +55,10 @@ is_empty :: (using shader: Shader) -> bool {
     empty_cs := type & .Compute  && !compute_shader;
 
     return type == .Unspecified || empty_vs || empty_fs || empty_cs;
+}
+
+is_empty :: (using render_target: Render_Target) -> bool {
+    return !color_views && !depth_stencil_view;
 }
 
 init :: (window: HWND, wanted_msaa: u32 = 4) {
@@ -278,6 +282,23 @@ unmap_buffer :: (buffer: *Buffer) {
     ID3D11DeviceContext_Unmap(device_context, buffer.buffer, 0);
 }
 
+map_texture :: (texture: *Texture, flags: Map_Flags, subresource: u32 = 0) -> *void {
+    // @Cutnpaste from the top
+    d3d11_subresource: D3D11_MAPPED_SUBRESOURCE;
+    d3d11_flags: D3D11_MAP;
+
+    if flags & .Read  d3d11_flags |= .READ;
+    if flags & .Write d3d11_flags |= .WRITE_DISCARD;
+
+    hr := ID3D11DeviceContext_Map(device_context, texture.texture2d, subresource, d3d11_flags, 0, *d3d11_subresource);
+    check_hr("ID3D11DeviceContext.Map", #code return null);
+    return d3d11_subresource.pData;
+}
+
+unmap_texture :: (texture: *Texture, subresource: u32 = 0) {
+    ID3D11DeviceContext_Unmap(device_context, texture.texture2d, subresource);
+}
+
 update_buffer :: (buffer: *Buffer, data: *void) {
     ID3D11DeviceContext_UpdateSubresource(device_context, buffer.buffer, 0, null, data, buffer.stride, 0);
 }
@@ -285,12 +306,7 @@ update_buffer :: (buffer: *Buffer, data: *void) {
 // @Incomplete: Cannot update sub texture3d
 update_texture :: (texture: *Texture, data: *void, rect: Rect, array_slice: u32 = 0) {
     row: u32 = cast(u32)rect.w * texture.stride;
-    box: D3D11_BOX;
-    box.top = xx rect.y;
-    box.left = xx rect.x;
-    box.bottom = xx (rect.y + rect.h);
-    box.right = xx (rect.x + rect.w);
-    box.back = 1;
+    box := box_from_rect(rect);
 
     ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture2d, array_slice, *box, data, row, 0);
 }
@@ -585,7 +601,7 @@ present :: (interval: u32 = 1) {
     check_hr("IDXGISwapChain_Present", #code {});
 }
 
-create_render_target :: (color_textures: []Texture, depth_stencil_texture: *Texture) -> Render_Target {
+create_render_target :: (color_textures: []Texture, depth_stencil_texture: Texture) -> Render_Target {
     render_target: Render_Target;
     if color_textures {
         render_target.color_views = NewArray(color_textures.count, *ID3D11RenderTargetView);
@@ -603,13 +619,8 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: *Text
     return render_target;
 }
 
-set_render_target :: (using render_target: *Render_Target) {
-    if render_target {
-        ID3D11DeviceContext_OMSetRenderTargets(device_context, cast(u32)color_views.count, color_views.data, depth_stencil_view);
-    }
-    else {
-        ID3D11DeviceContext_OMSetRenderTargets(device_context, 0, null, null);
-    }
+set_render_target :: (using render_target: Render_Target) {
+    ID3D11DeviceContext_OMSetRenderTargets(device_context, cast(u32)color_views.count, color_views.data, depth_stencil_view);
 }
 
 destroy_render_target :: (render_target: *Render_Target) {
@@ -621,10 +632,9 @@ destroy_render_target :: (render_target: *Render_Target) {
     safe_release_and_reset(*render_target.depth_stencil_view);
 }
 
-// This returns the window's render target
-resize :: (width: int, height: int) -> *Render_Target {
+resize :: (width: int, height: int) -> window_render_target: *Render_Target {
     // This doesn't seem to be necessary, but just to be safe...
-    set_render_target(null);
+    set_render_target(.{});
     destroy_render_target(*window_render_target);
 
     using window_render_target;
@@ -637,7 +647,7 @@ resize :: (width: int, height: int) -> *Render_Target {
     check_hr("IDXGISwapChain.GetBuffer", #code `return null);
 
     depth_stencil_texture := create_texture(.[], cast(u32)width, cast(u32)height, 1, 1, msaa, flags=.Depth_Stencil | .Multisample);
-    window_render_target = create_render_target(.[back_buffer], *depth_stencil_texture);
+    window_render_target = create_render_target(.[back_buffer], depth_stencil_texture);
 
     destroy_texture(*depth_stencil_texture);
     destroy_texture(*back_buffer);
@@ -658,7 +668,11 @@ create_texture :: (data: [][]u8, width: u32, height: u32, channels: u32, array_c
     bind_flags: D3D11_BIND_FLAG;
     misc_flags: D3D11_RESOURCE_MISC_FLAG;
 
+    usage := D3D11_USAGE.DEFAULT;
+    access_flags: D3D11_CPU_ACCESS_FLAG;
+
     // Pick the flags
+
 
     if flags & .Compute_RW
         bind_flags = .UNORDERED_ACCESS;
@@ -666,6 +680,11 @@ create_texture :: (data: [][]u8, width: u32, height: u32, channels: u32, array_c
         bind_flags = .RENDER_TARGET;
     else if flags & .Depth_Stencil
         bind_flags = .DEPTH_STENCIL;
+    else if flags & .Copy {
+        usage = .STAGING;
+        access_flags |= .READ;
+        bind_flags = 0;
+    }
     else
         bind_flags = .SHADER_RESOURCE;
 
@@ -683,6 +702,8 @@ create_texture :: (data: [][]u8, width: u32, height: u32, channels: u32, array_c
     formats: [4]DXGI_FORMAT;
     bytes_per_block := channels;
     if format == {
+    case .U32;
+        formats = DXGI_FORMAT.[.R32_UINT, .R32G32_UINT, .R32G32B32_UINT, .R32G32B32A32_UINT];
     case .SRGB;
         formats[3] = .R8G8B8A8_UNORM_SRGB;
     case .Float16;
@@ -699,11 +720,14 @@ create_texture :: (data: [][]u8, width: u32, height: u32, channels: u32, array_c
         d3d11_format = .BC7_UNORM;
     case .BC7_SRGB;
         d3d11_format = .BC7_UNORM_SRGB;
-    case;
+    case .Default;
         if flags & .Depth_Stencil
             d3d11_format = .D24_UNORM_S8_UINT;
         else
             formats = DXGI_FORMAT.[.R8_UNORM, .R8G8_UNORM, .UNKNOWN, .R8G8B8A8_UNORM];
+    case;
+        log_error("[Gaco] Unknown texture format: %", format);
+        return .{};
     }
 
     if is_block_compression(format)
@@ -765,8 +789,8 @@ create_texture :: (data: [][]u8, width: u32, height: u32, channels: u32, array_c
             Format = d3d11_format,
             BindFlags = bind_flags,
             MiscFlags = misc_flags,
-            Usage = .DEFAULT, // @@
-            CPUAccessFlags = 0,
+            Usage = usage,
+            CPUAccessFlags = access_flags,
         };
 
         hr := ID3D11Device_CreateTexture3D(device, *desc, init_data.data, *texture.texture3d);
@@ -791,8 +815,8 @@ create_texture :: (data: [][]u8, width: u32, height: u32, channels: u32, array_c
             Format = d3d11_format,
             BindFlags = bind_flags,
             MiscFlags = misc_flags,
-            Usage = .DEFAULT, // @@
-            CPUAccessFlags = 0,
+            Usage = usage,
+            CPUAccessFlags = access_flags,
         };
 
         hr := ID3D11Device_CreateTexture2D(device, *desc, init_data.data, *texture.texture2d);
@@ -846,7 +870,13 @@ bind_texture :: (texture: Texture, slot: u32) {
 }
 
 copy_texture :: (from: *Texture, to: *Texture) {
-    ID3D11DeviceContext_CopyResource(device_context, to.texture, from.texture);
+    ID3D11DeviceContext_CopyResource(device_context, to.texture2d, from.texture2d);
+}
+
+// @Incomplete: 3D Textures
+copy_texture :: (from: *Texture, to: *Texture, source_rect: Rect) {
+    box := box_from_rect(source_rect);
+    ID3D11DeviceContext_CopySubresourceRegion(device_context, to.texture2d, 0, 0, 0, 0, from.texture2d, 0, *box);
 }
 
 // @Incomplete: give more options
@@ -913,6 +943,16 @@ using D3D11_State: struct {
     // TODO(Yasin): Experiment more with stencil buffers to figure out the best options here.
     depth_stencil_states: [#run enum_count(Depth_Stencil_State)]*ID3D11DepthStencilState;
     msaa: u32;
+}
+
+box_from_rect :: inline (rect: Rect) -> D3D11_BOX {
+    box: D3D11_BOX;
+    box.top = xx rect.y;
+    box.left = xx rect.x;
+    box.bottom = xx (rect.y + rect.h);
+    box.right = xx (rect.x + rect.w);
+    box.back = 1;
+    return box;
 }
 
 init_states :: () {
