@@ -1,8 +1,8 @@
 // This is more akin to an OpenGL 'program' I guess.
 Shader :: struct {
     type: Shader_Type;
-    vertex_shader: *ID3D11VertexShader;
     input_layout: *ID3D11InputLayout;
+    vertex_shader: *ID3D11VertexShader;
     fragment_shader: *ID3D11PixelShader;
     compute_shader: *ID3D11ComputeShader;
 }
@@ -265,17 +265,17 @@ bind_buffer :: (buffer: Buffer(.RWStructured), slot: u32 = 0) {
 }
 
 map_buffer :: (buffer: *Buffer, flags: Map_Flags) -> *void {
-        subresource: D3D11_MAPPED_SUBRESOURCE;
-        d3d11_flags: D3D11_MAP;
-        if flags & .Read  d3d11_flags |= .READ;
-        if flags & .Write {
-            #if buffer.type == .Copy d3d11_flags |= .WRITE;
-            else                     d3d11_flags |= .WRITE_DISCARD;
-        }
+    subresource: D3D11_MAPPED_SUBRESOURCE;
+    d3d11_flags: D3D11_MAP;
+    if flags & .Read  d3d11_flags |= .READ;
+    if flags & .Write {
+        #if buffer.type == .Copy d3d11_flags |= .WRITE;
+        else                     d3d11_flags |= .WRITE_DISCARD;
+    }
 
-        hr := ID3D11DeviceContext_Map(device_context, buffer.buffer, 0, d3d11_flags, 0, *subresource);
-        check_hr("ID3D11DeviceContext.Map", #code return null);
-        return subresource.pData;
+    hr := ID3D11DeviceContext_Map(device_context, buffer.buffer, 0, d3d11_flags, 0, *subresource);
+    check_hr("ID3D11DeviceContext.Map", #code return null);
+    return subresource.pData;
 }
 
 unmap_buffer :: (buffer: *Buffer) {
@@ -304,17 +304,22 @@ update_buffer :: (buffer: *Buffer, data: *void) {
 }
 
 // @Incomplete: Cannot update sub texture3d
-update_texture :: (texture: *Texture, data: *void, rect: Rect, array_slice: u32 = 0) {
-    row: u32 = cast(u32)rect.w * texture.stride;
+update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 = 0) {
+    row := cast(u32)rect.w * texture.stride;
     box := box_from_rect(rect);
-
-    ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture2d, array_slice, *box, data, row, 0);
+    ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture2d, subresource, *box, data, row, 0);
 }
 
-update_texture :: inline (using texture: *Texture, data: *void, array_slice: u32 = 0) {
-    resource := ifx flags & .Is_3D cast(*ID3D11Resource) texture3d else texture2d;
+update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 0) {
+    row := cast(u32)box.w * texture.stride;
+    d_box := box_from_box(box);
+    ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture3d, subresource, *d_box, data, row, row * height);
+
+}
+
+update_texture :: inline (using texture: *Texture, data: *void, subresource: u32 = 0) {
     row := width * stride;
-    ID3D11DeviceContext_UpdateSubresource(device_context, resource, array_slice, null, data, row, row * depth);
+    ID3D11DeviceContext_UpdateSubresource(device_context, texture2d, subresource, null, data, row, row * height);
 }
 
 // Allocates on temp
@@ -637,8 +642,6 @@ resize :: (width: int, height: int) -> window_render_target: *Render_Target {
     set_render_target(.{});
     destroy_render_target(*window_render_target);
 
-    using window_render_target;
-
     hr := IDXGISwapChain_ResizeBuffers(swap_chain, 0, cast(u32)width, cast(u32)height, .UNKNOWN, 0);
     check_hr("IDXGISwapChain.ResizeBuffers", #code `return null);
 
@@ -658,6 +661,9 @@ resize :: (width: int, height: int) -> window_render_target: *Render_Target {
     return *window_render_target;
 }
 
+// @@ Data could be either []*u8 or [][]u8.
+// I am not sure which one makes more sense.
+
 // Data is an array for texture arrays and mipmapping.
 // Index = mip slice + (array slice * mip levels)
 // Image 0 mip data | Image 1 mip data | ...
@@ -672,7 +678,6 @@ create_texture :: (data: [][]u8, width: u32, height: u32, channels: u32, array_c
     access_flags: D3D11_CPU_ACCESS_FLAG;
 
     // Pick the flags
-
 
     if flags & .Compute_RW
         bind_flags = .UNORDERED_ACCESS;
@@ -735,11 +740,11 @@ create_texture :: (data: [][]u8, width: u32, height: u32, channels: u32, array_c
 
     if !d3d11_format {
         d3d11_format = formats[channels-1];
-    }
 
-    if !d3d11_format {
-        log_error("[Gaco] Error while creating texture: % channels with format % is not compatible with D3D11.", channels, format);
-        return .{};
+        if !d3d11_format {
+            log_error("[Gaco] Error while creating texture: % channels with format % is not compatible with D3D11.", channels, format);
+            return .{};
+        }
     }
 
     // Create the thing
@@ -873,16 +878,26 @@ copy_texture :: (from: *Texture, to: *Texture) {
     ID3D11DeviceContext_CopyResource(device_context, to.texture2d, from.texture2d);
 }
 
-// @Incomplete: 3D Textures
+// @Incomplete: subresource
+
 copy_texture :: (from: *Texture, to: *Texture, source_rect: Rect) {
     box := box_from_rect(source_rect);
     ID3D11DeviceContext_CopySubresourceRegion(device_context, to.texture2d, 0, 0, 0, 0, from.texture2d, 0, *box);
 }
 
+copy_texture :: (from: *Texture, to: *Texture, source_box: Box) {
+    box := box_from_box(source_box);
+    ID3D11DeviceContext_CopySubresourceRegion(device_context, to.texture3d, 0, 0, 0, 0, from.texture3d, 0, *box);
+}
+
 // @Incomplete: give more options
-create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Wrap, max_anisotropy: u32 = 1) -> Sampler {
+create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Wrap, max_anisotropy: u32 = 1, comparison := false) -> Sampler {
     d3d11_filter: D3D11_FILTER;
-    if #complete filtering == {
+    if max_anisotropy > 1 {
+        // We override the filter, there is no such requirement in OpenGL.
+        d3d11_filter = .ANISOTROPIC;
+    }
+    else if #complete filtering == {
     case .Linear;  d3d11_filter = .MIN_MAG_MIP_LINEAR;
     case .Nearest; d3d11_filter = .MIN_MAG_MIP_POINT;
     }
@@ -894,11 +909,11 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
     case .Clamp;  address_mode = .CLAMP;
     case .Border; address_mode = .BORDER;
     }
+    if comparison {
+        // Comparison and non-comparison filters are 0x80 apart.
+        d3d11_filter += 0x80;
+    }
 
-    // @Incomplete
-    // Max anisotropy requires a specific filter (.ANISOTROPY) on D3D11, while there isn't such a requirement on OpenGL.
-    // So I am not sure on how to handle this.
-    // We just pass it to the sampler_desc without changing the filtering for now, which does nothing.
     sampler_desc := D3D11_SAMPLER_DESC.{
         Filter = d3d11_filter,
         AddressU = address_mode, AddressV = address_mode, AddressW = address_mode,
@@ -947,12 +962,22 @@ using D3D11_State: struct {
 
 box_from_rect :: inline (rect: Rect) -> D3D11_BOX {
     box: D3D11_BOX;
-    box.top = xx rect.y;
     box.left = xx rect.x;
-    box.bottom = xx (rect.y + rect.h);
+    box.top = xx rect.y;
     box.right = xx (rect.x + rect.w);
+    box.bottom = xx (rect.y + rect.h);
     box.back = 1;
     return box;
+}
+
+box_from_box :: inline (box: Box) -> D3D11_BOX {
+    d_box: D3D11_BOX;
+    d_box.left = xx box.x;
+    d_box.top = xx box.y;
+    d_box.front = xx box.z;
+    d_box.right = xx (box.x + box.width);
+    d_box.bottom = xx (box.y + box.height);
+    d_box.back = xx (box.z + box.depth);
 }
 
 init_states :: () {
@@ -988,9 +1013,6 @@ init_states :: () {
 
         ds_desc.DepthEnable = .TRUE;
         ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_states[No_Stencil]);
-
-
-        // depth_stencil_states[No_Depth_Stencil] = null;
     }
     rs_desc := D3D11_RASTERIZER_DESC.{
         FillMode = .SOLID,
@@ -1169,7 +1191,7 @@ check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
         if message_count == 0 return .{}, false;
         logged_ids: [..]D3D11_MESSAGE_ID;
         message_str: string;
-        sb: String_Builder;
+
         error := false;
         for i: 0..message_count-1 {
             message_size: u64;

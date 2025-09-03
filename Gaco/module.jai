@@ -148,7 +148,12 @@ Clear_Flags :: enum_flags u32 {
 }
 
 Rect :: struct {
-    x, y, w, h : s32 = 0;
+    x, y, w, h: s32;
+}
+
+Box :: struct {
+    x, y, z: s32;
+    w, h, d: s32;
 }
 
 // compile_shader and load_shader create and load separate files for each shader type.
