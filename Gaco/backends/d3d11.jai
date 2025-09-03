@@ -1077,20 +1077,18 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
         element_desc.SemanticIndex = SemanticIndex;
         element_desc.AlignedByteOffset = D3D11_APPEND_ALIGNED_ELEMENT;
 
-        // InputSlot is @Hardcoded right now. There may be reasons to want to change this
-        // but there is no way to get it from the shader code and I don't want to force people
-        // to pass an input layout.
-
+        // @Document: How instance parameters are passed.
         // Instance data is passed to the slot 1 (in bind_buffer) and vertex data to the slot 0.
-        if starts_with(to_string(SemanticName), "INST_") { // @Document: starting with INST_ makes input instance data.
+        is_instance, step_rate := get_semantic_info(to_string(SemanticName));
+        element_desc.InstanceDataStepRate = step_rate;
+
+        if is_instance {
             element_desc.InputSlot = 1;
             element_desc.InputSlotClass = .INSTANCE_DATA;
-            element_desc.InstanceDataStepRate = 1; // How often is something other than 1 is used in instancing?
         }
         else {
             element_desc.InputSlot = 0;
             element_desc.InputSlotClass = .VERTEX_DATA;
-            element_desc.InstanceDataStepRate = 0;
         }
 
         // determine DXGI format

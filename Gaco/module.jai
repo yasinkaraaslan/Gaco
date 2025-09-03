@@ -314,6 +314,8 @@ VS_ENTRY_POINT :: "vertex_main";
 FS_ENTRY_POINT :: "fragment_main";
 CS_ENTRY_POINT :: "compute_main";
 
+INSTANCE_PREFIX :: "INST_";
+
 // This name wouldn't make sense if the enum values jump, but whatever.
 enum_count :: ($T: Type) -> s64 {
     low, high := enum_range_given_info(type_info(T));
@@ -322,6 +324,26 @@ enum_count :: ($T: Type) -> s64 {
 
 is_block_compression :: inline (format: Texture_Format) -> bool {
     return format >= .BC6U && format <= .BC7_SRGB;
+}
+
+get_semantic_info :: (semantic: string) -> is_instance: bool, step_rate: u32 {
+    if starts_with(semantic, INSTANCE_PREFIX) {
+        step_rate: u32 = 1;
+
+        // Get step rate from the semantic
+        // NOTE(Yasin): If the numbered characters are the last ones (e.g. TEXTURE0, INST_3)
+        // then the number gets passed as semantic index and cannot be seen by this code.
+
+        c := INSTANCE_PREFIX.count;
+        if c < semantic.count && is_digit(semantic[c]) { // INST_2_*
+            s := advance(semantic, c);
+            step_rate=, success, remainder := string_to_int(s, T = u32);
+            assert(success);
+        }
+
+        return true, step_rate;
+    }
+    return false, 0;
 }
 
 #import "String";
