@@ -86,8 +86,8 @@ Texture_Format :: enum u32 {
     Float16;
     Float32;
 
-    // Block compression formats. These do not care about
-    // the channels argument passed to create_texture.
+    // Block compression formats.
+    // These do not care about the channels argument passed to create_texture.
     BC6U; // Unsigned float16
     BC6S; // Signed float16
     BC7;
@@ -129,13 +129,20 @@ Rasterizer_State :: enum u32 {
     Default;
     Front_Cull;
     No_Cull;
+
+    // We should either add a way to create these states or we will at some point have
+    // combinatory explosion. :CreateStates
+    Depth_Bias_Near;
+    Depth_Bias_Far;
+
     Scissor;
 }
 
-// ...
+// ^^
 Depth_Stencil_State :: enum u32 {
     Depth_Stencil;
     No_Depth;
+    No_Depth_Mask;
     No_Stencil;
     No_Depth_Stencil;
 }

@@ -951,7 +951,7 @@ using D3D11_State: struct {
     window_render_target: Render_Target;
     // bound_render_target: *Render_Target;
 
-    // Should we expose a way to create these states?
+    // :CreateStates
     rasterizer_states: [#run enum_count(Rasterizer_State)]*ID3D11RasterizerState;
     blend_states: [#run enum_count(Blend_State)]*ID3D11BlendState;
 
@@ -1004,14 +1004,20 @@ init_states :: () {
         using Depth_Stencil_State;
         ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_states[Depth_Stencil]);
 
+        ds_desc.DepthWriteMask = .ZERO;
+        ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_states[No_Depth_Mask]);
+
         ds_desc.DepthEnable = .FALSE;
         ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_states[No_Depth]);
+
 
         ds_desc.StencilEnable = .FALSE;
         // Should we disable other stencil stuff too?
         ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_states[No_Depth_Stencil]);
 
         ds_desc.DepthEnable = .TRUE;
+        ds_desc.DepthWriteMask = .ALL;
+        ds_desc.DepthFunc = .LESS_EQUAL;
         ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_states[No_Stencil]);
     }
     rs_desc := D3D11_RASTERIZER_DESC.{
@@ -1026,6 +1032,17 @@ init_states :: () {
 
         rs_desc.ScissorEnable = .FALSE;
         ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Default]);
+
+
+        // This is really sloppy.
+        // :CreateStates
+
+        BIAS :: 15000000;
+        rs_desc.DepthBias = -BIAS;
+        rs_desc.SlopeScaledDepthBias = 0;
+        ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Depth_Bias_Near]);
+        rs_desc.DepthBias = BIAS;
+        ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Depth_Bias_Far]);
 
         rs_desc.CullMode = .FRONT;
         ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Front_Cull]);
