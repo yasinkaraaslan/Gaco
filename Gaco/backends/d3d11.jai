@@ -491,8 +491,8 @@ clear :: (render_target: Render_Target, r: float, g: float, b: float, a: float, 
     }
 }
 
-clear :: inline (r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0) {
-    clear(window_render_target, r, g, b, a, depth, stencil);
+clear :: inline (r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
+    clear(window_render_target, r, g, b, a, depth, stencil, flags);
 }
 
 set_shader :: (shader: Shader) {
@@ -1032,17 +1032,6 @@ init_states :: () {
 
         rs_desc.ScissorEnable = .FALSE;
         ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Default]);
-
-
-        // This is really sloppy.
-        // :CreateStates
-
-        BIAS :: 15000000;
-        rs_desc.DepthBias = -BIAS;
-        rs_desc.SlopeScaledDepthBias = 0;
-        ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Depth_Bias_Near]);
-        rs_desc.DepthBias = BIAS;
-        ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Depth_Bias_Far]);
 
         rs_desc.CullMode = .FRONT;
         ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Front_Cull]);
