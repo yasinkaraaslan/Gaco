@@ -80,8 +80,8 @@ load_font_from_memory :: (memory: []u8, size: int) -> *Font {
         rect := Gaco.Rect.{
             x = xx x,
             y = 0,
-            w = xx bitmap.width,
-            h = xx bitmap.rows
+            width = xx bitmap.width,
+            height = xx bitmap.rows
         };
 
         glyph := *font.glyphs[it];

@@ -98,8 +98,8 @@ gr_set_scissor :: (x0: s32, y0: s32, x1: s32, y1: s32) {
     rect: Gaco.Rect;
     rect.x = x0;
     rect.y = y0 ;
-    rect.w = x1 - x0;
-    rect.h = y1 - y0;
+    rect.width = x1 - x0;
+    rect.height = y1 - y0;
     Gaco.set_scissor(rect);
 }
 
