@@ -22,11 +22,10 @@ update_camera :: () {
 
 
     translate(*transform, movement * SPEED * speed_multiplier * FrameInfo.delta);
-
-    delta_x := -cast(float)mouse_delta_x / cast(float)WindowWidth;
-    delta_y := -cast(float)mouse_delta_y / cast(float)WindowHeight;
-    if delta_x != 0 || delta_y != 0 {
-        rotation += .{delta_y, delta_x};
+    MOUSE_DELTA_MULTIPLIER :: 0.0005;
+    delta := Vector2.{xx mouse_delta_y, xx mouse_delta_x} * MOUSE_DELTA_MULTIPLIER;
+    if delta != .{0, 0} {
+        rotation += -delta;
 
         // Limit to 72 degrees so we don't get weird stuff like world becoming upside-down
         rotation.x = clamp(rotation.x, -PI / 2.5, PI / 2.5);

@@ -21,8 +21,9 @@ update_camera :: (transform_buffer: Gaco.Buffer(.Constant)) {
     // If you do, you should disable translation when using the view matrix for the skybox.
     // Since you don't want the skybox to move.
 
-    delta_x := -cast(float)mouse_delta_x / cast(float)WindowWidth;
-    delta_y := -cast(float)mouse_delta_y / cast(float)WindowHeight;
+    MOUSE_DELTA_MULTIPLIER :: 0.0005;
+    delta_x := -cast(float)mouse_delta_x * MOUSE_DELTA_MULTIPLIER;
+    delta_y := -cast(float)mouse_delta_y * MOUSE_DELTA_MULTIPLIER;
     if delta_x != 0 || delta_y != 0 {
         rotation += .{delta_y, delta_x};
 

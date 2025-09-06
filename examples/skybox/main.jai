@@ -48,8 +48,7 @@ main :: () {
             WindowWidth, WindowHeight = it.width, it.height;
             Gaco.resize(it.width, it.height);
             unclip_cursor();
-            DEPTH_RANGE_01 :: Gaco.BACKEND != .OpenGL;
-            Camera.proj = make_projection_matrix(FOV * PI / 180.0, cast(float)it.width/cast(float)it.height, 0.1, 1000, depth_range_01 = DEPTH_RANGE_01);
+            Camera.proj = make_projection_matrix(FOV * PI / 180.0, cast(float)it.width/cast(float)it.height, 0.1, 1000, depth_range_01 = true);
         }
 
         for events_this_frame {

@@ -155,7 +155,7 @@ Clear_Flags :: enum_flags u32 {
 }
 
 Rect :: struct {
-    x, y, w, h: s32;
+    x, y, width, height: s32;
 }
 
 Box :: struct {

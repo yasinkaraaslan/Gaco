@@ -305,7 +305,7 @@ update_buffer :: (buffer: *Buffer, data: *void) {
 
 // @Incomplete: Cannot update sub texture3d
 update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 = 0) {
-    row := cast(u32)rect.w * texture.stride;
+    row := cast(u32)rect.width * texture.stride;
     box := box_from_rect(rect);
     ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture2d, subresource, *box, data, row, 0);
 }
@@ -532,24 +532,26 @@ set_scissor :: (rect: Rect) {
     d3d11_rect := D3D11_RECT.{
         left = rect.x,
         top = rect.y,
-        right = rect.x + rect.w,
-        bottom = rect.y + rect.h
+        right = rect.x + rect.width,
+        bottom = rect.y + rect.height
     };
 
     ID3D11DeviceContext_RSSetScissorRects(device_context, 1, *d3d11_rect);
 }
 
-set_viewport :: (using rect: Rect) {
+
+// HLSL doesn't have a way to specify a viewport index (except for geometry shaders, which we don't support).
+// So there is no reason for a 'set_viewports'.
+set_viewport :: (x: float, y: float, width: float, height: float, near_depth := 0.0, far_depth := 1.0) {
     vp: D3D11_VIEWPORT;
-    vp.Width = cast(float) w;
-    vp.Height = cast(float) h;
-    vp.MinDepth = 0.0;
-    vp.MaxDepth = 1.0;
-    vp.TopLeftX = cast(float) x;
-    vp.TopLeftY = cast(float) y;
+    vp.TopLeftX = x;
+    vp.TopLeftY = y;
+    vp.Width = width;
+    vp.Height = height;
+    vp.MinDepth = near_depth;
+    vp.MaxDepth = far_depth;
     ID3D11DeviceContext_RSSetViewports(device_context, 1, *vp);
 }
-
 
 set_blend_state :: (state: Blend_State) {
     ID3D11DeviceContext_OMSetBlendState(device_context, blend_states[state], null, SampleMask=0xFFFFFFFF);
@@ -656,7 +658,7 @@ resize :: (width: int, height: int) -> window_render_target: *Render_Target {
     destroy_texture(*back_buffer);
 
     set_render_target(*window_render_target);
-    set_viewport(.{0, 0, cast(s32)width, cast(s32)height});
+    set_viewport(0, 0, cast(float)width, cast(float)height);
 
     return *window_render_target;
 }
@@ -964,8 +966,8 @@ box_from_rect :: inline (rect: Rect) -> D3D11_BOX {
     box: D3D11_BOX;
     box.left = xx rect.x;
     box.top = xx rect.y;
-    box.right = xx (rect.x + rect.w);
-    box.bottom = xx (rect.y + rect.h);
+    box.right = xx (rect.x + rect.width);
+    box.bottom = xx (rect.y + rect.height);
     box.back = 1;
     return box;
 }

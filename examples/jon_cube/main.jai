@@ -103,8 +103,8 @@ main :: () {
       for get_window_resizes() {
          Gaco.resize(it.width, it.height);
          Width, Height = it.width, it.height;
-         DEPTH_RANGE_01 :: Gaco.BACKEND != .OpenGL;
-         proj = make_projection_matrix(70 * PI / 180.0, cast(float)it.width / cast(float)it.height, 0.001, 1000.0, depth_range_01 = DEPTH_RANGE_01);
+
+         proj = make_projection_matrix(70 * PI / 180.0, cast(float)it.width / cast(float)it.height, 0.001, 1000.0, depth_range_01 = true);
       }
       for events_this_frame if it.type == .QUIT quit = true;
       Gaco.clear(1.0, 0.5, 0.3, 1.0);
@@ -133,10 +133,11 @@ draw_cube :: (position: Vector3, buffer: *Gaco.Buffer, proj: Matrix4, indices_co
 
 
    rot_x, rot_y, rot_z : Quaternion;
-   delta_x := cast(float)mouse_delta_x / cast(float)Width;
-   delta_y := cast(float)mouse_delta_y / cast(float)Height;
-   RotX += delta_x;
-   RotY += delta_y;
+   MOUSE_DELTA_MULTIPLIER :: 0.0005;
+   delta_x := cast(float)mouse_delta_x;
+   delta_y := cast(float)mouse_delta_y;
+   RotX += delta_x * MOUSE_DELTA_MULTIPLIER;
+   RotY += delta_y * MOUSE_DELTA_MULTIPLIER;
    if RotX == 0 RotX = 1;
    set_from_axis_and_angle(*rot_x, .{1, 0, 0}, RotY);
    set_from_axis_and_angle(*rot_y, .{0, 1, 0}, RotX);

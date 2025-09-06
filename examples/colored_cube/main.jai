@@ -61,8 +61,7 @@ main :: () {
         update_window_events();
         for get_window_resizes() {
             Gaco.resize(it.width, it.height);
-            DEPTH_RANGE_01 :: Gaco.BACKEND != .OpenGL;
-            Proj = make_projection_matrix(FOV * PI / 180.0, cast(float)it.width / cast(float)it.height, 0.001, 1000, depth_range_01 = DEPTH_RANGE_01);
+            Proj = make_projection_matrix(FOV * PI / 180.0, cast(float)it.width / cast(float)it.height, 0.001, 1000, depth_range_01 = true);
             Width, Height = it.width, it.height;
         }
         for events_this_frame if it.type == .QUIT  quit = true;
@@ -78,9 +77,10 @@ main :: () {
 }
 
 draw_the_cube :: (transform_cb: Gaco.Buffer, indices_count: u32) {
-    delta_x := cast(float)mouse_delta_x / cast(float)Width;
-    delta_y := cast(float)mouse_delta_y / cast(float)Height;
-    Position += .{delta_x, -delta_y, 0};
+    MOUSE_DELTA_MULTIPLIER :: 0.0005;
+    delta_x := cast(float)mouse_delta_x;
+    delta_y := cast(float)mouse_delta_y;
+    Position += .{delta_x, -delta_y, 0} * MOUSE_DELTA_MULTIPLIER;
 
     scroll_delta := cast(float)mouse_delta_z / 20.0;
     Rotation_Scale += scroll_delta * PI / 180.0;
