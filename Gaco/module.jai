@@ -118,14 +118,16 @@ Draw_Indirect_Args :: struct(indexed: bool) {
     first_instance: u32;
 }
 
-// NOTE(Yasin): If you want to add a new state or change an existing one, remember to do it on init as well.
-Blend_State :: enum u32 {
+// These are some useful preloaded modes you can use without a create_*_state call.
+// TODO(Yasin): Actually implement create_*_state calls.
+
+Blend_Mode :: enum u32 {
     None;
     Alpha;
 }
 
 // ^^
-Rasterizer_State :: enum u32 {
+Rasterizer_Mode :: enum u32 {
     Default;
     Front_Cull;
     No_Cull;
@@ -139,10 +141,11 @@ Rasterizer_State :: enum u32 {
 }
 
 // ^^
-Depth_Stencil_State :: enum u32 {
+Depth_Stencil_Mode :: enum u32 {
     Depth_Stencil;
     No_Depth;
     No_Depth_Mask;
+    Depth_Reversed;
     No_Stencil;
     No_Depth_Stencil;
 }
@@ -160,7 +163,7 @@ Rect :: struct {
 
 Box :: struct {
     x, y, z: s32;
-    w, h, d: s32;
+    width, height, depth: s32;
 }
 
 // compile_shader and load_shader create and load separate files for each shader type.

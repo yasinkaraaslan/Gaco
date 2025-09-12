@@ -45,6 +45,19 @@ Render_Target :: struct {
     depth_stencil_view: *ID3D11DepthStencilView;
 }
 
+// @Incomplete: You cannot create or destroy these
+Blend_State :: struct {
+    state: *ID3D11BlendState;
+}
+
+Rasterizer_State :: struct {
+    state: *ID3D11RasterizerState;
+}
+
+Depth_Stencil_State :: struct {
+    state: *ID3D11DepthStencilState;
+}
+
 is_empty :: (texture: Texture) -> bool {
     return texture.texture2d == null; // and texture3d
 }
@@ -72,6 +85,8 @@ init :: (window: HWND, wanted_msaa: u32 = 4) {
     // this isn't recommended also. I don't know man...
     // flags |= .PREVENT_INTERNAL_THREADING_OPTIMIZATIONS;
 
+    // @@ Explain why this is here.
+    flags |= .SINGLETHREADED;
     hr := D3D11CreateDevice(null, .HARDWARE, null, xx flags, feature_levels.data, feature_levels.count, D3D11_SDK_VERSION, *device, null, *device_context);
     check_hr("D3D11CreateDevice");
 
@@ -115,7 +130,7 @@ init :: (window: HWND, wanted_msaa: u32 = 4) {
 
     msaa = wanted_msaa;
 
-    init_states();
+    init_preloaded_modes();
     set_primitive_type(.Triangle_List);
 
     // There are very few cases where one wouldn't want depth testing.
@@ -127,13 +142,13 @@ deinit :: () {
     #if DEBUG
         log_messages_and_get_last();
 
-    for * blend_states {
+    for * blend_modes {
         safe_release_and_reset(it);
     }
-    for * rasterizer_states {
+    for * rasterizer_modes {
         safe_release_and_reset(it);
     }
-    for * depth_stencil_states {
+    for * depth_stencil_modes {
         safe_release_and_reset(it);
     }
 
@@ -553,16 +568,16 @@ set_viewport :: (x: float, y: float, width: float, height: float, near_depth := 
     ID3D11DeviceContext_RSSetViewports(device_context, 1, *vp);
 }
 
-set_blend_state :: (state: Blend_State) {
-    ID3D11DeviceContext_OMSetBlendState(device_context, blend_states[state], null, SampleMask=0xFFFFFFFF);
+set_blend_state :: (state: Blend_Mode) {
+    ID3D11DeviceContext_OMSetBlendState(device_context, blend_modes[state], null, SampleMask=0xFFFFFFFF);
 }
 
-set_rasterizer_state :: (state: Rasterizer_State) {
-    ID3D11DeviceContext_RSSetState(device_context, rasterizer_states[state]);
+set_rasterizer_state :: (state: Rasterizer_Mode) {
+    ID3D11DeviceContext_RSSetState(device_context, rasterizer_modes[state]);
 }
 
-set_depth_stencil_state :: (state: Depth_Stencil_State) {
-    ID3D11DeviceContext_OMSetDepthStencilState(device_context, depth_stencil_states[state], StencilRef=0xFF);
+set_depth_stencil_state :: (state: Depth_Stencil_Mode) {
+    ID3D11DeviceContext_OMSetDepthStencilState(device_context, depth_stencil_modes[state], StencilRef=0xFF);
 }
 // base_vertex only makes sense in indexed drawing.
 draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex: s32 = 0) {
@@ -954,11 +969,11 @@ using D3D11_State: struct {
     // bound_render_target: *Render_Target;
 
     // :CreateStates
-    rasterizer_states: [#run enum_count(Rasterizer_State)]*ID3D11RasterizerState;
-    blend_states: [#run enum_count(Blend_State)]*ID3D11BlendState;
+    rasterizer_modes: [#run enum_count(Rasterizer_Mode)]*ID3D11RasterizerState;
+    blend_modes: [#run enum_count(Blend_Mode)]*ID3D11BlendState;
 
     // TODO(Yasin): Experiment more with stencil buffers to figure out the best options here.
-    depth_stencil_states: [#run enum_count(Depth_Stencil_State)]*ID3D11DepthStencilState;
+    depth_stencil_modes: [#run enum_count(Depth_Stencil_Mode)]*ID3D11DepthStencilState;
     msaa: u32;
 }
 
@@ -982,7 +997,7 @@ box_from_box :: inline (box: Box) -> D3D11_BOX {
     d_box.back = xx (box.z + box.depth);
 }
 
-init_states :: () {
+init_preloaded_modes :: () {
     ds_desc := D3D11_DEPTH_STENCIL_DESC.{
         DepthEnable = .TRUE,
         DepthWriteMask = .ALL,
@@ -1003,24 +1018,28 @@ init_states :: () {
         BackFace.StencilPassOp = .KEEP,
     };
     {
-        using Depth_Stencil_State;
-        ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_states[Depth_Stencil]);
+        using Depth_Stencil_Mode;
+        ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_modes[Depth_Stencil]);
+
+        ds_desc.DepthFunc = .GREATER_EQUAL;
+        ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_modes[Depth_Reversed]);
+        ds_desc.DepthFunc = .LESS_EQUAL;
 
         ds_desc.DepthWriteMask = .ZERO;
-        ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_states[No_Depth_Mask]);
+        ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_modes[No_Depth_Mask]);
 
         ds_desc.DepthEnable = .FALSE;
-        ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_states[No_Depth]);
+        ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_modes[No_Depth]);
 
 
         ds_desc.StencilEnable = .FALSE;
         // Should we disable other stencil stuff too?
-        ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_states[No_Depth_Stencil]);
+        ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_modes[No_Depth_Stencil]);
 
         ds_desc.DepthEnable = .TRUE;
         ds_desc.DepthWriteMask = .ALL;
         ds_desc.DepthFunc = .LESS_EQUAL;
-        ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_states[No_Stencil]);
+        ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_modes[No_Stencil]);
     }
     rs_desc := D3D11_RASTERIZER_DESC.{
         FillMode = .SOLID,
@@ -1029,17 +1048,17 @@ init_states :: () {
         ScissorEnable = .TRUE,
     };
     {
-        using Rasterizer_State;
-        ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Scissor]);
+        using Rasterizer_Mode;
+        ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_modes[Scissor]);
 
         rs_desc.ScissorEnable = .FALSE;
-        ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Default]);
+        ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_modes[Default]);
 
         rs_desc.CullMode = .FRONT;
-        ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[Front_Cull]);
+        ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_modes[Front_Cull]);
 
         rs_desc.CullMode = .NONE;
-        ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_states[No_Cull]);
+        ID3D11Device_CreateRasterizerState(device, *rs_desc, *rasterizer_modes[No_Cull]);
     }
     blend_alpha_desc: D3D11_BLEND_DESC;
     blend_alpha_desc.IndependentBlendEnable = .FALSE;
@@ -1054,10 +1073,10 @@ init_states :: () {
         RenderTargetWriteMask = xx D3D11_COLOR_WRITE_ENABLE.ALL,
     };
     {
-        using Blend_State;
-        ID3D11Device_CreateBlendState(device, *blend_alpha_desc, *blend_states[Alpha]);
+        using Blend_Mode;
+        ID3D11Device_CreateBlendState(device, *blend_alpha_desc, *blend_modes[Alpha]);
 
-        // blend_states[None] = null;
+        // blend_modes[None] = null;
     }
 }
 
