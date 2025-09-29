@@ -1,3 +1,7 @@
+// NOTE(Yasin): Binding to specific stages doesn't make sense in OpenGL!!!
+// Find a way out of this!
+
+
 // This is more akin to an OpenGL 'program' I guess.
 Shader :: struct {
     type: Shader_Type;
@@ -125,6 +129,8 @@ init :: (window: HWND, wanted_msaa: u32 = 4) {
     hr = IDXGIFactory2_CreateSwapChainForHwnd(dxgi_factory, device, window, *swap_chain_desc, null, null, *swap_chain);
     check_hr("IDXGIFactory2.CreateSwapChainForHwnd");
 
+    hr = IDXGIFactory_MakeWindowAssociation(dxgi_factory, window, xx DXGI_MWA.NO_ALT_ENTER);
+    check_hr("IDXGIFactory.MakeWindowAssociation");
     safe_release(dxgi_factory);
 
 
@@ -169,11 +175,11 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
     if usage == {
     case .Default;
         bd.Usage = .DEFAULT;
+    case .Immutable;
+        bd.Usage = .IMMUTABLE;
     case .Dynamic;
         bd.Usage = .DYNAMIC;
         bd.CPUAccessFlags = .WRITE;
-    case .Immutable;
-        bd.Usage = .IMMUTABLE;
     }
 
     // These are seperate in OpenGL while the same in D3D11
@@ -413,6 +419,19 @@ destroy_texture :: (texture: *Texture) {
     texture.width, texture.height, texture.stride = 0;
     texture.depth = 1;
     texture.flags = .None;
+}
+
+// @@
+destroy_blend_state :: (blend_state: *Blend_State) {
+    safe_release_and_reset(*blend_state.state);
+}
+
+destroy_rasterizer_state :: (rasterizer_state: *Rasterizer_State) {
+    safe_release_and_reset(*rasterizer_state.state);
+}
+
+destroy_depth_stencil_state :: (depth_stencil_state: *Depth_Stencil_State) {
+    safe_release_and_reset(*depth_stencil_state.state);
 }
 
 load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> Shader {
@@ -882,12 +901,19 @@ create_texture :: (data: [][]u8, width: u32, height: u32, channels: u32, array_c
     return texture;
 }
 
-bind_texture :: (texture: Texture, slot: u32) {
+bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
     if texture.flags & .Compute_RW {
+        // bind_to doesn't make sense here.
         ID3D11DeviceContext_CSSetUnorderedAccessViews(device_context, slot, 1, *texture.unordered_access_view, null);
     }
     else {
-        ID3D11DeviceContext_PSSetShaderResources(device_context, slot, 1, *texture.resource_view);
+        if bind_to & .Vertex
+            ID3D11DeviceContext_VSSetShaderResources(device_context, slot, 1, *texture.resource_view);
+        if bind_to & .Fragment
+            ID3D11DeviceContext_PSSetShaderResources(device_context, slot, 1, *texture.resource_view);
+        if bind_to & .Compute
+            ID3D11DeviceContext_CSSetShaderResources(device_context, slot, 1, *texture.resource_view);
+
     }
 }
 
@@ -946,8 +972,13 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
     return sampler;
 }
 
-bind_sampler :: (sampler: Sampler, slot: u32) {
-    ID3D11DeviceContext_PSSetSamplers(device_context, slot, 1, *sampler.state);
+bind_sampler :: (sampler: Sampler, slot: u32, bind_to := Shader_Type.Fragment) {
+    if bind_to & .Vertex
+        ID3D11DeviceContext_VSSetSamplers(device_context, slot, 1, *sampler.state);
+    if bind_to & .Fragment
+        ID3D11DeviceContext_PSSetSamplers(device_context, slot, 1, *sampler.state);
+    if bind_to & .Compute
+        ID3D11DeviceContext_CSSetSamplers(device_context, slot, 1, *sampler.state);
 }
 
 destroy_sampler :: (sampler: *Sampler) {
