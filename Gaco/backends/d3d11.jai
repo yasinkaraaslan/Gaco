@@ -1,8 +1,11 @@
 // NOTE(Yasin): Binding to specific stages doesn't make sense in OpenGL!!!
-// Find a way out of this!
+// Find a way out of this before release!
+//
+// Option 1: Provide the parameter but just for compatibility, so it wouldn't make any difference in OpenGL.
+// Option 2: Set it for every stage in D3D11. (slow)
+// Option 3: Use glGetProgramPipelineiv and glProgramUniform somehow, which would bind it to a specific shader instead of a stage.
 
 
-// This is more akin to an OpenGL 'program' I guess.
 Shader :: struct {
     type: Shader_Type;
     input_layout: *ID3D11InputLayout;
@@ -703,7 +706,7 @@ resize :: (width: int, height: int) -> window_render_target: *Render_Target {
 // Data is an array for texture arrays and mipmapping.
 // Index = mip slice + (array slice * mip levels)
 // Image 0 mip data | Image 1 mip data | ...
-create_texture :: (data: [][]u8, width: u32, height: u32, channels: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None) -> Texture {
+create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None) -> Texture {
     generate_mips := (flags & .Generate_Mips) && mip_levels_or_msaa > 1;
 
     d3d11_format: DXGI_FORMAT;
@@ -808,7 +811,7 @@ create_texture :: (data: [][]u8, width: u32, height: u32, channels: u32, array_c
 
                 pitch := block_width * bytes_per_block;
                 init_data[index] = D3D11_SUBRESOURCE_DATA.{
-                    pSysMem = data[index].data,
+                    pSysMem = data[index],
                     SysMemPitch = pitch,
                     SysMemSlicePitch = pitch * block_height,
                 };
@@ -877,7 +880,7 @@ create_texture :: (data: [][]u8, width: u32, height: u32, channels: u32, array_c
                 block_height = cast(u32)max(1, (block_height + 3) / 4);
             }
             pitch := block_width * bytes_per_block;
-            ID3D11DeviceContext_UpdateSubresource(device_context, resource, index, null, it.data, pitch, pitch * block_height);
+            ID3D11DeviceContext_UpdateSubresource(device_context, resource, index, null, it, pitch, pitch * block_height);
         }
     }
 

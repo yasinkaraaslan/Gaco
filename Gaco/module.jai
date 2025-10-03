@@ -118,29 +118,19 @@ Draw_Indirect_Args :: struct(indexed: bool) {
     first_instance: u32;
 }
 
-// These are some useful preloaded modes you can use without a create_*_state call.
-// TODO(Yasin): Actually implement create_*_state calls.
 
+// If you want to add a mode, remember to do it on init_preloaded_modes as well.
 Blend_Mode :: enum u32 {
     None;
     Alpha;
 }
 
-// ^^
 Rasterizer_Mode :: enum u32 {
     Default;
     Front_Cull;
     No_Cull;
-
-    // We should either add a way to create these states or we will at some point have
-    // combinatory explosion. :CreateStates
-    Depth_Bias_Near;
-    Depth_Bias_Far;
-
     Scissor;
 }
-
-// ^^
 Depth_Stencil_Mode :: enum u32 {
     Depth_Stencil;
     No_Depth;
@@ -260,14 +250,13 @@ create_texture_from_memory :: (memory: string, mip_levels : u32 = 1, format := T
 
     buffer := stbi_load_from_memory(memory.data, cast(s32)memory.count, *width, *height, *channels, cast(s32) desired_channels);
     defer stbi_image_free(buffer);
-    array_size := width * height * channels;
-    return create_texture(.[.{array_size, buffer}], cast(u32)width, cast(u32)height, ifx desired_channels desired_channels else cast(u32)channels, 1, mip_levels, format, flags);
+    return create_texture(.[buffer], cast(u32)width, cast(u32)height, ifx desired_channels desired_channels else cast(u32)channels, 1, mip_levels, format, flags);
 }
 
 create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None, desired_channels : u32 = 0) -> Texture {
-    data := NewArray(file_names.count, []u8,, temp);
+    data := NewArray(file_names.count, *u8,, temp);
     defer for data {
-        if it  stbi_image_free(it.data);
+        if it  stbi_image_free(it);
     }
 
     texture_width, texture_height, texture_channels: u32;
@@ -276,8 +265,7 @@ create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, f
         if !ok return .{};
         width, height, channels: s32;
 
-        data[it_index].data = stbi_load_from_memory(bytes.data, cast(s32)bytes.count, *width, *height, *channels, cast(s32)desired_channels);
-        data[it_index].count = width * height * channels;
+        data[it_index] = stbi_load_from_memory(bytes.data, cast(s32)bytes.count, *width, *height, *channels, cast(s32)desired_channels);
 
         if it_index == 0 {
             texture_width    = cast(u32)width;
