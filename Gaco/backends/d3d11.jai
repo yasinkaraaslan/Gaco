@@ -437,41 +437,6 @@ destroy_depth_stencil_state :: (depth_stencil_state: *Depth_Stencil_State) {
     safe_release_and_reset(*depth_stencil_state.state);
 }
 
-load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> Shader {
-    shader: Shader;
-    if type & .Compute {
-        hr := ID3D11Device_CreateComputeShader(device, bytecode.cs.data, xx bytecode.cs.count, null, *shader.compute_shader);
-        check_hr("ID3D11Device.CreateComputeShader", #code `return .{});
-
-        #if DEBUG {
-            ID3D11DeviceChild_SetPrivateData(shader.compute_shader, *uid(WKPDID_D3DDebugObjectName), CS_ENTRY_POINT.count, CS_ENTRY_POINT.data);
-        }
-    }
-
-    if type & .Vertex {
-        hr := ID3D11Device_CreateVertexShader(device, bytecode.vs.data, xx bytecode.vs.count, null, *shader.vertex_shader);
-        check_hr("ID3D11Device.CreateVertexShader", #code `return .{});
-
-        shader.input_layout = get_input_layout_from_bytecode(bytecode.vs);
-
-        #if DEBUG {
-            ID3D11DeviceChild_SetPrivateData(shader.vertex_shader, *uid(WKPDID_D3DDebugObjectName), VS_ENTRY_POINT.count, VS_ENTRY_POINT.data);
-        }
-    }
-
-    if type & .Fragment {
-        hr := ID3D11Device_CreatePixelShader(device, bytecode.fs.data, xx bytecode.fs.count, null, *shader.fragment_shader);
-        check_hr("ID3D11Device.CreatePixelShader", #code `return .{});
-
-        #if DEBUG {
-            ID3D11DeviceChild_SetPrivateData(shader.fragment_shader,*uid(WKPDID_D3DDebugObjectName), FS_ENTRY_POINT.count, FS_ENTRY_POINT.data);
-        }
-    }
-    shader.type = type;
-    return shader;
-}
-
-
 destroy_shader :: (using shader: *Shader) {
     if type & .Vertex {
         safe_release_and_reset(*vertex_shader);
@@ -509,6 +474,40 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
     return bytecode, true;
 }
 
+load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> Shader {
+    shader: Shader;
+    if type & .Compute {
+        hr := ID3D11Device_CreateComputeShader(device, bytecode.cs.data, xx bytecode.cs.count, null, *shader.compute_shader);
+        check_hr("ID3D11Device.CreateComputeShader", #code `return .{});
+
+        #if DEBUG {
+            ID3D11DeviceChild_SetPrivateData(shader.compute_shader, *uid(WKPDID_D3DDebugObjectName), CS_ENTRY_POINT.count, CS_ENTRY_POINT.data);
+        }
+    }
+
+    if type & .Vertex {
+        hr := ID3D11Device_CreateVertexShader(device, bytecode.vs.data, xx bytecode.vs.count, null, *shader.vertex_shader);
+        check_hr("ID3D11Device.CreateVertexShader", #code `return .{});
+
+        shader.input_layout = get_input_layout_from_bytecode(bytecode.vs);
+
+        #if DEBUG {
+            ID3D11DeviceChild_SetPrivateData(shader.vertex_shader, *uid(WKPDID_D3DDebugObjectName), VS_ENTRY_POINT.count, VS_ENTRY_POINT.data);
+        }
+    }
+
+    if type & .Fragment {
+        hr := ID3D11Device_CreatePixelShader(device, bytecode.fs.data, xx bytecode.fs.count, null, *shader.fragment_shader);
+        check_hr("ID3D11Device.CreatePixelShader", #code `return .{});
+
+        #if DEBUG {
+            ID3D11DeviceChild_SetPrivateData(shader.fragment_shader,*uid(WKPDID_D3DDebugObjectName), FS_ENTRY_POINT.count, FS_ENTRY_POINT.data);
+        }
+    }
+    shader.type = type;
+    return shader;
+}
+
 clear :: (render_target: Render_Target, r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
     #if flags & .Color {
         color := float.[r, g, b, a];
@@ -533,11 +532,6 @@ clear :: inline (r: float, g: float, b: float, a: float, depth := 1.0, stencil: 
 }
 
 set_shader :: (shader: Shader) {
-    // NOTE(Yasin): We might stop checking types to be compatible with a future OpenGL backend.
-    // This would make it impossible to mix shaders, but I don't want to overcomplicate the
-    // API just for that.
-    // Maybe this isn't a good idea.
-
     if shader.type & .Vertex {
         ID3D11DeviceContext_IASetInputLayout(device_context, shader.input_layout);
         ID3D11DeviceContext_VSSetShader(device_context, shader.vertex_shader, null, 0);
@@ -610,7 +604,6 @@ draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex: s32 = 0) {
         ID3D11DeviceContext_Draw(device_context, count, first);
     }
 }
-
 
 draw_instanced :: ($indexed: bool, count: u32, instance_count: u32, first: u32 = 0, first_instance: u32 = 0, base_vertex: s32 = 0) {
     #if indexed {

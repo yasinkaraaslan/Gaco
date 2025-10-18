@@ -58,6 +58,7 @@ Buffer_Usage :: enum u32 {
     Immutable;
 }
 
+// Use this in create_buffer maybe?
 Map_Flags :: enum_flags u32 {
     Read;
     Write;
