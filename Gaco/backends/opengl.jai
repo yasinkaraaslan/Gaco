@@ -125,11 +125,70 @@ bind_buffer :: (buffer: Buffer(.Vertex), slot: u32 = 0, offset: u32 = 0) {
 }
 
 compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, bool {
-    return .{}, true;
+    bytecode: Shader_Bytecode;
+    dxc_shader_type: DXC.Shader_Type;
+    args: DXC.Dxc_Shader_Compiler_Args;
+    args.shader_name = shader_name;
+    args.shader_model_version = "6_0";
+    args.shader_source = source;
+    args.add_debug_info = DEBUG;
+    args.compile_as_spirv = true;
+
+    compile :: (entry_point: string, shader_type: DXC.Shader_Type) -> string #expand {
+        `args.entry_point = entry_point;
+        `args.shader_type = shader_type;
+        result := DXC.DXC_Compile(`args);
+        if !result {
+            `return .{}, false;
+        }
+
+        return cast(string)result;
+    }
+
+    if type & .Vertex {
+        bytecode.vs = compile(VS_ENTRY_POINT, .Vertex);
+    }
+    if type & .Fragment {
+        bytecode.fs = compile(FS_ENTRY_POINT, .Fragment);
+    }
+    if type & .Compute {
+        bytecode.cs = compile(CS_ENTRY_POINT, .Compute);
+    }
+
+    return bytecode, true;
 }
 
+// Unlike D3D11, a single SPIR-V file can actually have multiple entry-points.
+// We might want to use this fact later on.
 load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> Shader {
-    return .{};
+    shader: Shader;
+
+    load :: (shader_type: GLenum, binary: string, entry_point: string) -> GLuint #expand {
+        s := glCreateShader(shader_type);
+        glShaderBinary(1, *s, GL_SHADER_BINARY_FORMAT_SPIR_V, binary.data, cast(u32)binary.count);
+        glSpecializeShader(s, entry_point, 0, null, null);
+
+        is_compiled: GLint;
+        glGetShaderiv(s, GL_COMPILE_STATUS, *is_compiled);
+        if is_compiled == 0 {
+            log_error("Shader compilation failed."); // @Incomplete: Give more info.
+            `return .{};
+        }
+        return s;
+    }
+
+    if type & .Vertex {
+        // shader.input_vao = ...;
+        shader.vertex_shader   = load(GL_VERTEX_SHADER, bytecode.vs, VS_ENTRY_POINT);
+    }
+    if type & .Fragment {
+        shader.fragment_shader = load(GL_FRAGMENT_SHADER, bytecode.fs, FS_ENTRY_POINT);
+    }
+    if type & .Compute {
+        shader.compute_shader  = load(GL_COMPUTE_SHADER, bytecode.cs, CS_ENTRY_POINT);
+    }
+    shader.type = type;
+    return shader;
 }
 
 clear :: (r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
@@ -213,6 +272,7 @@ using GL_State: struct {
     current_swap_interval: u32; // We shouldn't trust that the default is 0 actually.
 }
 #import "GL";
+DXC :: #import "dxc_compiler";
 #if OS == .WINDOWS {
     #import "Windows";
 }

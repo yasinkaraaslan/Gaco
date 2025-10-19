@@ -476,15 +476,6 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
 
 load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> Shader {
     shader: Shader;
-    if type & .Compute {
-        hr := ID3D11Device_CreateComputeShader(device, bytecode.cs.data, xx bytecode.cs.count, null, *shader.compute_shader);
-        check_hr("ID3D11Device.CreateComputeShader", #code `return .{});
-
-        #if DEBUG {
-            ID3D11DeviceChild_SetPrivateData(shader.compute_shader, *uid(WKPDID_D3DDebugObjectName), CS_ENTRY_POINT.count, CS_ENTRY_POINT.data);
-        }
-    }
-
     if type & .Vertex {
         hr := ID3D11Device_CreateVertexShader(device, bytecode.vs.data, xx bytecode.vs.count, null, *shader.vertex_shader);
         check_hr("ID3D11Device.CreateVertexShader", #code `return .{});
@@ -504,6 +495,17 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> S
             ID3D11DeviceChild_SetPrivateData(shader.fragment_shader,*uid(WKPDID_D3DDebugObjectName), FS_ENTRY_POINT.count, FS_ENTRY_POINT.data);
         }
     }
+
+    if type & .Compute {
+        hr := ID3D11Device_CreateComputeShader(device, bytecode.cs.data, xx bytecode.cs.count, null, *shader.compute_shader);
+        check_hr("ID3D11Device.CreateComputeShader", #code `return .{});
+
+        #if DEBUG {
+            ID3D11DeviceChild_SetPrivateData(shader.compute_shader, *uid(WKPDID_D3DDebugObjectName), CS_ENTRY_POINT.count, CS_ENTRY_POINT.data);
+        }
+    }
+
+
     shader.type = type;
     return shader;
 }
