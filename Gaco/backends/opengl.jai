@@ -3,10 +3,7 @@
 Shader :: struct {
     type: Shader_Type;
     input_vao: GLuint;
-
-    vertex_shader: GLuint;
-    fragment_shader: GLuint;
-    compute_shader: GLuint;
+    program: GLuint; // This is a 'seperable' program that contains the shaders specified with type.
 }
 
 Buffer :: struct (type: Buffer_Type) {
@@ -77,6 +74,8 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
         gl_enable_debug_output(break_on_error=true);
     }
 
+    glCreateProgramPipelines(1, *global_pipeline);
+    glBindProgramPipeline(global_pipeline);
     // init_preloaded_modes();
 
 }
@@ -96,8 +95,9 @@ deinit :: () {
         // @Incomplete
     }
     else {
-        #assert false "This OS doesn't support deinit() right now.";
+        #assert false;
     }
+    glDeleteProgramPipelines(1, *global_pipeline);
 }
 
 create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {
@@ -161,8 +161,6 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
     return bytecode, true;
 }
 
-// Unlike D3D11, a single SPIR-V file can actually have multiple entry-points.
-// We might want to use this fact later on.
 load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> Shader {
     shader: Shader;
 
@@ -174,22 +172,52 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> S
         is_compiled: GLint;
         glGetShaderiv(s, GL_COMPILE_STATUS, *is_compiled);
         if is_compiled == 0 {
-            log_error("Shader compilation failed."); // @Incomplete: Give more info.
+            log_error("Shader loading failed."); // @Incomplete: Give more info.
             `return .{};
         }
         return s;
     }
 
+    delete :: inline (s: GLuint) {
+        if s != 0  glDeleteShader(s);
+    }
+    vertex_shader: GLuint;
+    fragment_shader: GLuint;
+    compute_shader: GLuint;
+    defer {
+        delete(vertex_shader);
+        delete(fragment_shader);
+        delete(compute_shader);
+    }
+
+    program := glCreateProgram();
+    glProgramParameteri(program, GL_PROGRAM_SEPARABLE, 1);
+
     if type & .Vertex {
         shader.input_vao = get_input_vao_from_spv(bytecode.vs);
-        shader.vertex_shader   = load(GL_VERTEX_SHADER, bytecode.vs, VS_ENTRY_POINT);
+        vertex_shader = load(GL_VERTEX_SHADER, bytecode.vs, VS_ENTRY_POINT);
+        glAttachShader(program, vertex_shader);
     }
     if type & .Fragment {
-        shader.fragment_shader = load(GL_FRAGMENT_SHADER, bytecode.fs, FS_ENTRY_POINT);
+        fragment_shader = load(GL_FRAGMENT_SHADER, bytecode.fs, FS_ENTRY_POINT);
+        glAttachShader(program, fragment_shader);
     }
     if type & .Compute {
-        shader.compute_shader  = load(GL_COMPUTE_SHADER, bytecode.cs, CS_ENTRY_POINT);
+        compute_shader = load(GL_COMPUTE_SHADER, bytecode.cs, CS_ENTRY_POINT);
+        glAttachShader(program, compute_shader);
     }
+
+    glLinkProgram(program);
+
+    is_linked: GLint;
+    glGetProgramiv(program, GL_LINK_STATUS, *is_linked);
+    if is_linked == 0 {
+        glDeleteProgram(program);
+        log_error("Shader program linking failed!"); // @Incomplete: Give more info.
+        return .{};
+    }
+
+    shader.program = program;
     shader.type = type;
     return shader;
 }
@@ -210,7 +238,16 @@ clear :: (r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0,
 }
 
 set_shader :: (shader: Shader) {
-    // @Incomplete
+    stages: GLbitfield;
+    if shader.type & .Vertex {
+        stages |= GL_VERTEX_SHADER_BIT;
+        glBindVertexArray(shader.input_vao);
+    }
+    if shader.type & .Fragment  stages |= GL_FRAGMENT_SHADER_BIT;
+    if shader.type & .Compute   stages |= GL_COMPUTE_SHADER_BIT;
+
+    glUseProgramStages(global_pipeline, stages, shader.program);
+    glValidateProgramPipeline(global_pipeline);
 }
 
 draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex: s32 = 0) {
@@ -259,7 +296,9 @@ resize :: (width: int, height: int) {
     glViewport(0, 0, cast(GLuint)width, cast(GLuint)height);
 }
 #scope_module
-// SPIR-V
+// Unlike D3D11, a single SPIR-V file can actually have multiple entry-points.
+// We might want to use this fact later on.
+
 VS_EXTENSION :: ".spvs";
 FS_EXTENSION :: ".spfs";
 CS_EXTENSION :: ".spcs";
@@ -312,7 +351,7 @@ get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
             }
         }
         else if format >= .R64_UINT && format <= .R64G64B64A64_SFLOAT {
-            base := format - .R32_UINT;
+            base := format - .R64_UINT;
             variant = .Double;
             if base % 3 == {
             case 0;
@@ -340,29 +379,33 @@ get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
 
     offset: u32;
     for entry_variables {
-        glEnableVertexArrayAttrib(input_vao, it.location);
-
         assert(it.format != .UNDEFINED);
 
         type, variant := spv_to_gl(it.format);
-        if type == 0 return 0;
+        if type == 0 {
+            glDeleteVertexArrays(1, *input_vao);
+            return 0;
+        }
+
         comps := ifx it.numeric.vector.component_count else 1;
         row_count := ifx it.numeric.matrix.row_count else 1;
         for j: 0..row_count - 1 {
+            loc := it.location + j;
+
+            glEnableVertexArrayAttrib(input_vao, loc);
             if variant == {
             case .Float;
-                glVertexArrayAttribFormat (input_vao, it.location + j, cast(s32)comps, type, GL_FALSE, offset);
+                glVertexArrayAttribFormat (input_vao, loc, cast(s32)comps, type, GL_FALSE, offset);
             case .Int;
-                glVertexArrayAttribIFormat(input_vao, it.location + j, cast(s32)comps, type, offset);
+                glVertexArrayAttribIFormat(input_vao, loc, cast(s32)comps, type, offset);
             case .Double;
-                glVertexArrayAttribLFormat(input_vao, it.location + j, cast(s32)comps, type, offset);
+                glVertexArrayAttribLFormat(input_vao, loc, cast(s32)comps, type, offset);
             }
+            glVertexArrayAttribBinding(input_vao, loc, 0);
+
             offset += comps * it.numeric.scalar.width / 8;
         }
-        log("Offset: %", offset);
-        glVertexArrayAttribBinding(input_vao, it.location, 0);
     }
-
     return input_vao;
 }
 

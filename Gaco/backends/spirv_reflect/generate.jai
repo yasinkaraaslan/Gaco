@@ -34,6 +34,8 @@ generate_bindings :: (args: [] string) -> bool {
     lib_directory := "lib";
 
     // Sad that they didn't provide a SPV_REFLECT_API macro
+    // @Incomplete: This wouldn't work on other operating systems so I have to change this
+    // before release.
     extra: [..]string;
     array_add(*extra, tprint("/DEF:%/spirv_reflect.def", SOURCE_PATH));
 
