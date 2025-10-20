@@ -74,6 +74,9 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
         gl_enable_debug_output(break_on_error=true);
     }
 
+    glCreateVertexArrays(1, *empty_stupid_vao);
+    glBindVertexArray(empty_stupid_vao);
+
     glCreateProgramPipelines(1, *global_pipeline);
     glBindProgramPipeline(global_pipeline);
     // init_preloaded_modes();
@@ -98,6 +101,7 @@ deinit :: () {
         #assert false;
     }
     glDeleteProgramPipelines(1, *global_pipeline);
+    glDeleteVertexArrays(1, *empty_stupid_vao);
 }
 
 create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {
@@ -123,7 +127,6 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
     return buffer;
 }
 bind_buffer :: (buffer: Buffer(.Vertex), slot: u32 = 0, offset: u32 = 0) {
-    // @Incomplete
     glBindVertexBuffer(slot, buffer.buffer, offset, buffer.stride);
 }
 
@@ -241,7 +244,34 @@ set_shader :: (shader: Shader) {
     stages: GLbitfield;
     if shader.type & .Vertex {
         stages |= GL_VERTEX_SHADER_BIT;
+
+        // We have to rebind the vertex and instance buffer because we can't just change
+        // the input vao and be done with it!!
+        Bound_Buffer :: struct {
+            buffer: GLuint;
+            stride: u32;
+            offset: u32;
+        }
+
+        get_bound :: (slot: u32) -> Bound_Buffer {
+            buffer: Bound_Buffer;
+            glGetIntegeri_v(GL_VERTEX_BINDING_BUFFER, slot, cast(*GLint)*buffer.buffer);
+            glGetIntegeri_v(GL_VERTEX_BINDING_OFFSET, slot, cast(*GLint)*buffer.offset);
+            glGetIntegeri_v(GL_VERTEX_BINDING_STRIDE, slot, cast(*GLint)*buffer.stride);
+            return buffer;
+        }
+
+        bind :: (buffer: Bound_Buffer, slot: u32) {
+            if buffer.buffer {
+                glBindVertexBuffer(slot, buffer.buffer, buffer.offset, buffer.stride);
+            }
+        }
+
+        vertex_buffer := get_bound(0);
+        instance_buffer := get_bound(1);
         glBindVertexArray(shader.input_vao);
+        bind(vertex_buffer, 0);
+        bind(instance_buffer, 1);
     }
     if shader.type & .Fragment  stages |= GL_FRAGMENT_SHADER_BIT;
     if shader.type & .Compute   stages |= GL_COMPUTE_SHADER_BIT;
@@ -412,7 +442,7 @@ get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
 using GL_State: struct {
     main_window: WT.Window_Type;
     global_pipeline: GLuint;
-
+    empty_stupid_vao: GLuint; // Because we cannot bind a vertex buffer without a vao
     current_primitive_type := Primitive_Type.Triangle_List;
     current_index_format: GLenum; // GL_UNSIGNED_SHORT, GL_UNSIGNED_INT
     current_swap_interval: u32; // We shouldn't trust that the default is 0 actually.
