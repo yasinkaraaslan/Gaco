@@ -1,5 +1,5 @@
 // Vertex Shader
-cbuffer Transform_Buffer {
+cbuffer Transform_Buffer : register(b0) {
     matrix transformation;
 }
 
@@ -8,7 +8,7 @@ float4 vertex_main(float3 Pos : POSITION) : SV_Position {
 }
 
 // Fragment Shader
-cbuffer Colors_Buffer {
+cbuffer Colors_Buffer : register(b1) {
     float4 face_colors[6];
 }
 

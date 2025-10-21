@@ -74,6 +74,10 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
         gl_enable_debug_output(break_on_error=true);
     }
 
+    // @Cleanup: These should be in preloaded modes.
+    glEnable(GL_CULL_FACE);
+    glFrontFace(GL_CW); // We use clockwise for both OpenGL and D3D11
+
     glCreateVertexArrays(1, *empty_stupid_vao);
     glBindVertexArray(empty_stupid_vao);
 
@@ -129,6 +133,38 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
 bind_buffer :: (buffer: Buffer(.Vertex), slot: u32 = 0, offset: u32 = 0) {
     glBindVertexBuffer(slot, buffer.buffer, offset, buffer.stride);
 }
+
+bind_buffer :: (buffer: Buffer(.Index)) {
+    // assert(buffer.stride == 2 || buffer.stride == 4);
+    current_index_stride = buffer.stride;
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer.buffer);
+}
+
+
+// NOTE(Yasin): bind_to is just here for compatibility with D3D11,
+// I will find a better way to handle this later on.
+bind_buffer :: (buffer: Buffer(.Constant), slot: u32 = 0, bind_to: Shader_Type) {
+    glBindBufferBase(GL_UNIFORM_BUFFER, slot, buffer.buffer);
+}
+map_buffer :: (buffer: *Buffer, flags: Map_Flags) -> *void {
+    access: GLbitfield;
+    if flags & .Read  access |= GL_MAP_READ_BIT;
+    if flags & .Write access |= GL_MAP_WRITE_BIT;
+    return glMapNamedBufferRange(buffer.buffer, 0, buffer.size, access);
+}
+
+unmap_buffer :: (buffer: *Buffer) {
+    if glUnmapNamedBuffer(buffer.buffer) == GL_FALSE {
+        log_error("Couldn't unmap buffer!");
+    }
+}
+
+write_buffer :: (buffer: *Buffer, data: *void, size: int) {
+    mapped_data := map_buffer(buffer, .Write);
+    memcpy(mapped_data, data, size);
+    unmap_buffer(buffer);
+}
+
 
 compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, bool {
     bytecode: Shader_Bytecode;
@@ -294,9 +330,8 @@ draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex: s32 = 0) {
     }
 
     #if indexed {
-        byte_offset := ifx current_index_format == GL_UNSIGNED_INT 4 else 2;
-
-        glDrawElementsBaseVertex(mode, count, current_index_format, cast(*void) (byte_offset * first), base_vertex);
+        format := ifx current_index_stride == 4 cast(u32)GL_UNSIGNED_INT else cast(u32)GL_UNSIGNED_SHORT;
+        glDrawElementsBaseVertex(mode, count, format, cast(*void) (current_index_stride * first), base_vertex);
     }
     else {
         glDrawArrays(mode, cast(GLint)first, count);
@@ -314,7 +349,7 @@ present :: (interval: u32 = 1) {
         current_swap_interval = interval;
     }
     #if OS == .WINDOWS {
-        dc := GetDC(main_window);
+        dc := wglGetCurrentDC();
         SwapBuffers(dc);
     }
     else #if OS == .LINUX {
@@ -444,7 +479,7 @@ using GL_State: struct {
     global_pipeline: GLuint;
     empty_stupid_vao: GLuint; // Because we cannot bind a vertex buffer without a vao
     current_primitive_type := Primitive_Type.Triangle_List;
-    current_index_format: GLenum; // GL_UNSIGNED_SHORT, GL_UNSIGNED_INT
+    current_index_stride: GLenum; // GL_UNSIGNED_SHORT, GL_UNSIGNED_INT
     current_swap_interval: u32; // We shouldn't trust that the default is 0 actually.
 }
 #import "GL";
