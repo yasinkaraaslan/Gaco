@@ -155,7 +155,7 @@ map_buffer :: (buffer: *Buffer, flags: Map_Flags) -> *void {
 
 unmap_buffer :: (buffer: *Buffer) {
     if glUnmapNamedBuffer(buffer.buffer) == GL_FALSE {
-        log_error("Couldn't unmap buffer!");
+        log_error("[Gaco] Couldn't unmap buffer!");
     }
 }
 
@@ -211,7 +211,7 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> S
         is_compiled: GLint;
         glGetShaderiv(s, GL_COMPILE_STATUS, *is_compiled);
         if is_compiled == 0 {
-            log_error("Shader loading failed."); // @Incomplete: Give more info.
+            log_error("[Gaco] Shader loading failed."); // @Incomplete: Give more info.
             `return .{};
         }
         return s;
@@ -252,7 +252,7 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> S
     glGetProgramiv(program, GL_LINK_STATUS, *is_linked);
     if is_linked == 0 {
         glDeleteProgram(program);
-        log_error("Shader program linking failed!"); // @Incomplete: Give more info.
+        log_error("[Gaco] Shader program linking failed!"); // @Incomplete: Give more info.
         return .{};
     }
 
@@ -360,6 +360,107 @@ present :: (interval: u32 = 1) {
 resize :: (width: int, height: int) {
     glViewport(0, 0, cast(GLuint)width, cast(GLuint)height);
 }
+
+create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None) -> Texture {
+    GL_COMPRESSED_RGBA_BPTC_UNORM_ARB :: 0x8E8C;
+    GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_ARB :: 0x8E8D;
+    GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_ARB :: 0x8E8E;
+    GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_ARB :: 0x8E8F;
+
+    target: GLuint = GL_TEXTURE_2D;
+
+    msaa: u32 = 1;
+    mip_levels: u32 = 1;
+    if flags & .Multisample
+        msaa = mip_levels_or_msaa;
+    else
+        mip_levels = mip_levels_or_msaa;
+
+    if flags & .Is_3D {
+        target = GL_TEXTURE_3D;
+    }
+    else if array_count_or_depth > 1 {
+        if      flags & .Cubemap     target = GL_TEXTURE_CUBE_MAP_ARRAY;
+        else if flags & .Multisample target = GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
+        else                         target = GL_TEXTURE_2D_ARRAY;
+    }
+    else if flags & .Cubemap target = GL_TEXTURE_CUBE_MAP;
+    else if flags & .Multisample target = GL_TEXTURE_2D_MULTISAMPLE;
+
+    formats: [4]GLenum;
+    internal_format: GLenum;
+    if format == {
+    case .U32;
+        formats = .[GL_R32UI, GL_RG32UI, GL_RGB32UI, GL_RGBA32UI];
+    case .SRGB;
+        // We do not specify GL_SRGB8 because D3D11 doesn't support it.
+        formats[3] = GL_SRGB8_ALPHA8;
+    case .Float16;
+        formats = .[GL_R16F, GL_RG16F, GL_RGB16F, GL_RGBA16F];
+    case .Float32;
+        formats = .[GL_R32F, GL_RG32F, GL_RGB32F, GL_RGBA32F];
+    case .BC6U;
+        internal_format = GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_ARB;
+    case .BC6S;
+        internal_format = GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_ARB;
+    case .BC7;
+        internal_format = GL_COMPRESSED_RGBA_BPTC_UNORM_ARB;
+    case .BC7_SRGB;
+        internal_format = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_ARB;
+    case .Default;
+        formats = .[GL_R8, GL_RG8, 0, GL_RGBA8];
+    case;
+        log_error("[Gaco] Unknown texture format: %", format);
+        return .{};
+        // @Incomplete: flags & .Depth_Stencil
+    }
+    if !internal_format {
+        internal_format = formats[channels - 1];
+        if !internal_format {
+            log_error("[Gaco] Error while creating texture: % channels with format % is not compatible.", channels, format);
+            return .{};
+        }
+    }
+
+    texture: Texture;
+    glCreateTextures(target, 1, *texture.texture);
+    if flags & .Is_3D {
+        glTextureStorage3D(texture.texture, mip_levels, internal_format, width, height, array_count_or_depth);
+    }
+    else {
+        glTextureStorage2D(texture.texture, mip_levels, internal_format, width, height);
+
+        // NOTE(Yasin): We will probably overhaul this before the release.
+
+        // @Incomplete: Multiple mip levels
+        // @Incomplete: Depth_Stencil
+        // @Incomplete: Compression textures
+
+        pixel_format: GLenum;
+
+        TYPE_TABLE :: GLenum.[GL_UNSIGNED_BYTE, GL_UNSIGNED_INT, GL_UNSIGNED_BYTE, GL_HALF_FLOAT, GL_FLOAT];
+        pixel_type := TYPE_TABLE[format];
+
+        if channels == {
+        case 1;
+            pixel_format = GL_RED;
+        case 2;
+            pixel_format = GL_RG;
+        case 3;
+            pixel_format = GL_RGB;
+        case 4;
+            pixel_format = GL_RGBA;
+        }
+        glTextureSubImage2D(texture.texture, 0, 0, 0, width, height, pixel_format, pixel_type, data[0]);
+    }
+    return texture;
+}
+
+// bind_to doesn't mean anything here, see up.
+bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
+    glBindTextureUnit(slot, texture.texture);
+}
+
 #scope_module
 // Unlike D3D11, a single SPIR-V file can actually have multiple entry-points.
 // We might want to use this fact later on.
@@ -374,7 +475,7 @@ get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
     module: SpvReflectShaderModule;
     check :: (result: SpvReflectResult) #expand {
         if result != .SUCCESS {
-            log_error("SPIR-V shader reflection failed: %", result);
+            log_error("[Gaco] SPIR-V shader reflection failed: %", result);
             `return 0;
         }
     }
@@ -421,7 +522,7 @@ get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
             if base % 3 == {
             case 0;
             case 1;
-                log_error("OpenGL doesn't support 64 bit integer vertex attributes! Couldn't create input vao!");
+                log_error("[Gaco] OpenGL doesn't support 64 bit integer vertex attributes! Couldn't create input vao!");
                 type = 0;
             case 2;
                 type = GL_DOUBLE;

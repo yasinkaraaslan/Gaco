@@ -776,7 +776,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
         d3d11_format = formats[channels-1];
 
         if !d3d11_format {
-            log_error("[Gaco] Error while creating texture: % channels with format % is not compatible with D3D11.", channels, format);
+            log_error("[Gaco] Error while creating texture: % channels with format % is not compatible.", channels, format);
             return .{};
         }
     }
@@ -1200,7 +1200,7 @@ check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
         error_code := cast,no_check(OS_Error_Code)`hr; // We know that it is less than 0 if it's a failure. OS_Error_Code is a u32
         fail_message := System.get_error_string(error_code);
 
-        log_error("% failed with code 0x%: %", from, FormatInt.{value = error_code, base=16}, fail_message);
+        log_error("[Gaco] % failed with code 0x%: %", from, FormatInt.{value = error_code, base=16}, fail_message);
         #if !DEBUG {
             log("Pass DEBUG=true when importing Gaco to learn more.");
         }
