@@ -218,4 +218,4 @@ ConstantBuffer: Gaco.Buffer(.Constant);
 FtLibrary: FT_Library;
 Shader: Gaco.Shader;
 
-#import "freetype-2.12.1";
+#import "freetype";

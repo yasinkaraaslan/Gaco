@@ -268,4 +268,4 @@ TextPosConstantBuffer: Gaco.Buffer(.Constant);
 FtLibrary: FT_Library;
 TextShader: Gaco.Shader;
 
-#import "freetype-2.12.1";
+#import "freetype";

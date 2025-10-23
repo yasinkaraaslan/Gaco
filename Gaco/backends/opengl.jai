@@ -189,7 +189,7 @@ update_buffer :: (buffer: *Buffer, data: *void) {
 
 update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 = 0) {
     // @Incomplete: This is wrong for texture arrays
-    glTextureSubImage2D(texture.texture, subresource, rect.x, rect.y, rect.width, rect.height, texture.pixel_format, texture.pixel_type, data);
+    glTextureSubImage2D(texture.texture, cast(s32)subresource, rect.x, rect.y, cast(u32)rect.width, cast(u32)rect.height, texture.pixel_format, texture.pixel_type, data);
 }
 
 update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 0) {
@@ -347,8 +347,8 @@ set_shader :: (shader: Shader) {
 
         vertex_buffer := get_bound(0);
         instance_buffer := get_bound(1);
-        index_buffer: GLint;
-        glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, *index_buffer);
+        index_buffer: GLuint;
+        glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, cast(*GLint)*index_buffer);
 
         glBindVertexArray(shader.input_vao);
         bind(vertex_buffer, 0);
@@ -376,8 +376,8 @@ set_blend_mode :: (mode: Blend_Mode) {
     if state.enabled {
         glEnable(GL_BLEND);
         using state;
-        glBlendFuncSeperate(src_blend, dst_blend, src_blend_alpha, dst_blend_alpha);
-        glBlendEquationSeperate(blend_op, blend_op_alpha);
+        glBlendFuncSeparate(src_blend, dst_blend, src_blend_alpha, dst_blend_alpha);
+        glBlendEquationSeparate(blend_op, blend_op_alpha);
 
         glColorMask(red, green, blue, alpha);
 
@@ -489,12 +489,18 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
     if flags & .Is_3D {
         target = GL_TEXTURE_3D;
     }
+    else if flags & .Cubemap {
+        if array_count_or_depth > 6 {
+            target = GL_TEXTURE_CUBE_MAP_ARRAY;
+        }
+        else {
+            target = GL_TEXTURE_CUBE_MAP;
+        }
+    }
     else if array_count_or_depth > 1 {
-        if      flags & .Cubemap     target = GL_TEXTURE_CUBE_MAP_ARRAY;
-        else if flags & .Multisample target = GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
+        if flags & .Multisample target = GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
         else                         target = GL_TEXTURE_2D_ARRAY;
     }
-    else if flags & .Cubemap target = GL_TEXTURE_CUBE_MAP;
     else if flags & .Multisample target = GL_TEXTURE_2D_MULTISAMPLE;
 
     formats: [4]GLenum;
@@ -583,7 +589,7 @@ init_preloaded_modes :: () {
         depth_stencil_modes[Depth_Stencil] = state;
 
         state.depth_func = GL_GEQUAL;
-        depth_stencil_modes[Depth_reversed] = state;
+        depth_stencil_modes[Depth_Reversed] = state;
 
         state.depth_func = GL_LEQUAL;
         state.depth_write_mask = GL_FALSE;
@@ -605,7 +611,7 @@ init_preloaded_modes :: () {
     {
         using Rasterizer_Mode;
         state := Rasterizer_State.{
-            fill_mode = GL_FILL,
+            polygon_mode = GL_FILL,
             cull_mode = GL_BACK,
             scissor_enabled = true,
         };
@@ -618,7 +624,7 @@ init_preloaded_modes :: () {
         rasterizer_modes[Front_Cull] = state;
 
         state.cull_mode = 0; // Special
-        rastizer_modes[No_Cull] = state;
+        rasterizer_modes[No_Cull] = state;
     }
 
     // Blend Modes
