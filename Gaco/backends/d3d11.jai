@@ -257,29 +257,21 @@ bind_buffer :: (buffer: Buffer(.Index)) {
     ID3D11DeviceContext_IASetIndexBuffer(device_context, buffer.buffer, format, 0);
 }
 
-bind_buffer :: (buffer: Buffer(.Constant), slot: u32 = 0, bind_to: Shader_Type) {
-    if bind_to == .Unspecified {
-        log_error("[Gaco] Unspecified shader type to bind a constant buffer.");
-        return;
-    }
-    if bind_to & .Vertex
+bind_buffer :: (buffer: Buffer(.Constant), slot: u32 = 0) {
+    if shader_state & .Vertex
         ID3D11DeviceContext_VSSetConstantBuffers(device_context, slot, 1, *buffer.buffer);
-    if bind_to & .Fragment
+    if shader_state & .Fragment
         ID3D11DeviceContext_PSSetConstantBuffers(device_context, slot, 1, *buffer.buffer);
-    if bind_to & .Compute
+    if shader_state & .Compute
         ID3D11DeviceContext_CSSetConstantBuffers(device_context, slot, 1, *buffer.buffer);
 }
 
-bind_buffer :: (buffer: Buffer(.Structured), slot: u32 = 0, bind_to: Shader_Type) {
-    if bind_to == .Unspecified {
-        log_error("[Gaco] Unspecified shader type to bind a structured buffer.");
-        return;
-    }
-    if bind_to & .Vertex
+bind_buffer :: (buffer: Buffer(.Structured), slot: u32 = 0) {
+    if shader_state & .Vertex
         ID3D11DeviceContext_VSSetShaderResources(device_context, slot, 1, *buffer.srv);
-    if bind_to & .Fragment
+    if shader_state & .Fragment
         ID3D11DeviceContext_PSSetShaderResources(device_context, slot, 1, *buffer.srv);
-    if bind_to & .Compute
+    if shader_state & .Compute
         ID3D11DeviceContext_CSSetShaderResources(device_context, slot, 1, *buffer.srv);
 }
 
@@ -524,12 +516,18 @@ set_shader :: (shader: Shader) {
     if shader.type & .Vertex {
         ID3D11DeviceContext_IASetInputLayout(device_context, shader.input_layout);
         ID3D11DeviceContext_VSSetShader(device_context, shader.vertex_shader, null, 0);
+        if !shader.vertex_shader  shader_state &= ~.Vertex;
+        else shader_state |= .Vertex;
     }
     if shader.type & .Fragment {
         ID3D11DeviceContext_PSSetShader(device_context, shader.fragment_shader, null, 0);
+        if !shader.fragment_shader  shader_state &= ~.Fragment;
+        else shader_state |= .Fragment;
     }
     if shader.type & .Compute {
         ID3D11DeviceContext_CSSetShader(device_context, shader.compute_shader, null, 0);
+        if !shader.compute_shader shader_state &= ~.Compute;
+        else shader_state |= .Compute;
     }
 }
 
@@ -887,19 +885,17 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
     return texture;
 }
 
-bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
+bind_texture :: (texture: Texture, slot: u32) {
     if texture.flags & .Compute_RW {
-        // bind_to doesn't make sense here.
         ID3D11DeviceContext_CSSetUnorderedAccessViews(device_context, slot, 1, *texture.unordered_access_view, null);
     }
     else {
-        if bind_to & .Vertex
+        if shader_state & .Vertex
             ID3D11DeviceContext_VSSetShaderResources(device_context, slot, 1, *texture.resource_view);
-        if bind_to & .Fragment
+        if shader_state & .Fragment
             ID3D11DeviceContext_PSSetShaderResources(device_context, slot, 1, *texture.resource_view);
-        if bind_to & .Compute
+        if shader_state & .Compute
             ID3D11DeviceContext_CSSetShaderResources(device_context, slot, 1, *texture.resource_view);
-
     }
 }
 
@@ -958,12 +954,12 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
     return sampler;
 }
 
-bind_sampler :: (sampler: Sampler, slot: u32, bind_to := Shader_Type.Fragment) {
-    if bind_to & .Vertex
+bind_sampler :: (sampler: Sampler, slot: u32) {
+    if shader_state & .Vertex
         ID3D11DeviceContext_VSSetSamplers(device_context, slot, 1, *sampler.state);
-    if bind_to & .Fragment
+    if shader_state & .Fragment
         ID3D11DeviceContext_PSSetSamplers(device_context, slot, 1, *sampler.state);
-    if bind_to & .Compute
+    if shader_state & .Compute
         ID3D11DeviceContext_CSSetSamplers(device_context, slot, 1, *sampler.state);
 }
 
@@ -991,6 +987,8 @@ using D3D11_State: struct {
     // TODO(Yasin): Experiment more with stencil buffers to figure out the best options here.
     depth_stencil_modes: [#run enum_count(Depth_Stencil_Mode)]*ID3D11DepthStencilState;
     msaa: u32;
+
+    shader_state: Shader_Type; // Currently bound shaders.
 }
 
 box_from_rect :: inline (rect: Rect) -> D3D11_BOX {

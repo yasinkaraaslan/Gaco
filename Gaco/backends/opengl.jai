@@ -164,12 +164,10 @@ bind_buffer :: (buffer: Buffer(.Index)) {
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer.buffer);
 }
 
-
-// NOTE(Yasin): bind_to is just here for compatibility with D3D11,
-// I will find a better way to handle this later on.
-bind_buffer :: (buffer: Buffer(.Constant), slot: u32 = 0, bind_to: Shader_Type) {
+bind_buffer :: (buffer: Buffer(.Constant), slot: u32 = 0) {
     glBindBufferBase(GL_UNIFORM_BUFFER, slot, buffer.buffer);
 }
+
 map_buffer :: (buffer: *Buffer, flags: Map_Flags) -> *void {
     access: GLbitfield;
     if flags & .Read  access |= GL_MAP_READ_BIT;
@@ -323,7 +321,7 @@ set_shader :: (shader: Shader) {
     if shader.type & .Vertex {
         stages |= GL_VERTEX_SHADER_BIT;
 
-        // We have to rebind the vertex and instance buffer because we can't just change
+        // We have to rebind the vertex, index and instance buffer because we can't just change
         // the input vao and be done with it!!
         Bound_Buffer :: struct {
             buffer: GLuint;
@@ -562,8 +560,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
     return texture;
 }
 
-// bind_to doesn't mean anything here, see up.
-bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
+bind_texture :: (texture: Texture, slot: u32) {
     glBindTextureUnit(slot, texture.texture);
 }
 
