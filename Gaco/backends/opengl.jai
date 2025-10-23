@@ -19,6 +19,11 @@ Sampler :: struct {
 
 Texture :: struct {
     texture: GLuint;
+    pixel_format: GLuint;
+    pixel_type: GLuint;
+    width, height, stride: u32;
+    depth: u32;
+    flags: Texture_Flags;
 }
 Render_Target :: struct {
 }
@@ -27,10 +32,10 @@ Blend_State :: struct {
     enabled: bool;
     src_blend: GLenum;
     dst_blend: GLenum;
-    blend_op: GLenum;
-
     src_blend_alpha: GLenum;
     dst_blend_alpha: GLenum;
+
+    blend_op: GLenum;
     blend_op_alpha: GLenum;
 
     red: GLboolean;
@@ -39,8 +44,20 @@ Blend_State :: struct {
     alpha: GLboolean;
 }
 
-Rasterizer_State :: struct {}
-Depth_Stencil_State :: struct {}
+Rasterizer_State :: struct {
+    polygon_mode: GLenum;
+    cull_mode: GLenum;
+    scissor_enabled: bool;
+}
+
+Depth_Stencil_State :: struct {
+    depth_enabled: bool;
+    depth_write_mask: GLboolean;
+    depth_func: GLenum;
+
+    stencil_enabled: bool;
+    // @Incomplete: Add the rest of the stencil fields here.
+}
 
 is_empty :: (texture: Texture) -> bool {
     return glIsTexture(texture.texture) == GL_TRUE;
@@ -73,17 +90,20 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
         // so we do the same thing here to be compatible, is this a good idea?
         gl_enable_debug_output(break_on_error=true);
     }
+    glFrontFace(GL_CW); // We use clockwise for both OpenGL and D3D11
+
 
     // @Cleanup: These should be in preloaded modes.
+    glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
-    glFrontFace(GL_CW); // We use clockwise for both OpenGL and D3D11
+
 
     glCreateVertexArrays(1, *empty_stupid_vao);
     glBindVertexArray(empty_stupid_vao);
 
     glCreateProgramPipelines(1, *global_pipeline);
     glBindProgramPipeline(global_pipeline);
-    // init_preloaded_modes();
+    init_preloaded_modes();
 
 }
 
@@ -123,8 +143,12 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
         storage_flags |= GL_MAP_READ_BIT;
     }
 
-    if usage == .Dynamic {
-        storage_flags |= GL_DYNAMIC_STORAGE_BIT | GL_MAP_WRITE_BIT;
+    if usage == {
+    case .Dynamic;
+        storage_flags |= GL_MAP_WRITE_BIT;
+        #through;
+    case .Default;
+        storage_flags |= GL_DYNAMIC_STORAGE_BIT;
     }
 
     glNamedBufferStorage(buffer.buffer, buffer.size, data, storage_flags);
@@ -159,12 +183,30 @@ unmap_buffer :: (buffer: *Buffer) {
     }
 }
 
+update_buffer :: (buffer: *Buffer, data: *void) {
+    glNamedBufferSubData(buffer.buffer, 0, buffer.size, data);
+}
+
+update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 = 0) {
+    // @Incomplete: This is wrong for texture arrays
+    glTextureSubImage2D(texture.texture, subresource, rect.x, rect.y, rect.width, rect.height, texture.pixel_format, texture.pixel_type, data);
+}
+
+update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 0) {
+}
+
+update_texture :: inline (using texture: *Texture, data: *void, subresource: u32 = 0) {
+}
+
 write_buffer :: (buffer: *Buffer, data: *void, size: int) {
     mapped_data := map_buffer(buffer, .Write);
     memcpy(mapped_data, data, size);
     unmap_buffer(buffer);
 }
 
+destroy_buffer :: (buffer: *Buffer) {
+    glDeleteBuffers(1, *buffer.buffer);
+}
 
 compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, bool {
     bytecode: Shader_Bytecode;
@@ -305,15 +347,83 @@ set_shader :: (shader: Shader) {
 
         vertex_buffer := get_bound(0);
         instance_buffer := get_bound(1);
+        index_buffer: GLint;
+        glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, *index_buffer);
+
         glBindVertexArray(shader.input_vao);
         bind(vertex_buffer, 0);
         bind(instance_buffer, 1);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_buffer);
     }
     if shader.type & .Fragment  stages |= GL_FRAGMENT_SHADER_BIT;
     if shader.type & .Compute   stages |= GL_COMPUTE_SHADER_BIT;
 
     glUseProgramStages(global_pipeline, stages, shader.program);
     glValidateProgramPipeline(global_pipeline);
+}
+
+set_scissor :: (using rect: Rect) {
+    glScissor(x, y, width, height);
+}
+
+set_viewport :: (x: float, y: float, width: float, height: float, near_depth := 0.0, far_depth := 1.0) {
+    glViewportIndexedf(0, x, y, w, h);
+    glDepthRangef(near_depth, far_depth);
+}
+
+set_blend_mode :: (mode: Blend_Mode) {
+    state := blend_modes[mode];
+    if state.enabled {
+        glEnable(GL_BLEND);
+        using state;
+        glBlendFuncSeperate(src_blend, dst_blend, src_blend_alpha, dst_blend_alpha);
+        glBlendEquationSeperate(blend_op, blend_op_alpha);
+
+        glColorMask(red, green, blue, alpha);
+
+    }
+    else {
+        glDisable(GL_BLEND);
+    }
+}
+
+set_rasterizer_mode :: (mode: Rasterizer_Mode) {
+    state := rasterizer_modes[mode];
+    glPolygonMode(GL_FRONT_AND_BACK, state.polygon_mode);
+    if state.cull_mode {
+        glEnable(GL_CULL_FACE);
+        glCullFace(state.cull_mode);
+    }
+    else {
+        glDisable(GL_CULL_FACE);
+    }
+    if state.scissor_enabled {
+        glEnable(GL_SCISSOR_TEST);
+    }
+    else {
+        glDisable(GL_SCISSOR_TEST);
+    }
+}
+
+set_depth_stencil_mode :: (mode: Depth_Stencil_Mode) {
+    state := depth_stencil_modes[mode];
+    if state.depth_enabled {
+        using state;
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(depth_write_mask);
+        glDepthFunc(depth_func);
+    }
+    else {
+        glDisable(GL_DEPTH_TEST);
+    }
+
+    if state.stencil_enabled {
+        glEnable(GL_STENCIL_TEST);
+        // @Incomplete: Rest of the procedures
+    }
+    else {
+        glDisable(GL_STENCIL_TEST);
+    }
 }
 
 draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex: s32 = 0) {
@@ -435,23 +545,13 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
         // @Incomplete: Multiple mip levels
         // @Incomplete: Depth_Stencil
         // @Incomplete: Compression textures
-
-        pixel_format: GLenum;
-
-        TYPE_TABLE :: GLenum.[GL_UNSIGNED_BYTE, GL_UNSIGNED_INT, GL_UNSIGNED_BYTE, GL_HALF_FLOAT, GL_FLOAT];
-        pixel_type := TYPE_TABLE[format];
-
-        if channels == {
-        case 1;
-            pixel_format = GL_RED;
-        case 2;
-            pixel_format = GL_RG;
-        case 3;
-            pixel_format = GL_RGB;
-        case 4;
-            pixel_format = GL_RGBA;
+        PIXEL_TYPE_TABLE :: GLenum.[GL_UNSIGNED_BYTE, GL_UNSIGNED_INT, GL_UNSIGNED_BYTE, GL_HALF_FLOAT, GL_FLOAT];
+        PIXEL_FORMAT_TABLE :: GLenum.[GL_RED, GL_RG, GL_RGB, GL_RGBA];
+        texture.pixel_type = PIXEL_TYPE_TABLE[format];
+        texture.pixel_format = PIXEL_FORMAT_TABLE[channels - 1];
+        if data {
+            glTextureSubImage2D(texture.texture, 0, 0, 0, width, height, texture.pixel_format, texture.pixel_type, data[0]);
         }
-        glTextureSubImage2D(texture.texture, 0, 0, 0, width, height, pixel_format, pixel_type, data[0]);
     }
     return texture;
 }
@@ -470,6 +570,76 @@ FS_EXTENSION :: ".spfs";
 CS_EXTENSION :: ".spcs";
 
 #scope_file
+init_preloaded_modes :: () {
+    // Depth Stencil Modes
+    {
+        using Depth_Stencil_Mode;
+        state := Depth_Stencil_State.{
+            depth_enabled = true,
+            depth_write_mask = GL_TRUE,
+            depth_func = GL_LEQUAL,
+            stencil_enabled = true
+        };
+        depth_stencil_modes[Depth_Stencil] = state;
+
+        state.depth_func = GL_GEQUAL;
+        depth_stencil_modes[Depth_reversed] = state;
+
+        state.depth_func = GL_LEQUAL;
+        state.depth_write_mask = GL_FALSE;
+        depth_stencil_modes[No_Depth_Mask] = state;
+
+        state.depth_enabled = false;
+        depth_stencil_modes[No_Depth] = state;
+
+        state.stencil_enabled = false;
+        depth_stencil_modes[No_Depth_Stencil] = state;
+
+        state.depth_enabled = true;
+        state.depth_write_mask = GL_TRUE;
+        state.depth_func = GL_LEQUAL;
+        depth_stencil_modes[No_Stencil] = state;
+    }
+
+    // Rasterizer Modes
+    {
+        using Rasterizer_Mode;
+        state := Rasterizer_State.{
+            fill_mode = GL_FILL,
+            cull_mode = GL_BACK,
+            scissor_enabled = true,
+        };
+        rasterizer_modes[Scissor] = state;
+
+        state.scissor_enabled = false;
+        rasterizer_modes[Default] = state;
+
+        state.cull_mode = GL_FRONT;
+        rasterizer_modes[Front_Cull] = state;
+
+        state.cull_mode = 0; // Special
+        rastizer_modes[No_Cull] = state;
+    }
+
+    // Blend Modes
+    {
+        using Blend_Mode;
+        state := Blend_State.{
+            enabled=true,
+            src_blend = GL_SRC_ALPHA,
+            dst_blend = GL_ONE_MINUS_SRC_ALPHA,
+            src_blend_alpha = GL_ONE,
+            dst_blend_alpha = GL_ZERO,
+            blend_op = GL_FUNC_ADD,
+            blend_op_alpha = GL_FUNC_ADD,
+        };
+
+        blend_modes[Alpha] = state;
+
+        state.enabled = false;
+        blend_modes[None] = state;
+    }
+}
 
 get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
     module: SpvReflectShaderModule;
@@ -582,6 +752,11 @@ using GL_State: struct {
     current_primitive_type := Primitive_Type.Triangle_List;
     current_index_stride: GLenum; // GL_UNSIGNED_SHORT, GL_UNSIGNED_INT
     current_swap_interval: u32; // We shouldn't trust that the default is 0 actually.
+
+    rasterizer_modes: [#run enum_count(Rasterizer_Mode)]Rasterizer_State;
+    blend_modes: [#run enum_count(Blend_Mode)]Blend_State;
+    depth_stencil_modes: [#run enum_count(Depth_Stencil_Mode)]Depth_Stencil_State;
+
 }
 #import "GL";
 DXC :: #import "dxc_compiler";

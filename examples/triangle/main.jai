@@ -9,6 +9,7 @@
 main :: () {
     window := create_window(1280, 720,"Gaco Triangle");
     Gaco.init(window);
+    defer Gaco.deinit();
     shader := Gaco.load_shader("triangle", .Vertex | .Fragment);
     vertices := Vector3.[
         .{0.0, 0.5, 0},
@@ -16,6 +17,7 @@ main :: () {
         .{-0.5, -0.5, 0}
     ];
     buffer := Gaco.create_buffer(vertices, .Vertex);
+
     Gaco.bind_buffer(buffer);
     Gaco.set_shader(shader);
     quit := false;
@@ -37,4 +39,4 @@ main :: () {
 #import "Window_Creation";
 #import "Input";
 #import "Math";
-Gaco :: #import,dir "../../Gaco";
+Gaco :: #import,dir "../../Gaco"(DEBUG=true, BACKEND=.OpenGL);

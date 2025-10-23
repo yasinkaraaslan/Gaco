@@ -199,7 +199,7 @@ draw_prepared_text :: (font: *Font, x: float, y: float, color := Vector4.{1, 1, 
         Gaco.update_buffer(*font.constant_buffer, *color);
     }
 
-    Gaco.set_blend_state(.Alpha);
+    Gaco.set_blend_mode(.Alpha);
     Gaco.set_shader(TextShader);
     Gaco.bind_buffer(TextVertexBuffer);
     Gaco.bind_buffer(TextIndexBuffer);
@@ -210,7 +210,7 @@ draw_prepared_text :: (font: *Font, x: float, y: float, color := Vector4.{1, 1, 
     Gaco.bind_buffer(font.constant_buffer, 0, .Fragment);
     Gaco.bind_texture(font.texture, 0);
     Gaco.draw(true, font.num_chars_to_render * 6);
-    Gaco.set_blend_state(.None);
+    Gaco.set_blend_mode(.None);
 }
 
 draw_text :: inline (font: *Font, text: string, x: s64, y: s64, color := Vector4.{1,1,1,1}) {

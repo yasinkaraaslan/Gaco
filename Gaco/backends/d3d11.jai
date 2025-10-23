@@ -144,7 +144,7 @@ init :: (window: HWND, wanted_msaa: u32 = 4) {
 
     // There are very few cases where one wouldn't want depth testing.
     // So we enable it by default.
-    set_depth_stencil_state(.Depth_Stencil);
+    set_depth_stencil_mode(.Depth_Stencil);
 }
 
 deinit :: () {
@@ -341,7 +341,7 @@ update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 
 
 }
 
-update_texture :: inline (using texture: *Texture, data: *void, subresource: u32 = 0) {
+update_texture :: (using texture: *Texture, data: *void, subresource: u32 = 0) {
     row := width * stride;
     ID3D11DeviceContext_UpdateSubresource(device_context, texture2d, subresource, null, data, row, row * height);
 }
@@ -422,19 +422,6 @@ destroy_texture :: (texture: *Texture) {
     texture.width, texture.height, texture.stride = 0;
     texture.depth = 1;
     texture.flags = .None;
-}
-
-// @@
-destroy_blend_state :: (blend_state: *Blend_State) {
-    safe_release_and_reset(*blend_state.state);
-}
-
-destroy_rasterizer_state :: (rasterizer_state: *Rasterizer_State) {
-    safe_release_and_reset(*rasterizer_state.state);
-}
-
-destroy_depth_stencil_state :: (depth_stencil_state: *Depth_Stencil_State) {
-    safe_release_and_reset(*depth_stencil_state.state);
 }
 
 destroy_shader :: (using shader: *Shader) {
@@ -586,16 +573,16 @@ set_viewport :: (x: float, y: float, width: float, height: float, near_depth := 
     ID3D11DeviceContext_RSSetViewports(device_context, 1, *vp);
 }
 
-set_blend_state :: (state: Blend_Mode) {
-    ID3D11DeviceContext_OMSetBlendState(device_context, blend_modes[state], null, SampleMask=0xFFFFFFFF);
+set_blend_mode :: (mode: Blend_Mode) {
+    ID3D11DeviceContext_OMSetBlendState(device_context, blend_modes[mode], null, SampleMask=0xFFFFFFFF);
 }
 
-set_rasterizer_state :: (state: Rasterizer_Mode) {
-    ID3D11DeviceContext_RSSetState(device_context, rasterizer_modes[state]);
+set_rasterizer_mode :: (mode: Rasterizer_Mode) {
+    ID3D11DeviceContext_RSSetState(device_context, rasterizer_modes[mode]);
 }
 
-set_depth_stencil_state :: (state: Depth_Stencil_Mode) {
-    ID3D11DeviceContext_OMSetDepthStencilState(device_context, depth_stencil_modes[state], StencilRef=0xFF);
+set_depth_stencil_mode :: (mode: Depth_Stencil_Mode) {
+    ID3D11DeviceContext_OMSetDepthStencilState(device_context, depth_stencil_modes[mode], StencilRef=0xFF);
 }
 // base_vertex only makes sense in indexed drawing.
 draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex: s32 = 0) {
@@ -701,6 +688,7 @@ resize :: (width: int, height: int) -> window_render_target: *Render_Target {
 // Data is an array for texture arrays and mipmapping.
 // Index = mip slice + (array slice * mip levels)
 // Image 0 mip data | Image 1 mip data | ...
+
 create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None) -> Texture {
     generate_mips := (flags & .Generate_Mips) && mip_levels_or_msaa > 1;
 
@@ -997,7 +985,6 @@ using D3D11_State: struct {
     window_render_target: Render_Target;
     // bound_render_target: *Render_Target;
 
-    // :CreateStates
     rasterizer_modes: [#run enum_count(Rasterizer_Mode)]*ID3D11RasterizerState;
     blend_modes: [#run enum_count(Blend_Mode)]*ID3D11BlendState;
 
@@ -1062,7 +1049,6 @@ init_preloaded_modes :: () {
 
 
         ds_desc.StencilEnable = .FALSE;
-        // Should we disable other stencil stuff too?
         ID3D11Device_CreateDepthStencilState(device, *ds_desc, *depth_stencil_modes[No_Depth_Stencil]);
 
         ds_desc.DepthEnable = .TRUE;

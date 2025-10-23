@@ -12,7 +12,7 @@ gr_init :: () {
     procs := Draw_Procs.{
         texture_load_from_memory = gr_texture_load_from_memory,
         set_scissor = gr_set_scissor,
-        clear_scissor = #bake_arguments Gaco.set_rasterizer_state(state=.Default),
+        clear_scissor = #bake_arguments Gaco.set_rasterizer_mode(state=.Default),
         set_shader_for_color = gr_set_shader_for_color,
         set_shader_for_images = gr_set_shader_for_images,
 
@@ -32,12 +32,12 @@ gr_init :: () {
 
 gr_set_shader_for_color :: (enable_blend := false) {
 
-    if enable_blend  Gaco.set_blend_state(.Alpha);
+    if enable_blend  Gaco.set_blend_mode(.Alpha);
     Gaco.set_shader(ColorShader);
 }
 
 gr_set_shader_for_images :: (texture: *Gaco.Texture) {
-    Gaco.set_blend_state(.Alpha);
+    Gaco.set_blend_mode(.Alpha);
     Gaco.bind_texture(texture, 0);
     Gaco.set_shader(ImageShader);
 }
@@ -69,11 +69,11 @@ gr_immediate_quad :: (p0: Vector2, p1: Vector2, p2: Vector2, p3: Vector2, color 
 
 gr_immediate_flush :: () {
     if VerticesToDraw {
-        Gaco.set_blend_state(.Alpha);
-        defer Gaco.set_blend_state(.None);
+        Gaco.set_blend_mode(.Alpha);
+        defer Gaco.set_blend_mode(.None);
 
-        Gaco.set_rasterizer_state(.No_Cull);
-        defer Gaco.set_rasterizer_state(.Default);
+        Gaco.set_rasterizer_mode(.No_Cull);
+        defer Gaco.set_rasterizer_mode(.Default);
 
         Gaco.write_buffer(*VerticesBuffer, VerticesToDraw);
         Gaco.bind_buffer(VerticesBuffer);
@@ -94,7 +94,7 @@ gr_texture_load_from_memory :: (texture: *Gaco.Texture, memory: []u8, srgb: bool
 }
 
 gr_set_scissor :: (x0: s32, y0: s32, x1: s32, y1: s32) {
-    Gaco.set_rasterizer_state(.Scissor);
+    Gaco.set_rasterizer_mode(.Scissor);
     rect: Gaco.Rect;
     rect.x = x0;
     rect.y = y0 ;
