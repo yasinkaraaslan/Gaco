@@ -24,6 +24,7 @@ Texture :: struct {
     width, height, stride: u32;
     depth: u32 = 1;
     flags: Texture_Flags;
+    pbo_size: u32;
 }
 
 Render_Target :: struct {
@@ -196,6 +197,23 @@ unmap_buffer :: (buffer: *Buffer) {
     }
 }
 
+// This is actually here for api compatibility with D3D11.
+// The 'Texture' we have here is a pixel buffer object. So we assert that before doing anything.
+map_texture :: (texture: *Texture, flags: Map_Flags, subresource: u32 = 0) -> *void {
+    assert(texture.flags & .Copy != 0, "Only copy buffers can be mapped to read.");
+    access: GLbitfield;
+    if flags & .Read  access |= GL_MAP_READ_BIT;
+    if flags & .Write access |= GL_MAP_WRITE_BIT;
+    return glMapNamedBufferRange(texture.object, 0, texture.pbo_size, access);
+}
+
+unmap_texture :: (texture: *Texture, subresource: u32 = 0) {
+    assert(texture.flags & .Copy != 0);
+    if glUnmapNamedBuffer(texture.object) == GL_FALSE {
+        log_error("[Gaco] Couldn't unmap texture!");
+    }
+}
+
 update_buffer :: (buffer: *Buffer, data: *void) {
     glNamedBufferSubData(buffer.object, 0, buffer.size, data);
 }
@@ -226,10 +244,21 @@ copy_buffer :: (from: *Buffer, to: *Buffer) {
 
 destroy_buffer :: (buffer: *Buffer) {
     glDeleteBuffers(1, *buffer.object);
+    buffer.object = 0;
 }
 
 destroy_texture :: (texture: *Texture) {
     glDeleteTextures(1, *texture.object);
+    texture.object = 0;
+}
+
+destroy_shader :: (shader: *Shader) {
+    glDeleteProgram(shader.program);
+    shader.program = 0;
+    if shader.type & .Vertex {
+        glDeleteVertexArrays(1, *shader.input_vao);
+        shader.input_vao = 0;
+    }
 }
 
 compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, bool {
@@ -471,7 +500,7 @@ draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex: s32 = 0) {
         glDrawElementsBaseVertex(current_primitive_mode, count, format, cast(*void)(current_index_stride * first), base_vertex);
     }
     else {
-        glDrawArrays(mode, cast(GLint)first, count);
+        glDrawArrays(current_primitive_mode, cast(GLint)first, count);
     }
 }
 
@@ -533,8 +562,9 @@ destroy_render_target :: (render_target: *Render_Target) {
     glDeleteFramebuffers(1, *render_target.framebuffer);
 }
 
-resize :: (width: int, height: int) {
+resize :: (width: int, height: int) -> window_render_target: Render_Target {
     glViewport(0, 0, cast(GLuint)width, cast(GLuint)height);
+    return .{}; // @Incomplete: Use our own framebuffer instead of the default one
 }
 
 create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None) -> Texture {
@@ -542,36 +572,6 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
     GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_ARB :: 0x8E8D;
     GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_ARB :: 0x8E8E;
     GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_ARB :: 0x8E8F;
-
-    target: GLuint = GL_TEXTURE_2D;
-
-    msaa: u32 = 1;
-    mip_levels: u32 = 1;
-    array_count: u32 = 1;
-    depth: u32 = 1;
-
-    if flags & .Multisample
-        msaa = mip_levels_or_msaa;
-    else
-        mip_levels = mip_levels_or_msaa;
-
-    if flags & .Is_3D {
-        target = GL_TEXTURE_3D;
-        depth = array_count_or_depth;
-    }
-    else if flags & .Cubemap {
-        // if array_count_or_depth > 6 {
-            target = GL_TEXTURE_CUBE_MAP_ARRAY;
-        // }
-        // else {
-            // target = GL_TEXTURE_CUBE_MAP;
-        // }
-    }
-    else if array_count_or_depth > 1 {
-        if flags & .Multisample target = GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
-        else                         target = GL_TEXTURE_2D_ARRAY;
-    }
-    else if flags & .Multisample target = GL_TEXTURE_2D_MULTISAMPLE;
 
     formats: [4]GLenum;
     bytes_per_block := channels;
@@ -601,43 +601,82 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
         formats = .[GL_R8, GL_RG8, 0, GL_RGBA8];
         // @Incomplete: flags & .Depth_Stencil
     case;
-        log_error("[Gaco] Unknown teUIxture format: %", format);
+        log_error("[Gaco] Unknown texture format: %", format);
         return .{};
     }
-    if !internal_format {
-        internal_format = formats[channels - 1];
-        if !internal_format {
-            log_error("[Gaco] Error while creating texture: % channels with format % is not compatible.", channels, format);
-            return .{};
-        }
-    }
 
-    texture := Texture.{width=width, height=height, stride=bytes_per_block};
-    PIXEL_TYPE_TABLE :: GLenum.[GL_UNSIGNED_BYTE, GL_UNSIGNED_INT, GL_UNSIGNED_BYTE, GL_HALF_FLOAT, GL_FLOAT];
-    PIXEL_FORMAT_TABLE :: GLenum.[GL_RED, GL_RG, GL_RGB, GL_RGBA];
-    texture.pixel_type = PIXEL_TYPE_TABLE[format];
-    texture.pixel_format = PIXEL_FORMAT_TABLE[channels - 1];
-    glCreateTextures(target, 1, *texture.object);
-
-    if flags & .Is_3D {
-        glTextureStorage3D(texture.object, mip_levels, internal_format, width, height, array_count_or_depth);
+    texture := Texture.{width=width, height=height, stride=bytes_per_block,flags=flags};
+    if flags & .Copy {
+        size := width * height * bytes_per_block;
+        glCreateBuffers(1, *texture.object);
+        glNamedBufferStorage(texture.object, size, null, GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT);
+        texture.pbo_size = size;
     }
     else {
-        glTextureStorage2D(texture.object, mip_levels, internal_format, width, height);
 
-        // NOTE(Yasin): We will probably overhaul this before the release.
-        // @Incomplete: Arrays
-        // @Incomplete: Depth_Stencil
-        // @Incomplete: Compression textures
-        if data {
-            update_texture(*texture, data[0]);
+        target: GLuint = GL_TEXTURE_2D;
+
+        msaa: u32 = 1;
+        mip_levels: u32 = 1;
+        array_count: u32 = 1;
+        depth: u32 = 1;
+        if flags & .Multisample
+            msaa = mip_levels_or_msaa;
+        else
+            mip_levels = mip_levels_or_msaa;
+
+        if flags & .Is_3D {
+            target = GL_TEXTURE_3D;
+            depth = array_count_or_depth;
         }
-    }
+        else if flags & .Cubemap {
+            // if array_count_or_depth > 6 {
+                target = GL_TEXTURE_CUBE_MAP_ARRAY;
+            // }
+            // else {
+                // target = GL_TEXTURE_CUBE_MAP;
+            // }
+        }
+        else if array_count_or_depth > 1 {
+            if flags & .Multisample target = GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
+            else                         target = GL_TEXTURE_2D_ARRAY;
+        }
+        else if flags & .Multisample target = GL_TEXTURE_2D_MULTISAMPLE;
 
-    if flags & .Generate_Mips {
-        glGenerateTextureMipmap(texture.object);
-    }
+        if !internal_format {
+            internal_format = formats[channels - 1];
+            if !internal_format {
+                log_error("[Gaco] Error while creating texture: % channels with format % is not compatible.", channels, format);
+                return .{};
+            }
+        }
 
+        PIXEL_TYPE_TABLE :: GLenum.[GL_UNSIGNED_BYTE, GL_UNSIGNED_INT, GL_UNSIGNED_BYTE, GL_HALF_FLOAT, GL_FLOAT];
+        PIXEL_FORMAT_TABLE :: GLenum.[GL_RED, GL_RG, GL_RGB, GL_RGBA];
+        texture.pixel_type = PIXEL_TYPE_TABLE[format];
+        texture.pixel_format = PIXEL_FORMAT_TABLE[channels - 1];
+        glCreateTextures(target, 1, *texture.object);
+
+        if flags & .Is_3D {
+            glTextureStorage3D(texture.object, mip_levels, internal_format, width, height, array_count_or_depth);
+        }
+        else {
+            glTextureStorage2D(texture.object, mip_levels, internal_format, width, height);
+
+            // NOTE(Yasin): We will probably overhaul this before the release.
+            // @Incomplete: Arrays
+            // @Incomplete: Depth_Stencil
+            // @Incomplete: Compression textures
+            if data {
+                update_texture(*texture, data[0]);
+            }
+        }
+
+        if flags & .Generate_Mips {
+            glGenerateTextureMipmap(texture.object);
+        }
+
+    }
     return texture;
 }
 
@@ -645,13 +684,20 @@ bind_texture :: (texture: Texture, slot: u32) {
     glBindTextureUnit(slot, texture.object);
 }
 
-copy_texture :: (from: *Texture, to: *Texture) {
-    // @Incomplete: Only 2D textures.
-    glCopyImageSubData(from.object, GL_TEXTURE_2D, 0, 0, 0, 0, to.object, GL_TEXTURE_2D, 0, 0, 0, 0, from.width, from.height, from.depth);
+copy_texture :: inline (from: *Texture, to: *Texture) {
+    copy_texture(from, to, .{0, 0, cast(s32)from.width, cast(s32)from.height});
 }
 
 copy_texture :: (from: *Texture, to: *Texture, source_rect: Rect) {
-    glCopyImageSubData(from.object, GL_TEXTURE_2D, 0, source_rect.x, source_rect.y, 0, to.object, GL_TEXTURE_2D, 0, 0, 0, 0, cast(u32)source_rect.width, cast(u32)source_rect.height, 1);
+    if to.flags & .Copy {
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
+        glReadPixels(source_rect.x, source_rect.y, cast(u32)source_rect.width, cast(u32)source_rect.height, from.pixel_format, from.pixel_type, null);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    }
+    else {
+        // @Incomplete: Only 2D textures.
+        glCopyImageSubData(from.object, GL_TEXTURE_2D, 0, source_rect.x, source_rect.y, 0, to.object, GL_TEXTURE_2D, 0, 0, 0, 0, cast(u32)source_rect.width, cast(u32)source_rect.height, 1);
+    }
 }
 
 create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Wrap, max_anisotropy: u32 = 1, comparison := false) -> Sampler {
@@ -674,6 +720,11 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
 
 bind_sampler :: (sampler: Sampler, slot: u32) {
     glBindSampler(slot, sampler.object);
+}
+
+destroy_sampler :: (sampler: *Sampler) {
+    glDeleteSamplers(1, *sampler.object);
+    sampler.object = 0;
 }
 
 #scope_module

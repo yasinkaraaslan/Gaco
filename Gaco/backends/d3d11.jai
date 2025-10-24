@@ -258,19 +258,15 @@ bind_buffer :: (buffer: Buffer(.Index)) {
 }
 
 bind_buffer :: (buffer: Buffer(.Constant), slot: u32 = 0) {
-    if shader_state & .Vertex
-        ID3D11DeviceContext_VSSetConstantBuffers(device_context, slot, 1, *buffer.buffer);
-    if shader_state & .Fragment
-        ID3D11DeviceContext_PSSetConstantBuffers(device_context, slot, 1, *buffer.buffer);
+    ID3D11DeviceContext_VSSetConstantBuffers(device_context, slot, 1, *buffer.buffer);
+    ID3D11DeviceContext_PSSetConstantBuffers(device_context, slot, 1, *buffer.buffer);
     if shader_state & .Compute
         ID3D11DeviceContext_CSSetConstantBuffers(device_context, slot, 1, *buffer.buffer);
 }
 
 bind_buffer :: (buffer: Buffer(.Structured), slot: u32 = 0) {
-    if shader_state & .Vertex
-        ID3D11DeviceContext_VSSetShaderResources(device_context, slot, 1, *buffer.srv);
-    if shader_state & .Fragment
-        ID3D11DeviceContext_PSSetShaderResources(device_context, slot, 1, *buffer.srv);
+    ID3D11DeviceContext_VSSetShaderResources(device_context, slot, 1, *buffer.srv);
+    ID3D11DeviceContext_PSSetShaderResources(device_context, slot, 1, *buffer.srv);
     if shader_state & .Compute
         ID3D11DeviceContext_CSSetShaderResources(device_context, slot, 1, *buffer.srv);
 }
@@ -656,17 +652,17 @@ destroy_render_target :: (render_target: *Render_Target) {
     safe_release_and_reset(*render_target.depth_stencil_view);
 }
 
-resize :: (width: int, height: int) -> window_render_target: *Render_Target {
+resize :: (width: int, height: int) -> window_render_target: Render_Target {
     // This doesn't seem to be necessary, but just to be safe...
     set_render_target(.{});
     destroy_render_target(*window_render_target);
 
     hr := IDXGISwapChain_ResizeBuffers(swap_chain, 0, cast(u32)width, cast(u32)height, .UNKNOWN, 0);
-    check_hr("IDXGISwapChain.ResizeBuffers", #code `return null);
+    check_hr("IDXGISwapChain.ResizeBuffers", #code `return .{});
 
     back_buffer: Texture;
     hr = IDXGISwapChain_GetBuffer(swap_chain, 0, *uid(ID3D11Texture2D_UUID), xx *back_buffer.texture2d);
-    check_hr("IDXGISwapChain.GetBuffer", #code `return null);
+    check_hr("IDXGISwapChain.GetBuffer", #code `return .{});
 
     depth_stencil_texture := create_texture(.[], cast(u32)width, cast(u32)height, 1, 1, msaa, flags=.Depth_Stencil | .Multisample);
     window_render_target = create_render_target(.[back_buffer], depth_stencil_texture);
@@ -677,7 +673,7 @@ resize :: (width: int, height: int) -> window_render_target: *Render_Target {
     set_render_target(*window_render_target);
     set_viewport(0, 0, cast(float)width, cast(float)height);
 
-    return *window_render_target;
+    return window_render_target;
 }
 
 // @@ Data could be either []*u8 or [][]u8.
