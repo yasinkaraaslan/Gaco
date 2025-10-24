@@ -12,7 +12,7 @@ gr_init :: () {
     procs := Draw_Procs.{
         texture_load_from_memory = gr_texture_load_from_memory,
         set_scissor = gr_set_scissor,
-        clear_scissor = #bake_arguments Gaco.set_rasterizer_mode(state=.Default),
+        clear_scissor = #bake_arguments Gaco.set_rasterizer_mode(mode=.Default),
         set_shader_for_color = gr_set_shader_for_color,
         set_shader_for_images = gr_set_shader_for_images,
 
@@ -77,7 +77,7 @@ gr_immediate_flush :: () {
 
         Gaco.write_buffer(*VerticesBuffer, VerticesToDraw);
         Gaco.bind_buffer(VerticesBuffer);
-        Gaco.bind_buffer(WindowProjConstantBuffer, 0, .Vertex);
+        Gaco.bind_buffer(WindowProjConstantBuffer, 0);
         Gaco.draw(false, cast(u32)VerticesToDraw.count);
         array_reset(*VerticesToDraw);
     }

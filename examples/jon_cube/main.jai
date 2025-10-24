@@ -111,7 +111,7 @@ main :: () {
 
       Gaco.bind_buffer(vertex_buffer);
       Gaco.bind_buffer(index_buffer);
-      Gaco.bind_buffer(transform_cb, bind_to=.Vertex);
+      Gaco.bind_buffer(transform_cb);
       Gaco.bind_texture(texture, 0);
 
       draw_cube(.{0, 0, -3}, *transform_cb, proj, indices.count);

@@ -39,7 +39,7 @@ main :: () {
     Gaco.bind_buffer(skybox_index_buffer);
     Gaco.bind_texture(skybox_texture, 0);
 
-    Gaco.bind_buffer(transform_buffer, 0, .Vertex);
+    Gaco.bind_buffer(transform_buffer, 0);
 
     quit := false;
     while !quit {

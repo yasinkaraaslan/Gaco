@@ -26,7 +26,7 @@ Fragment_Input vertex_main(Vertex_Input input) {
 
 // Fragment Shader
 
-cbuffer Fragment_CBuffer : register(b0) {
+cbuffer Fragment_CBuffer : register(b2) {
     float4 text_color : COLOR;
 }
 
