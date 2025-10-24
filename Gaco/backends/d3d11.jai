@@ -729,6 +729,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
     if format == {
     case .U32;
         formats = DXGI_FORMAT.[.R32_UINT, .R32G32_UINT, .R32G32B32_UINT, .R32G32B32A32_UINT];
+        bytes_per_block *= 4;
     case .SRGB;
         formats[3] = .R8G8B8A8_UNORM_SRGB;
     case .Float16;
@@ -768,7 +769,6 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
     }
 
     // Create the thing
-
     texture := Texture.{width=width, height=height, stride=bytes_per_block, flags=flags};
 
     init_data: []D3D11_SUBRESOURCE_DATA;
@@ -922,18 +922,13 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
         // We override the filter, there is no such requirement in OpenGL.
         d3d11_filter = .ANISOTROPIC;
     }
-    else if #complete filtering == {
-    case .Linear;  d3d11_filter = .MIN_MAG_MIP_LINEAR;
-    case .Nearest; d3d11_filter = .MIN_MAG_MIP_POINT;
+    else {
+        FILTER_TABLE :: D3D11_FILTER.[.MIN_MAG_MIP_LINEAR, .MIN_MAG_MIP_POINT];
+        d3d11_filter = FILTER_TABLE[filtering];
     }
+    ADDRESS_MODE_TABLE :: D3D11_TEXTURE_ADDRESS_MODE.[.WRAP, .MIRROR, .CLAMP, .BORDER];
+    address_mode := ADDRESS_MODE_TABLE[edge_handling];
 
-    address_mode: D3D11_TEXTURE_ADDRESS_MODE;
-    if #complete edge_handling == {
-    case .Wrap;   address_mode = .WRAP;
-    case .Mirror; address_mode = .MIRROR;
-    case .Clamp;  address_mode = .CLAMP;
-    case .Border; address_mode = .BORDER;
-    }
     if comparison {
         // Comparison and non-comparison filters are 0x80 apart.
         d3d11_filter += 0x80;

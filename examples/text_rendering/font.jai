@@ -20,7 +20,7 @@ fonts_init :: () {
     IndexBuffer = Gaco.create_buffer(index_data, .Index, .Immutable);
 
     // This should be replaced in the next resize call.
-    ConstantBuffer = Gaco.create_buffer(Matrix4_Identity, .Constant);
+    VertexConstantBuffer = Gaco.create_buffer(Matrix4_Identity, .Constant);
 }
 
 load_font :: (filename: string, size: u32) -> Font {
@@ -52,7 +52,6 @@ load_font :: (filename: string, size: u32) -> Font {
     }
 
     font.texture = Gaco.create_texture(.[], texture_width, texture_height, 1);
-
 
     x : u32;
     for 32..126 {
@@ -99,7 +98,7 @@ load_font :: (filename: string, size: u32) -> Font {
     }
 
     proj : Vector4;
-    font.constant_buffer = Gaco.create_buffer(proj, .Constant);
+    font.fragment_cb = Gaco.create_buffer(proj, .Constant);
     return font;
 }
 
@@ -148,9 +147,7 @@ prepare_quads_for_text :: (using font: *Font, text: string, position: Vector2) -
     // @Incomplete: Handle this situation
     assert(num_chars <= MAX_CHARACTERS);
 
-    mapped := Gaco.map_buffer(*VertexBuffer, .Write);
-    memcpy(mapped, vertices.data, vertices.count * size_of(Text_Vertex_Data));
-    Gaco.unmap_buffer(*VertexBuffer);
+    Gaco.write_buffer(*VertexBuffer, vertices);
     return num_chars;
 }
 
@@ -164,23 +161,25 @@ fonts_window_resize :: (width: int, height: int) {
     proj._22 = -2.0 / xx height;
     proj._24 = 1;
 
-    Gaco.update_buffer(*ConstantBuffer, *proj);
+    Gaco.update_buffer(*VertexConstantBuffer, *proj);
 }
 
 draw_text :: (using font: *Font, text: string, position: Vector2, color := Vector4.{1,1,1,1}) {
     num_chars := prepare_quads_for_text(font, text, position);
+
     Gaco.set_blend_mode(.Alpha);
+    Gaco.set_rasterizer_mode(.No_Cull);
 
     Gaco.set_shader(Shader);
     Gaco.bind_buffer(VertexBuffer);
     Gaco.bind_buffer(IndexBuffer);
-    Gaco.bind_buffer(ConstantBuffer, bind_to=.Vertex);
-    Gaco.bind_buffer(constant_buffer, bind_to=.Fragment);
+    Gaco.bind_buffer(fragment_cb, 1);
+    Gaco.bind_buffer(VertexConstantBuffer, 0);
     Gaco.bind_texture(texture, 0);
 
     if color != selected_color {
         selected_color = color;
-        Gaco.update_buffer(*constant_buffer, *color);
+        Gaco.update_buffer(*fragment_cb, *color);
     }
 
     Gaco.draw(true, num_chars * 6);
@@ -192,7 +191,7 @@ Font :: struct {
     face: FT_Face;
     size: u32;
     ascender: float;
-    constant_buffer: Gaco.Buffer(.Constant);
+    fragment_cb: Gaco.Buffer(.Constant);
     glyphs: [128]Glyph_Info;
 
     texture: Gaco.Texture;
@@ -214,7 +213,7 @@ Text_Vertex_Data :: struct {
 
 VertexBuffer: Gaco.Buffer(.Vertex);
 IndexBuffer: Gaco.Buffer(.Index);
-ConstantBuffer: Gaco.Buffer(.Constant);
+VertexConstantBuffer: Gaco.Buffer(.Constant);
 FtLibrary: FT_Library;
 Shader: Gaco.Shader;
 

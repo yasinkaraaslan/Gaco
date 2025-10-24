@@ -14,17 +14,17 @@ Buffer :: struct (type: Buffer_Type) {
 }
 
 Sampler :: struct {
-    sampler: GLuint;
+    object: GLuint;
 }
 
 Texture :: struct {
-    texture: GLuint;
+    object: GLuint;
     pixel_format: GLuint;
     pixel_type: GLuint;
     width, height, stride: u32;
-    depth: u32;
     flags: Texture_Flags;
 }
+
 Render_Target :: struct {
 }
 
@@ -60,7 +60,7 @@ Depth_Stencil_State :: struct {
 }
 
 is_empty :: (texture: Texture) -> bool {
-    return glIsTexture(texture.texture) == GL_TRUE;
+    return glIsTexture(texture.object) == GL_TRUE;
 }
 
 is_empty :: (using shader: Shader) -> bool {
@@ -83,6 +83,11 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
     gl_create_context(window, 4, 6, false, DEBUG, cast(s32)wanted_msaa);
     gl_load(*gl);
 
+    major, minor := gl_get_version();
+    if major < 4 || minor < 5 { // We support 4.5
+        log_error("Unsupported GL version: %.%, need at least 4.5", major, minor);
+    }
+
     main_window = window;
 
     #if DEBUG {
@@ -91,20 +96,15 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
         gl_enable_debug_output(break_on_error=true);
     }
     glFrontFace(GL_CW); // We use clockwise for both OpenGL and D3D11
+    glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE); // Why does lower left work??
 
-
-    // @Cleanup: These should be in preloaded modes.
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_CULL_FACE);
-
-
+    // So we can bind vertex buffers without setting a shader.
     glCreateVertexArrays(1, *empty_stupid_vao);
     glBindVertexArray(empty_stupid_vao);
 
     glCreateProgramPipelines(1, *global_pipeline);
     glBindProgramPipeline(global_pipeline);
     init_preloaded_modes();
-
 }
 
 deinit :: () {
@@ -186,14 +186,16 @@ update_buffer :: (buffer: *Buffer, data: *void) {
 }
 
 update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 = 0) {
+    glPixelStorei(GL_UNPACK_ALIGNMENT, cast(s32)texture.stride);
     // @Incomplete: This is wrong for texture arrays
-    glTextureSubImage2D(texture.texture, cast(s32)subresource, rect.x, rect.y, cast(u32)rect.width, cast(u32)rect.height, texture.pixel_format, texture.pixel_type, data);
+    glTextureSubImage2D(texture.object, cast(s32)subresource, rect.x, rect.y, cast(u32)rect.width, cast(u32)rect.height, texture.pixel_format, texture.pixel_type, data);
 }
 
 update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 0) {
 }
 
 update_texture :: inline (using texture: *Texture, data: *void, subresource: u32 = 0) {
+    update_texture(texture, data, .{0, 0, cast(s32)width, cast(s32)height}, subresource);
 }
 
 write_buffer :: (buffer: *Buffer, data: *void, size: int) {
@@ -361,7 +363,7 @@ set_shader :: (shader: Shader) {
 }
 
 set_scissor :: (using rect: Rect) {
-    glScissor(x, y, width, height);
+    glScissor(x, y, cast(u32)width, cast(u32)height);
 }
 
 set_viewport :: (x: float, y: float, width: float, height: float, near_depth := 0.0, far_depth := 1.0) {
@@ -439,7 +441,7 @@ draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex: s32 = 0) {
 
     #if indexed {
         format := ifx current_index_stride == 4 cast(u32)GL_UNSIGNED_INT else cast(u32)GL_UNSIGNED_SHORT;
-        glDrawElementsBaseVertex(mode, count, format, cast(*void) (current_index_stride * first), base_vertex);
+        glDrawElementsBaseVertex(mode, count, format, cast(*void) cast(s64)(current_index_stride * first), base_vertex);
     }
     else {
         glDrawArrays(mode, cast(GLint)first, count);
@@ -479,6 +481,9 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
 
     msaa: u32 = 1;
     mip_levels: u32 = 1;
+    array_count: u32 = 1;
+    depth: u32 = 1;
+
     if flags & .Multisample
         msaa = mip_levels_or_msaa;
     else
@@ -486,14 +491,15 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
 
     if flags & .Is_3D {
         target = GL_TEXTURE_3D;
+        depth = array_count_or_depth;
     }
     else if flags & .Cubemap {
-        if array_count_or_depth > 6 {
+        // if array_count_or_depth > 6 {
             target = GL_TEXTURE_CUBE_MAP_ARRAY;
-        }
-        else {
-            target = GL_TEXTURE_CUBE_MAP;
-        }
+        // }
+        // else {
+            // target = GL_TEXTURE_CUBE_MAP;
+        // }
     }
     else if array_count_or_depth > 1 {
         if flags & .Multisample target = GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
@@ -502,17 +508,21 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
     else if flags & .Multisample target = GL_TEXTURE_2D_MULTISAMPLE;
 
     formats: [4]GLenum;
+    bytes_per_block := channels;
     internal_format: GLenum;
     if format == {
     case .U32;
         formats = .[GL_R32UI, GL_RG32UI, GL_RGB32UI, GL_RGBA32UI];
+        bytes_per_block *= 4;
     case .SRGB;
         // We do not specify GL_SRGB8 because D3D11 doesn't support it.
         formats[3] = GL_SRGB8_ALPHA8;
     case .Float16;
         formats = .[GL_R16F, GL_RG16F, GL_RGB16F, GL_RGBA16F];
+        bytes_per_block *= 2;
     case .Float32;
         formats = .[GL_R32F, GL_RG32F, GL_RGB32F, GL_RGBA32F];
+        bytes_per_block *= 4;
     case .BC6U;
         internal_format = GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_ARB;
     case .BC6S;
@@ -523,10 +533,10 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
         internal_format = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_ARB;
     case .Default;
         formats = .[GL_R8, GL_RG8, 0, GL_RGBA8];
-    case;
-        log_error("[Gaco] Unknown texture format: %", format);
-        return .{};
         // @Incomplete: flags & .Depth_Stencil
+    case;
+        log_error("[Gaco] Unknown teUIxture format: %", format);
+        return .{};
     }
     if !internal_format {
         internal_format = formats[channels - 1];
@@ -536,32 +546,59 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
         }
     }
 
-    texture: Texture;
-    glCreateTextures(target, 1, *texture.texture);
+    texture := Texture.{width=width, height=height, stride=bytes_per_block};
+    PIXEL_TYPE_TABLE :: GLenum.[GL_UNSIGNED_BYTE, GL_UNSIGNED_INT, GL_UNSIGNED_BYTE, GL_HALF_FLOAT, GL_FLOAT];
+    PIXEL_FORMAT_TABLE :: GLenum.[GL_RED, GL_RG, GL_RGB, GL_RGBA];
+    texture.pixel_type = PIXEL_TYPE_TABLE[format];
+    texture.pixel_format = PIXEL_FORMAT_TABLE[channels - 1];
+    glCreateTextures(target, 1, *texture.object);
+
     if flags & .Is_3D {
-        glTextureStorage3D(texture.texture, mip_levels, internal_format, width, height, array_count_or_depth);
+        glTextureStorage3D(texture.object, mip_levels, internal_format, width, height, array_count_or_depth);
     }
     else {
-        glTextureStorage2D(texture.texture, mip_levels, internal_format, width, height);
+        glTextureStorage2D(texture.object, mip_levels, internal_format, width, height);
 
         // NOTE(Yasin): We will probably overhaul this before the release.
-
-        // @Incomplete: Multiple mip levels
+        // @Incomplete: Arrays
         // @Incomplete: Depth_Stencil
         // @Incomplete: Compression textures
-        PIXEL_TYPE_TABLE :: GLenum.[GL_UNSIGNED_BYTE, GL_UNSIGNED_INT, GL_UNSIGNED_BYTE, GL_HALF_FLOAT, GL_FLOAT];
-        PIXEL_FORMAT_TABLE :: GLenum.[GL_RED, GL_RG, GL_RGB, GL_RGBA];
-        texture.pixel_type = PIXEL_TYPE_TABLE[format];
-        texture.pixel_format = PIXEL_FORMAT_TABLE[channels - 1];
         if data {
-            glTextureSubImage2D(texture.texture, 0, 0, 0, width, height, texture.pixel_format, texture.pixel_type, data[0]);
+            update_texture(*texture, data[0]);
         }
     }
+
+    if flags & .Generate_Mips {
+        glGenerateTextureMipmap(texture.object);
+    }
+
     return texture;
 }
 
 bind_texture :: (texture: Texture, slot: u32) {
-    glBindTextureUnit(slot, texture.texture);
+    glBindTextureUnit(slot, texture.object);
+}
+
+create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Wrap, max_anisotropy: u32 = 1, comparison := false) -> Sampler {
+    sampler: Sampler;
+    glCreateSamplers(1, *sampler.object);
+    FILTER_TABLE :: GLint.[GL_LINEAR, GL_NEAREST];
+    EDGE_TABLE :: GLint.[GL_REPEAT, GL_MIRRORED_REPEAT, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_BORDER];
+
+    gl_filtering := FILTER_TABLE[filtering];
+    gl_edge := EDGE_TABLE[edge_handling];
+
+    glSamplerParameteri(sampler.object, GL_TEXTURE_MIN_FILTER, gl_filtering);
+    glSamplerParameteri(sampler.object, GL_TEXTURE_MAG_FILTER, gl_filtering);
+
+    glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_S, gl_edge);
+    glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_T, gl_edge);
+    glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_R, gl_edge);
+    return sampler;
+}
+
+bind_sampler :: (sampler: Sampler, slot: u32) {
+    glBindSampler(slot, sampler.object);
 }
 
 #scope_module
@@ -602,6 +639,8 @@ init_preloaded_modes :: () {
         state.depth_write_mask = GL_TRUE;
         state.depth_func = GL_LEQUAL;
         depth_stencil_modes[No_Stencil] = state;
+
+        set_depth_stencil_mode(.Depth_Stencil);
     }
 
     // Rasterizer Modes
@@ -622,6 +661,7 @@ init_preloaded_modes :: () {
 
         state.cull_mode = 0; // Special
         rasterizer_modes[No_Cull] = state;
+        set_rasterizer_mode(.Default);
     }
 
     // Blend Modes
@@ -635,12 +675,14 @@ init_preloaded_modes :: () {
             dst_blend_alpha = GL_ZERO,
             blend_op = GL_FUNC_ADD,
             blend_op_alpha = GL_FUNC_ADD,
+            red = true, green = true, blue = true, alpha = true
         };
 
         blend_modes[Alpha] = state;
 
         state.enabled = false;
         blend_modes[None] = state;
+        set_blend_mode(.None);
     }
 }
 
@@ -741,7 +783,6 @@ get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
                 glVertexArrayAttribLFormat(input_vao, loc, cast(s32)comps, type, offset);
             }
             glVertexArrayAttribBinding(input_vao, loc, 0);
-
             offset += comps * it.numeric.scalar.width / 8;
         }
     }
