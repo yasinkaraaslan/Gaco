@@ -7,7 +7,7 @@ Shader :: struct {
 }
 
 Buffer :: struct (type: Buffer_Type) {
-    buffer: GLuint;
+    object: GLuint;
     size: u32;
     stride: u32;
     // ...
@@ -22,10 +22,13 @@ Texture :: struct {
     pixel_format: GLuint;
     pixel_type: GLuint;
     width, height, stride: u32;
+    depth: u32 = 1;
     flags: Texture_Flags;
 }
 
 Render_Target :: struct {
+    framebuffer: GLuint;
+    color_view_count: u32;
 }
 
 Blend_State :: struct {
@@ -60,23 +63,19 @@ Depth_Stencil_State :: struct {
 }
 
 is_empty :: (texture: Texture) -> bool {
-    return glIsTexture(texture.object) == GL_TRUE;
+    return glIsTexture(texture.object) == GL_FALSE;
 }
 
 is_empty :: (using shader: Shader) -> bool {
-    i := glIsVertexArray(input_vao)  == GL_TRUE;
-    v := glIsShader(vertex_shader)   == GL_TRUE;
-    f := glIsShader(fragment_shader) == GL_TRUE;
-    c := glIsShader(compute_shader)  == GL_TRUE;
+    empty_vao := glIsVertexArray(input_vao) == GL_TRUE;
 
-    empty_vs := type & .Vertex   && (!v || !i);
-    empty_fs := type & .Fragment && !f;
-    empty_cs := type & .Compute  && !c;
-
-    return type == .Unspecified || empty_vs || empty_fs || empty_cs;
+    return type == .Unspecified || glIsProgram(program) || (!empty_vao && type & .Vertex);
 }
 
-is_empty :: (render_target: Render_Target) -> bool {}
+is_empty :: (render_target: Render_Target) -> bool {
+    // 0 is actually a valid id (window back buffer) but we hope that the user doesn't check that :)
+    return render_target.framebuffer != 0;
+}
 
 init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
     // TODO(Yasin): Replace this with our own procedure so we can use stencil buffers.
@@ -136,7 +135,7 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
     // D3D11 also doesn't allow it.
     assert(count > 0 && stride > 0, "Creating a buffer with 0 size is not permitted");
 
-    glCreateBuffers(1, *buffer.buffer);
+    glCreateBuffers(1, *buffer.object);
     storage_flags: GLbitfield;
 
     #if type == .Copy {
@@ -151,38 +150,54 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
         storage_flags |= GL_DYNAMIC_STORAGE_BIT;
     }
 
-    glNamedBufferStorage(buffer.buffer, buffer.size, data, storage_flags);
+    glNamedBufferStorage(buffer.object, buffer.size, data, storage_flags);
     return buffer;
 }
 bind_buffer :: (buffer: Buffer(.Vertex), slot: u32 = 0, offset: u32 = 0) {
-    glBindVertexBuffer(slot, buffer.buffer, offset, buffer.stride);
+    glBindVertexBuffer(slot, buffer.object, offset, buffer.stride);
 }
 
 bind_buffer :: (buffer: Buffer(.Index)) {
     // assert(buffer.stride == 2 || buffer.stride == 4);
     current_index_stride = buffer.stride;
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer.buffer);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer.object);
 }
 
 bind_buffer :: (buffer: Buffer(.Constant), slot: u32 = 0) {
-    glBindBufferBase(GL_UNIFORM_BUFFER, slot, buffer.buffer);
+    glBindBufferBase(GL_UNIFORM_BUFFER, slot, buffer.object);
+}
+
+bind_buffer :: (buffer: Buffer(.Structured), slot: u32 = 0) {
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot, buffer.object);
+}
+
+// Same as above
+bind_buffer :: (buffer: Buffer(.RWStructured), slot: u32 = 0) {
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot, buffer.object);
 }
 
 map_buffer :: (buffer: *Buffer, flags: Map_Flags) -> *void {
     access: GLbitfield;
-    if flags & .Read  access |= GL_MAP_READ_BIT;
+
+    if flags & .Read {
+        access |= GL_MAP_READ_BIT;
+        #if buffer.type != .Copy {
+            access |= GL_MAP_INVALIDATE_BUFFER_BIT;
+        }
+    }
+
     if flags & .Write access |= GL_MAP_WRITE_BIT;
-    return glMapNamedBufferRange(buffer.buffer, 0, buffer.size, access);
+    return glMapNamedBufferRange(buffer.object, 0, buffer.size, access);
 }
 
 unmap_buffer :: (buffer: *Buffer) {
-    if glUnmapNamedBuffer(buffer.buffer) == GL_FALSE {
+    if glUnmapNamedBuffer(buffer.object) == GL_FALSE {
         log_error("[Gaco] Couldn't unmap buffer!");
     }
 }
 
 update_buffer :: (buffer: *Buffer, data: *void) {
-    glNamedBufferSubData(buffer.buffer, 0, buffer.size, data);
+    glNamedBufferSubData(buffer.object, 0, buffer.size, data);
 }
 
 update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 = 0) {
@@ -204,8 +219,17 @@ write_buffer :: (buffer: *Buffer, data: *void, size: int) {
     unmap_buffer(buffer);
 }
 
+copy_buffer :: (from: *Buffer, to: *Buffer) {
+    glCopyNamedBufferSubData(from.object, to.object, 0, 0, from.size);
+
+}
+
 destroy_buffer :: (buffer: *Buffer) {
-    glDeleteBuffers(1, *buffer.buffer);
+    glDeleteBuffers(1, *buffer.object);
+}
+
+destroy_texture :: (texture: *Texture) {
+    glDeleteTextures(1, *texture.object);
 }
 
 compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, bool {
@@ -318,6 +342,21 @@ clear :: (r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0,
     glClear(mask);
 }
 
+clear :: (render_target: Render_Target, r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
+    #if flags & .Color {
+        color := float.[r,g,b,a];
+        for 0..render_target.color_view_count - 1 {
+            glClearNamedFramebufferfv(render_target.framebuffer, GL_COLOR, cast(s32)it, color.data);
+        }
+    }
+    #if flags & .Depth {
+        glClearNamedFramebufferfv(render_target.framebuffer, GL_DEPTH, 0, *depth);
+    }
+    #if flags & .Stencil {
+        glClearNamedFramebufferiv(render_target.framebuffer, GL_STENCIL, 0, cast(*s32)*stencil);
+    }
+}
+
 set_shader :: (shader: Shader) {
     stages: GLbitfield;
     if shader.type & .Vertex {
@@ -326,22 +365,22 @@ set_shader :: (shader: Shader) {
         // We have to rebind the vertex, index and instance buffer because we can't just change
         // the input vao and be done with it!!
         Bound_Buffer :: struct {
-            buffer: GLuint;
+            object: GLuint;
             stride: u32;
             offset: u32;
         }
 
         get_bound :: (slot: u32) -> Bound_Buffer {
             buffer: Bound_Buffer;
-            glGetIntegeri_v(GL_VERTEX_BINDING_BUFFER, slot, cast(*GLint)*buffer.buffer);
+            glGetIntegeri_v(GL_VERTEX_BINDING_BUFFER, slot, cast(*GLint)*buffer.object);
             glGetIntegeri_v(GL_VERTEX_BINDING_OFFSET, slot, cast(*GLint)*buffer.offset);
             glGetIntegeri_v(GL_VERTEX_BINDING_STRIDE, slot, cast(*GLint)*buffer.stride);
             return buffer;
         }
 
         bind :: (buffer: Bound_Buffer, slot: u32) {
-            if buffer.buffer {
-                glBindVertexBuffer(slot, buffer.buffer, buffer.offset, buffer.stride);
+            if buffer.object {
+                glBindVertexBuffer(slot, buffer.object, buffer.offset, buffer.stride);
             }
         }
 
@@ -367,7 +406,7 @@ set_scissor :: (using rect: Rect) {
 }
 
 set_viewport :: (x: float, y: float, width: float, height: float, near_depth := 0.0, far_depth := 1.0) {
-    glViewportIndexedf(0, x, y, w, h);
+    glViewportIndexedf(0, x, y, width, height);
     glDepthRangef(near_depth, far_depth);
 }
 
@@ -427,25 +466,27 @@ set_depth_stencil_mode :: (mode: Depth_Stencil_Mode) {
 }
 
 draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex: s32 = 0) {
-    mode: GLenum;
-    if current_primitive_type == {
-    case .Line_List;
-        mode = GL_LINES;
-    case .Line_Strip;
-        mode = GL_LINE_STRIP;
-    case .Triangle_List;
-        mode = GL_TRIANGLES;
-    case .Triangle_Strip;
-        mode = GL_TRIANGLE_STRIP;
-    }
-
     #if indexed {
         format := ifx current_index_stride == 4 cast(u32)GL_UNSIGNED_INT else cast(u32)GL_UNSIGNED_SHORT;
-        glDrawElementsBaseVertex(mode, count, format, cast(*void) cast(s64)(current_index_stride * first), base_vertex);
+        glDrawElementsBaseVertex(current_primitive_mode, count, format, cast(*void)(current_index_stride * first), base_vertex);
     }
     else {
         glDrawArrays(mode, cast(GLint)first, count);
     }
+}
+
+draw_instanced :: ($indexed: bool, count: u32, instance_count: u32, first: u32 = 0, first_instance: u32 = 0, base_vertex: s32 = 0) {
+    format := ifx current_index_stride == 4 cast(u32)GL_UNSIGNED_INT else cast(u32)GL_UNSIGNED_SHORT;
+    #if indexed {
+        glDrawElementsInstancedBaseVertexBaseInstance(current_primitive_mode, count, format, cast(*void)(current_index_stride * first), instance_count, base_vertex, first_instance);
+    }
+    else {
+        glDrawArraysInstanced(curent_primitive_mode, first, count, instance_count, first_instance);
+    }
+}
+
+dispatch_compute :: (num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) {
+    glDispatchCompute(num_groups_x, num_groups_y, num_groups_z);
 }
 
 present :: (interval: u32 = 1) {
@@ -465,6 +506,31 @@ present :: (interval: u32 = 1) {
     else #if OS == .LINUX {
         glXSwapBuffers(x_global_display, main_window);
     }
+}
+
+create_render_target :: (color_textures: []Texture, depth_stencil_texture: Texture) -> Render_Target {
+    render_target: Render_Target;
+    draw_buffers := NewArray(color_textures.count, GLenum,, temp);
+    glCreateFramebuffers(1, *render_target.framebuffer);
+    for color_textures {
+        attachment := GL_COLOR_ATTACHMENT0 + cast(u32)it_index;
+        glNamedFramebufferTexture(render_target.framebuffer, attachment, it.object, 0);
+        draw_buffers[it_index] = attachment;
+    }
+    if !is_empty(depth_stencil_texture) {
+        glNamedFramebufferTexture(render_target.framebuffer, GL_DEPTH_ATTACHMENT, depth_stencil_texture.object, 0);
+    }
+    glNamedFramebufferDrawBuffers(render_target.framebuffer, cast(u32)draw_buffers.count, draw_buffers.data);
+    render_target.color_view_count = cast(u32)draw_buffers.count;
+    return render_target;
+}
+
+set_render_target :: (render_target: Render_Target) {
+    glBindFramebuffer(GL_FRAMEBUFFER, render_target.framebuffer);
+}
+
+destroy_render_target :: (render_target: *Render_Target) {
+    glDeleteFramebuffers(1, *render_target.framebuffer);
 }
 
 resize :: (width: int, height: int) {
@@ -577,6 +643,15 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
 
 bind_texture :: (texture: Texture, slot: u32) {
     glBindTextureUnit(slot, texture.object);
+}
+
+copy_texture :: (from: *Texture, to: *Texture) {
+    // @Incomplete: Only 2D textures.
+    glCopyImageSubData(from.object, GL_TEXTURE_2D, 0, 0, 0, 0, to.object, GL_TEXTURE_2D, 0, 0, 0, 0, from.width, from.height, from.depth);
+}
+
+copy_texture :: (from: *Texture, to: *Texture, source_rect: Rect) {
+    glCopyImageSubData(from.object, GL_TEXTURE_2D, 0, source_rect.x, source_rect.y, 0, to.object, GL_TEXTURE_2D, 0, 0, 0, 0, cast(u32)source_rect.width, cast(u32)source_rect.height, 1);
 }
 
 create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Wrap, max_anisotropy: u32 = 1, comparison := false) -> Sampler {
@@ -793,7 +868,7 @@ using GL_State: struct {
     main_window: WT.Window_Type;
     global_pipeline: GLuint;
     empty_stupid_vao: GLuint; // Because we cannot bind a vertex buffer without a vao
-    current_primitive_type := Primitive_Type.Triangle_List;
+    current_primitive_mode: GLuint = GL_TRIANGLES;
     current_index_stride: GLenum; // GL_UNSIGNED_SHORT, GL_UNSIGNED_INT
     current_swap_interval: u32; // We shouldn't trust that the default is 0 actually.
 
