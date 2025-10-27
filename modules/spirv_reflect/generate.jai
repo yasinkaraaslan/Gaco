@@ -49,8 +49,8 @@ generate_bindings :: (args: [] string) -> bool {
         // I wanted to specify additional linker arguments so I pass them as library_files
         // because there is no other way to do it.
 
-        success := build_cpp_dynamic_lib(lib_path, source_file, target=os_target, debug=compile_debug,library_files=extra);
-        success &&= build_cpp_static_lib(lib_path, source_file, target=os_target, debug=compile_debug,library_files=extra);
+        success := build_cpp_dynamic_lib(lib_path, source_file, target=os_target, debug=compile_debug);
+        success &&= build_cpp_static_lib(lib_path, source_file, target=os_target, debug=compile_debug);
         if !success return false;
     }
     options: Generate_Bindings_Options;

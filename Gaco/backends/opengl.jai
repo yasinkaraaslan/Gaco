@@ -957,7 +957,7 @@ using GL_State: struct {
 }
 #import "GL";
 DXC :: #import "dxc_compiler";
-#import,dir "spirv_reflect";
+#import,dir "../../modules/spirv_reflect";
 
 #if OS == .WINDOWS {
     #import "Windows";
