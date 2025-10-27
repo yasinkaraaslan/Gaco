@@ -96,7 +96,7 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
         gl_enable_debug_output(break_on_error=true);
     }
     glFrontFace(GL_CW); // We use clockwise for both OpenGL and D3D11
-    glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE); // Why does lower left work??
+    glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
 
     // So we can bind vertex buffers without setting a shader.
     glCreateVertexArrays(1, *empty_stupid_vao);
@@ -199,7 +199,10 @@ unmap_buffer :: (buffer: *Buffer) {
 
 // This is actually here for api compatibility with D3D11.
 // The 'Texture' we have here is a pixel buffer object. So we assert that before doing anything.
-map_texture :: (texture: *Texture, flags: Map_Flags, subresource: u32 = 0) -> *void {
+
+// Note that this gives a different data than the D3D11 one because the lower-left is 0,0 as opposed to upper-left.
+// You have to check the backend when using it.
+map_texture :: (texture: *Texture, flags: Map_Flags) -> *void {
     assert(texture.flags & .Copy != 0, "Only copy buffers can be mapped to read.");
     access: GLbitfield;
     if flags & .Read  access |= GL_MAP_READ_BIT;
@@ -237,9 +240,8 @@ write_buffer :: (buffer: *Buffer, data: *void, size: int) {
     unmap_buffer(buffer);
 }
 
-copy_buffer :: (from: *Buffer, to: *Buffer) {
+copy_buffer :: (from: Buffer, to: *Buffer) {
     glCopyNamedBufferSubData(from.object, to.object, 0, 0, from.size);
-
 }
 
 destroy_buffer :: (buffer: *Buffer) {
@@ -510,7 +512,7 @@ draw_instanced :: ($indexed: bool, count: u32, instance_count: u32, first: u32 =
         glDrawElementsInstancedBaseVertexBaseInstance(current_primitive_mode, count, format, cast(*void)(current_index_stride * first), instance_count, base_vertex, first_instance);
     }
     else {
-        glDrawArraysInstanced(curent_primitive_mode, first, count, instance_count, first_instance);
+        glDrawArraysInstancedBaseInstance(curent_primitive_mode, first, count, instance_count, first_instance);
     }
 }
 
@@ -550,6 +552,10 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
         glNamedFramebufferTexture(render_target.framebuffer, GL_DEPTH_ATTACHMENT, depth_stencil_texture.object, 0);
     }
     glNamedFramebufferDrawBuffers(render_target.framebuffer, cast(u32)draw_buffers.count, draw_buffers.data);
+    if glCheckNamedFramebufferStatus(render_target.framebuffer, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE {
+        log_error("Unable to create render target!");
+        return .{};
+    }
     render_target.color_view_count = cast(u32)draw_buffers.count;
     return render_target;
 }
@@ -605,7 +611,13 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
         return .{};
     }
 
-    texture := Texture.{width=width, height=height, stride=bytes_per_block,flags=flags};
+    PIXEL_TYPE_TABLE :: GLenum.[GL_UNSIGNED_BYTE, GL_UNSIGNED_INT, GL_UNSIGNED_BYTE, GL_HALF_FLOAT, GL_FLOAT];
+    PIXEL_FORMAT_TABLE :: GLenum.[GL_RED, GL_RG, GL_RGB, GL_RGBA];
+
+    texture := Texture.{width=width, height=height, stride=bytes_per_block, flags=flags,
+        pixel_type = PIXEL_TYPE_TABLE[format],
+        pixel_format = PIXEL_FORMAT_TABLE[channels - 1]
+    };
     if flags & .Copy {
         size := width * height * bytes_per_block;
         glCreateBuffers(1, *texture.object);
@@ -651,10 +663,6 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
             }
         }
 
-        PIXEL_TYPE_TABLE :: GLenum.[GL_UNSIGNED_BYTE, GL_UNSIGNED_INT, GL_UNSIGNED_BYTE, GL_HALF_FLOAT, GL_FLOAT];
-        PIXEL_FORMAT_TABLE :: GLenum.[GL_RED, GL_RG, GL_RGB, GL_RGBA];
-        texture.pixel_type = PIXEL_TYPE_TABLE[format];
-        texture.pixel_format = PIXEL_FORMAT_TABLE[channels - 1];
         glCreateTextures(target, 1, *texture.object);
 
         if flags & .Is_3D {
@@ -684,19 +692,37 @@ bind_texture :: (texture: Texture, slot: u32) {
     glBindTextureUnit(slot, texture.object);
 }
 
-copy_texture :: inline (from: *Texture, to: *Texture) {
+copy_texture :: inline (from: Texture, to: *Texture) {
     copy_texture(from, to, .{0, 0, cast(s32)from.width, cast(s32)from.height});
 }
 
-copy_texture :: (from: *Texture, to: *Texture, source_rect: Rect) {
+copy_texture :: (from: Texture, to: *Texture, source_rect: Rect) {
     if to.flags & .Copy {
         glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
-        glReadPixels(source_rect.x, source_rect.y, cast(u32)source_rect.width, cast(u32)source_rect.height, from.pixel_format, from.pixel_type, null);
+        glGetTextureImage(from.object, 0, from.pixel_format, from.pixel_type, to.pbo_size, null);
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     }
     else {
         // @Incomplete: Only 2D textures.
         glCopyImageSubData(from.object, GL_TEXTURE_2D, 0, source_rect.x, source_rect.y, 0, to.object, GL_TEXTURE_2D, 0, 0, 0, 0, cast(u32)source_rect.width, cast(u32)source_rect.height, 1);
+    }
+}
+
+copy_from_render_target :: (render_target: Render_Target, to: *Texture, depth_stencil := false, index: u32 = 0) {
+    if render_target.framebuffer == 0 { // Back buffer
+        glNamedFramebufferReadBuffer(0, GL_BACK);
+    }
+    else {
+        glNamedFramebufferReadBuffer(render_target.framebuffer, GL_COLOR_ATTACHMENT0 + index);
+    }
+
+    if to.flags & .Copy {
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
+        glReadPixels(0, 0, to.width, to.height, to.pixel_format, to.pixel_type, null);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    }
+    else {
+        glCopyTextureSubImage2D(to.object, 0, 0, 0, 0, 0, to.width, to.height);
     }
 }
 
@@ -812,6 +838,8 @@ init_preloaded_modes :: () {
     }
 }
 
+// @Incomplete:
+// This is pretty barebones. It doesn't do any alignment checking and stuff.
 get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
     module: SpvReflectShaderModule;
     check :: (result: SpvReflectResult) #expand {
@@ -926,7 +954,6 @@ using GL_State: struct {
     rasterizer_modes: [#run enum_count(Rasterizer_Mode)]Rasterizer_State;
     blend_modes: [#run enum_count(Blend_Mode)]Blend_State;
     depth_stencil_modes: [#run enum_count(Depth_Stencil_Mode)]Depth_Stencil_State;
-
 }
 #import "GL";
 DXC :: #import "dxc_compiler";

@@ -294,7 +294,7 @@ unmap_buffer :: (buffer: *Buffer) {
     ID3D11DeviceContext_Unmap(device_context, buffer.buffer, 0);
 }
 
-map_texture :: (texture: *Texture, flags: Map_Flags, subresource: u32 = 0) -> *void {
+map_texture :: (texture: *Texture, flags: Map_Flags) -> *void {
     // @Cutnpaste from the top
     d3d11_subresource: D3D11_MAPPED_SUBRESOURCE;
     d3d11_flags: D3D11_MAP;
@@ -302,7 +302,7 @@ map_texture :: (texture: *Texture, flags: Map_Flags, subresource: u32 = 0) -> *v
     if flags & .Read  d3d11_flags |= .READ;
     if flags & .Write d3d11_flags |= .WRITE_DISCARD;
 
-    hr := ID3D11DeviceContext_Map(device_context, texture.texture2d, subresource, d3d11_flags, 0, *d3d11_subresource);
+    hr := ID3D11DeviceContext_Map(device_context, texture.texture2d, 0, d3d11_flags, 0, *d3d11_subresource);
     check_hr("ID3D11DeviceContext.Map", #code return null);
     return d3d11_subresource.pData;
 }
@@ -323,9 +323,9 @@ update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 
 }
 
 update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 0) {
-    row := cast(u32)box.w * texture.stride;
+    row := cast(u32)box.width * texture.stride;
     d_box := box_from_box(box);
-    ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture3d, subresource, *d_box, data, row, row * height);
+    ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture3d, subresource, *d_box, data, row, row * texture.height);
 
 }
 
@@ -375,7 +375,7 @@ write_buffer :: (buffer: *Buffer, data: *void, size: int) {
     }
 }
 
-copy_buffer :: (from: *Buffer, to: *Buffer) {
+copy_buffer :: (from: Buffer, to: *Buffer) {
     ID3D11DeviceContext_CopyResource(device_context, to.buffer, from.buffer);
 }
 
@@ -617,7 +617,7 @@ dispatch_compute_indirect :: (buffer: Buffer(.Dispatch_Indirect), byte_offset: u
 }
 
 present :: (interval: u32 = 1) {
-    hr := IDXGISwapChain_Present(swap_chain, interval, xx DXGI_SWAP_EFFECT.FLIP_DISCARD);
+    hr := IDXGISwapChain_Present(swap_chain, interval, 0);
     check_hr("IDXGISwapChain_Present", #code {});
 }
 
@@ -683,6 +683,7 @@ resize :: (width: int, height: int) -> window_render_target: Render_Target {
 // Index = mip slice + (array slice * mip levels)
 // Image 0 mip data | Image 1 mip data | ...
 
+// @Incomplete: We should just have a format parameter and remove channels.
 create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None) -> Texture {
     generate_mips := (flags & .Generate_Mips) && mip_levels_or_msaa > 1;
 
@@ -704,7 +705,6 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
     else if flags & .Copy {
         usage = .STAGING;
         access_flags |= .READ;
-        bind_flags = 0;
     }
     else
         bind_flags = .SHADER_RESOURCE;
@@ -715,6 +715,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
         bind_flags |= .RENDER_TARGET;
         misc_flags |= .GENERATE_MIPS;
     }
+
     if flags & .Cubemap
         misc_flags |= .TEXTURECUBE;
 
@@ -895,20 +896,46 @@ bind_texture :: (texture: Texture, slot: u32) {
     }
 }
 
-copy_texture :: (from: *Texture, to: *Texture) {
+copy_texture :: (from: Texture, to: *Texture) {
     ID3D11DeviceContext_CopyResource(device_context, to.texture2d, from.texture2d);
 }
 
 // @Incomplete: subresource
-
-copy_texture :: (from: *Texture, to: *Texture, source_rect: Rect) {
+copy_texture :: (from: Texture, to: *Texture, source_rect: Rect) {
     box := box_from_rect(source_rect);
     ID3D11DeviceContext_CopySubresourceRegion(device_context, to.texture2d, 0, 0, 0, 0, from.texture2d, 0, *box);
 }
 
-copy_texture :: (from: *Texture, to: *Texture, source_box: Box) {
+copy_texture :: (from: Texture, to: *Texture, source_box: Box) {
     box := box_from_box(source_box);
     ID3D11DeviceContext_CopySubresourceRegion(device_context, to.texture3d, 0, 0, 0, 0, from.texture3d, 0, *box);
+}
+
+// NOTE(Yasin): This doesn't support copying the depth stencil buffer.
+copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u32 = 0) {
+    resource: *ID3D11Resource;
+    ID3D11View_GetResource(render_target.color_views[index], *resource);
+    tex: *ID3D11Texture2D;
+    hr := IUnknown_QueryInterface(resource, *uid(ID3D11Texture2D_UUID), cast(**void)*tex);
+    check_hr("IUnknown.QueryInterface");
+    IUnknown_Release(resource);
+
+    desc: D3D11_TEXTURE2D_DESC;
+    ID3D11Texture2D_GetDesc(tex, *desc);
+
+    if desc.SampleDesc.Count > 1 { // Multisampled
+        temp_desc := desc;
+        temp_desc.SampleDesc = .{1, 0};
+        temp_tex: *ID3D11Texture2D;
+        ID3D11Device_CreateTexture2D(device, *temp_desc, null, *temp_tex);
+
+        ID3D11DeviceContext_ResolveSubresource(device_context, temp_tex, 0, tex, 0, desc.Format);
+        ID3D11DeviceContext_CopyResource(device_context, to.texture2d, temp_tex);
+        IUnknown_Release(temp_tex);
+    }
+    else {
+        ID3D11DeviceContext_CopyResource(device_context, to.texture2d, tex);
+    }
 }
 
 // @Incomplete: give more options
@@ -1000,6 +1027,7 @@ box_from_box :: inline (box: Box) -> D3D11_BOX {
     d_box.right = xx (box.x + box.width);
     d_box.bottom = xx (box.y + box.height);
     d_box.back = xx (box.z + box.depth);
+    return d_box;
 }
 
 init_preloaded_modes :: () {
@@ -1198,6 +1226,7 @@ check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
         {
             ID3D11InfoQueue_SetBreakOnSeverity(info, .CORRUPTION, 1);
             ID3D11InfoQueue_SetBreakOnSeverity(info, .ERROR, 1);
+
         }
         safe_release(info);
         SetUnhandledExceptionFilter(xx handle_exception);
