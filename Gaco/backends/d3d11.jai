@@ -887,10 +887,8 @@ bind_texture :: (texture: Texture, slot: u32) {
         ID3D11DeviceContext_CSSetUnorderedAccessViews(device_context, slot, 1, *texture.unordered_access_view, null);
     }
     else {
-        if shader_state & .Vertex
-            ID3D11DeviceContext_VSSetShaderResources(device_context, slot, 1, *texture.resource_view);
-        if shader_state & .Fragment
-            ID3D11DeviceContext_PSSetShaderResources(device_context, slot, 1, *texture.resource_view);
+        ID3D11DeviceContext_VSSetShaderResources(device_context, slot, 1, *texture.resource_view);
+        ID3D11DeviceContext_PSSetShaderResources(device_context, slot, 1, *texture.resource_view);
         if shader_state & .Compute
             ID3D11DeviceContext_CSSetShaderResources(device_context, slot, 1, *texture.resource_view);
     }
@@ -973,10 +971,8 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
 }
 
 bind_sampler :: (sampler: Sampler, slot: u32) {
-    if shader_state & .Vertex
-        ID3D11DeviceContext_VSSetSamplers(device_context, slot, 1, *sampler.state);
-    if shader_state & .Fragment
-        ID3D11DeviceContext_PSSetSamplers(device_context, slot, 1, *sampler.state);
+    ID3D11DeviceContext_VSSetSamplers(device_context, slot, 1, *sampler.state);
+    ID3D11DeviceContext_PSSetSamplers(device_context, slot, 1, *sampler.state);
     if shader_state & .Compute
         ID3D11DeviceContext_CSSetSamplers(device_context, slot, 1, *sampler.state);
 }

@@ -192,8 +192,7 @@ build_shader :: (shader_name: string) {
 #import "stb_image_write";
 #import "File";
 
-#import "d3d11"()(INCLUDE_DEBUG_BINDINGS=true);
-Gaco :: #import,dir "../../Gaco"(BACKEND=.OpenGL, DEBUG=true);
+Gaco :: #import,dir "../../Gaco";
 
 #load "input.jai";
 #load "camera.jai";
