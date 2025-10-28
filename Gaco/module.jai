@@ -304,6 +304,7 @@ case .D3D11;
 #load "backends/d3d11.jai";
 case .OpenGL;
 #load "backends/opengl.jai";
+#import,dir "spirv_reflect";
 case .Metal;
 #load "backends/metal.jai";
 }

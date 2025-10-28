@@ -109,7 +109,7 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
 
     default_sampler = create_sampler(); // To be the same with d3d11
     for 0..15 {
-        bind_sampler(default_sampler, it);
+        bind_sampler(default_sampler, cast(u32)it);
     }
 }
 
@@ -560,8 +560,9 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
         glNamedFramebufferTexture(render_target.framebuffer, GL_DEPTH_ATTACHMENT, depth_stencil_texture.object, 0);
     }
     glNamedFramebufferDrawBuffers(render_target.framebuffer, cast(u32)draw_buffers.count, draw_buffers.data);
-    if glCheckNamedFramebufferStatus(render_target.framebuffer, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE {
-        log_error("Unable to create render target!");
+    status := glCheckNamedFramebufferStatus(render_target.framebuffer, GL_FRAMEBUFFER);
+    if status != GL_FRAMEBUFFER_COMPLETE {
+        log_error("Unable to create render target! Status: 0x%", formatInt(status, 16));
         return .{};
     }
     render_target.color_view_count = cast(u32)draw_buffers.count;
@@ -612,12 +613,25 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
     case .BC7_SRGB;
         internal_format = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_ARB;
     case .Default;
-        formats = .[GL_R8, GL_RG8, 0, GL_RGBA8];
+        if flags & .Depth_Stencil {
+            internal_format = GL_DEPTH24_STENCIL8;
+        }
+        else {
+            formats = .[GL_R8, GL_RG8, 0, GL_RGBA8];
+        }
         // @Incomplete: flags & .Depth_Stencil
     case;
         log_error("[Gaco] Unknown texture format: %", format);
         return .{};
     }
+
+        if !internal_format {
+            internal_format = formats[channels - 1];
+            if !internal_format {
+                log_error("[Gaco] Error while creating texture: % channels with format % is not compatible.", channels, format);
+                return .{};
+            }
+        }
 
     PIXEL_TYPE_TABLE :: GLenum.[GL_UNSIGNED_BYTE, GL_UNSIGNED_INT, GL_UNSIGNED_BYTE, GL_HALF_FLOAT, GL_FLOAT];
     PIXEL_FORMAT_TABLE :: GLenum.[GL_RED, GL_RG, GL_RGB, GL_RGBA];
@@ -662,14 +676,6 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
             else                         target = GL_TEXTURE_2D_ARRAY;
         }
         else if flags & .Multisample target = GL_TEXTURE_2D_MULTISAMPLE;
-
-        if !internal_format {
-            internal_format = formats[channels - 1];
-            if !internal_format {
-                log_error("[Gaco] Error while creating texture: % channels with format % is not compatible.", channels, format);
-                return .{};
-            }
-        }
 
         glCreateTextures(target, 1, *texture.object);
         if flags & .Is_3D {
@@ -729,7 +735,7 @@ copy_texture :: inline (from: Texture, to: *Texture) {
 copy_texture :: (from: Texture, to: *Texture, source_rect: Rect) {
     if to.flags & .Copy {
         glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
-        glGetTextureImage(from.object, 0, from.pixel_format, from.pixel_type, to.pbo_size, null);
+        glGetTextureSubImage(from.object, 0, source_rect.x, source_rect.y, 0, cast(u32)source_rect.width, cast(u32)source_rect.height, 1, from.pixel_format, from.pixel_type, to.pbo_size, null);
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     }
     else {
@@ -994,7 +1000,6 @@ using GL_State: struct {
 }
 #import "GL";
 DXC :: #import "dxc_compiler";
-#import,dir "../../modules/spirv_reflect";
 
 #if OS == .WINDOWS {
     #import "Windows";
