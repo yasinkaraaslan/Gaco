@@ -98,6 +98,7 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
     glFrontFace(GL_CW); // We use clockwise for both OpenGL and D3D11
     glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
 
+
     // So we can bind vertex buffers without setting a shader.
     glCreateVertexArrays(1, *empty_stupid_vao);
     glBindVertexArray(empty_stupid_vao);
@@ -105,6 +106,11 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
     glCreateProgramPipelines(1, *global_pipeline);
     glBindProgramPipeline(global_pipeline);
     init_preloaded_modes();
+
+    default_sampler = create_sampler(); // To be the same with d3d11
+    for 0..15 {
+        bind_sampler(default_sampler, it);
+    }
 }
 
 deinit :: () {
@@ -126,6 +132,7 @@ deinit :: () {
     }
     glDeleteProgramPipelines(1, *global_pipeline);
     glDeleteVertexArrays(1, *empty_stupid_vao);
+    destroy_sampler(*default_sampler);
 }
 
 create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {
@@ -225,10 +232,11 @@ update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 
     glPixelStorei(GL_UNPACK_ALIGNMENT, cast(s32)texture.stride);
     // @Incomplete: This is wrong for texture arrays
     glTextureSubImage2D(texture.object, cast(s32)subresource, rect.x, rect.y, cast(u32)rect.width, cast(u32)rect.height, texture.pixel_format, texture.pixel_type, data);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 }
 
-update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 0) {
-}
+// update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 0) {
+// }
 
 update_texture :: inline (using texture: *Texture, data: *void, subresource: u32 = 0) {
     update_texture(texture, data, .{0, 0, cast(s32)width, cast(s32)height}, subresource);
@@ -642,12 +650,12 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
             depth = array_count_or_depth;
         }
         else if flags & .Cubemap {
-            // if array_count_or_depth > 6 {
+            if array_count_or_depth > 6 {
                 target = GL_TEXTURE_CUBE_MAP_ARRAY;
-            // }
-            // else {
-                // target = GL_TEXTURE_CUBE_MAP;
-            // }
+            }
+            else {
+                target = GL_TEXTURE_CUBE_MAP;
+            }
         }
         else if array_count_or_depth > 1 {
             if flags & .Multisample target = GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
@@ -664,9 +672,26 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
         }
 
         glCreateTextures(target, 1, *texture.object);
-
         if flags & .Is_3D {
             glTextureStorage3D(texture.object, mip_levels, internal_format, width, height, array_count_or_depth);
+        }
+        else if flags & .Cubemap {
+            // @Temporary. I cannot specify a cubemap's faces with DSA for some reason.
+            glTextureStorage2D(texture.object, 1, internal_format, width, height);
+            glBindTexture(GL_TEXTURE_CUBE_MAP, texture.object);
+            faces := GLenum.[
+                GL_TEXTURE_CUBE_MAP_POSITIVE_X,
+                GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
+                GL_TEXTURE_CUBE_MAP_POSITIVE_Y,
+                GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
+                GL_TEXTURE_CUBE_MAP_POSITIVE_Z,
+                GL_TEXTURE_CUBE_MAP_NEGATIVE_Z
+            ];
+
+            for data {
+                glTexSubImage2D(faces[it_index], 0, 0, 0, width, height, texture.pixel_format, texture.pixel_type, it);
+            }
+            glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
         }
         else {
             glTextureStorage2D(texture.object, mip_levels, internal_format, width, height);
@@ -676,6 +701,11 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
             // @Incomplete: Depth_Stencil
             // @Incomplete: Compression textures
             if data {
+                if flags & .Cubemap {
+                    for data {
+                        // update_texture(*texture, it, cast(u32)it_index);
+                    }
+                }
                 update_texture(*texture, data[0]);
             }
         }
@@ -726,7 +756,7 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, depth_st
     }
 }
 
-create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Wrap, max_anisotropy: u32 = 1, comparison := false) -> Sampler {
+create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, max_anisotropy: u32 = 1, comparison := false) -> Sampler {
     sampler: Sampler;
     glCreateSamplers(1, *sampler.object);
     FILTER_TABLE :: GLint.[GL_LINEAR, GL_NEAREST];
@@ -734,6 +764,11 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
 
     gl_filtering := FILTER_TABLE[filtering];
     gl_edge := EDGE_TABLE[edge_handling];
+
+    if comparison {
+        glSamplerParameteri(sampler.object, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+        glSamplerParameteri(sampler.object, GL_TEXTURE_COMPARE_FUNC, GL_NEVER); // @Incomplete
+    }
 
     glSamplerParameteri(sampler.object, GL_TEXTURE_MIN_FILTER, gl_filtering);
     glSamplerParameteri(sampler.object, GL_TEXTURE_MAG_FILTER, gl_filtering);
@@ -947,10 +982,12 @@ using GL_State: struct {
     main_window: WT.Window_Type;
     global_pipeline: GLuint;
     empty_stupid_vao: GLuint; // Because we cannot bind a vertex buffer without a vao
+
     current_primitive_mode: GLuint = GL_TRIANGLES;
     current_index_stride: GLenum; // GL_UNSIGNED_SHORT, GL_UNSIGNED_INT
     current_swap_interval: u32; // We shouldn't trust that the default is 0 actually.
 
+    default_sampler: Sampler;
     rasterizer_modes: [#run enum_count(Rasterizer_Mode)]Rasterizer_State;
     blend_modes: [#run enum_count(Blend_Mode)]Blend_State;
     depth_stencil_modes: [#run enum_count(Depth_Stencil_Mode)]Depth_Stencil_State;

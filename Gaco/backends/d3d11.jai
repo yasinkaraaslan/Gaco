@@ -937,7 +937,7 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
 }
 
 // @Incomplete: give more options
-create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Wrap, max_anisotropy: u32 = 1, comparison := false) -> Sampler {
+create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, max_anisotropy: u32 = 1, comparison := false) -> Sampler {
     d3d11_filter: D3D11_FILTER;
     if max_anisotropy > 1 {
         // We override the filter, there is no such requirement in OpenGL.
@@ -959,7 +959,7 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
         Filter = d3d11_filter,
         AddressU = address_mode, AddressV = address_mode, AddressW = address_mode,
         MaxAnisotropy = max_anisotropy,
-        ComparisonFunc = .ALWAYS,
+        ComparisonFunc = .NEVER, // @Incomplete
         MinLOD = 0,
         MaxLOD = cast(float32)D3D11_FLOAT32_MAX,
     };

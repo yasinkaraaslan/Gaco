@@ -1,4 +1,4 @@
-FOV :: 90;
+FOV :: 70;
 
 Camera : struct {
     transform := Matrix4_Identity;
