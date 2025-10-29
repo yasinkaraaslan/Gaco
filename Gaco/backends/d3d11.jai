@@ -312,8 +312,8 @@ map_texture :: (texture: *Texture, flags: Map_Flags) -> *void {
     return d3d11_subresource.pData;
 }
 
-unmap_texture :: (texture: *Texture, subresource: u32 = 0) {
-    ID3D11DeviceContext_Unmap(device_context, texture.texture2d, subresource);
+unmap_texture :: (texture: *Texture) {
+    ID3D11DeviceContext_Unmap(device_context, texture.texture2d, 0);
 }
 
 update_buffer :: (buffer: *Buffer, data: *void) {

@@ -230,7 +230,7 @@ map_texture :: (texture: *Texture, flags: Map_Flags) -> *void {
     return glMapNamedBufferRange(texture.object, 0, texture.pbo_size, access);
 }
 
-unmap_texture :: (texture: *Texture, subresource: u32 = 0) {
+unmap_texture :: (texture: *Texture) {
     assert(texture.flags & .Copy != 0);
     if glUnmapNamedBuffer(texture.object) == GL_FALSE {
         log_error("[Gaco] Couldn't unmap texture!");
@@ -585,6 +585,7 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
     draw_buffers := NewArray(color_textures.count, GLenum,, temp);
     glCreateFramebuffers(1, *render_target.framebuffer);
     for color_textures {
+        assert(it.flags & .Render_Target != 0, "[Gaco] A color texture used for creating a render target has to have the Render_Target flag. This is a requirement for keeping the api compatible with D3D11.");
         attachment := GL_COLOR_ATTACHMENT0 + cast(u32)it_index;
         glNamedFramebufferTexture(render_target.framebuffer, attachment, it.object, 0);
         draw_buffers[it_index] = attachment;
@@ -668,11 +669,14 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
 
     PIXEL_TYPE_TABLE :: GLenum.[GL_UNSIGNED_BYTE, GL_UNSIGNED_INT, GL_UNSIGNED_BYTE, GL_HALF_FLOAT, GL_FLOAT];
     PIXEL_FORMAT_TABLE :: GLenum.[GL_RED, GL_RG, GL_RGB, GL_RGBA];
+    PIXEL_FORMAT_TABLE_INT :: GLenum.[GL_RED_INTEGER, GL_RG_INTEGER, GL_RGB_INTEGER, GL_RGBA_INTEGER];
+    pixel_format_table := ifx format == .U32 PIXEL_FORMAT_TABLE_INT else PIXEL_FORMAT_TABLE;
 
     texture := Texture.{width=width, height=height, stride=bytes_per_block, flags=flags,
         pixel_type = PIXEL_TYPE_TABLE[format],
-        pixel_format = PIXEL_FORMAT_TABLE[channels - 1]
+        pixel_format = pixel_format_table[channels - 1]
     };
+
     if flags & .Copy {
         size := width * height * bytes_per_block;
         glCreateBuffers(1, *texture.object);
