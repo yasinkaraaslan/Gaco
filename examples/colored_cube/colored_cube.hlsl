@@ -8,7 +8,7 @@ float4 vertex_main(float3 Pos : POSITION) : SV_Position {
 }
 
 // Fragment Shader
-cbuffer Colors_Buffer : register(b1) {
+cbuffer Colors_Buffer : register(b0) {
     float4 face_colors[6];
 }
 

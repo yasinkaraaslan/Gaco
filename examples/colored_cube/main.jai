@@ -68,7 +68,7 @@ main :: () {
 
         Gaco.bind_buffer(vertex_buffer);
         Gaco.bind_buffer(index_buffer);
-        Gaco.bind_buffer(fragment_cb, 1);
+        Gaco.bind_buffer(fragment_cb, 0, .Fragment);
 
         Gaco.clear(0.3, 0.5, 0.3, 1.0);
         draw_the_cube(vertex_cb, indices.count);
@@ -94,7 +94,7 @@ draw_the_cube :: (transform_cb: Gaco.Buffer, indices_count: u32) {
 
     Gaco.write_buffer(*transform_cb, transform_buffer);
 
-    Gaco.bind_buffer(transform_cb);
+    Gaco.bind_buffer(transform_cb, 0, .Vertex);
     Gaco.draw(true, indices_count);
 }
 

@@ -68,7 +68,7 @@ main :: () {
 
     Gaco.bind_buffer(vertex_buffer);
     Gaco.bind_buffer(index_buffer);
-    Gaco.bind_buffer(vs_cb);
+    Gaco.bind_buffer(vs_cb, 0, .Vertex);
 
     Gaco.bind_texture(texture, 0);
     FrameInfo.last = seconds_since_init();

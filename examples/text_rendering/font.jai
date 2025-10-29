@@ -173,8 +173,8 @@ draw_text :: (using font: *Font, text: string, position: Vector2, color := Vecto
     Gaco.set_shader(Shader);
     Gaco.bind_buffer(VertexBuffer);
     Gaco.bind_buffer(IndexBuffer);
-    Gaco.bind_buffer(fragment_cb, 1);
-    Gaco.bind_buffer(VertexConstantBuffer, 0);
+    Gaco.bind_buffer(VertexConstantBuffer, 0, .Vertex);
+    Gaco.bind_buffer(fragment_cb, 0, .Fragment);
     Gaco.bind_texture(texture, 0);
 
     if color != selected_color {

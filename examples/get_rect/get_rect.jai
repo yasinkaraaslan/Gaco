@@ -77,7 +77,7 @@ gr_immediate_flush :: () {
 
         Gaco.write_buffer(*VerticesBuffer, VerticesToDraw);
         Gaco.bind_buffer(VerticesBuffer);
-        Gaco.bind_buffer(WindowProjConstantBuffer, 0);
+        Gaco.bind_buffer(WindowProjConstantBuffer, 0, .Vertex);
         Gaco.draw(false, cast(u32)VerticesToDraw.count);
         array_reset(*VerticesToDraw);
     }

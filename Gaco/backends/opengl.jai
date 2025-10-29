@@ -171,12 +171,25 @@ bind_buffer :: (buffer: Buffer(.Index)) {
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer.object);
 }
 
-bind_buffer :: (buffer: Buffer(.Constant), slot: u32 = 0) {
-    glBindBufferBase(GL_UNIFORM_BUFFER, slot, buffer.object);
+bind_buffer :: (buffer: Buffer(.Constant), slot: u32 = 0, bind_to: Shader_Type) {
+    if bind_to & .Vertex
+        glBindBufferBase(GL_UNIFORM_BUFFER, slot, buffer.object);
+
+    if bind_to & .Fragment
+        glBindBufferBase(GL_UNIFORM_BUFFER, slot + 16, buffer.object);
+
+    if bind_to & .Compute
+        glBindBufferBase(GL_UNIFORM_BUFFER, slot + 32, buffer.object);
+
 }
 
-bind_buffer :: (buffer: Buffer(.Structured), slot: u32 = 0) {
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot, buffer.object);
+bind_buffer :: (buffer: Buffer(.Structured), slot: u32 = 0, bind_to: Shader_Type) {
+    if bind_to & .Vertex
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot, buffer.object);
+    if bind_to & .Fragment
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot+16, buffer.object);
+    if bind_to & .Compute
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot+32, buffer.object);
 }
 
 // Same as above
@@ -284,11 +297,31 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
     compile :: (entry_point: string, shader_type: DXC.Shader_Type) -> string #expand {
         `args.entry_point = entry_point;
         `args.shader_type = shader_type;
+        shift_args := string.[
+            "-fvk-t-shift", "0", "0",
+            "-fvk-b-shift", "0", "0",
+            "-fvk-s-shift", "0", "all",
+            "-fvk-u-shift", "0", "all",
+        ];
+        shift_amount: string;
+        if shader_type == {
+        case .Fragment;
+            shift_amount = "16";
+        case .Compute;
+            shift_amount = "32";
+        }
+        if shift_amount {
+            for 0..3 {
+                shift_args[3*it+1] = shift_amount;
+            }
+            `args.extra_args = shift_args;
+        }
+
         result := DXC.DXC_Compile(`args);
         if !result {
             `return .{}, false;
         }
-
+        `args.extra_args = .[];
         return cast(string)result;
     }
 
@@ -724,8 +757,13 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
     return texture;
 }
 
-bind_texture :: (texture: Texture, slot: u32) {
-    glBindTextureUnit(slot, texture.object);
+bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
+    if bind_to & .Vertex
+        glBindTextureUnit(slot, texture.object);
+    if bind_to & .Fragment
+        glBindTextureUnit(slot + 16, texture.object);
+    if bind_to & .Compute
+        glBindTextureUnit(slot + 32, texture.object);
 }
 
 copy_texture :: inline (from: Texture, to: *Texture) {
@@ -785,8 +823,13 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
     return sampler;
 }
 
-bind_sampler :: (sampler: Sampler, slot: u32) {
-    glBindSampler(slot, sampler.object);
+bind_sampler :: (sampler: Sampler, slot: u32, bind_to := Shader_Type.Fragment) {
+    if bind_to & .Vertex
+        glBindSampler(slot, sampler.object);
+    if bind_to & .Fragment
+        glBindSampler(slot+16, sampler.object);
+    if bind_to & .Compute
+        glBindSampler(slot+32, sampler.object);
 }
 
 destroy_sampler :: (sampler: *Sampler) {

@@ -206,10 +206,10 @@ draw_prepared_text :: (font: *Font, x: float, y: float, color := Vector4.{1, 1, 
     Gaco.bind_buffer(TextVertexBuffer);
     Gaco.bind_buffer(TextIndexBuffer);
 
-    Gaco.bind_buffer(WindowProjConstantBuffer, 0);
-    Gaco.bind_buffer(TextPosConstantBuffer, 1);
+    Gaco.bind_buffer(WindowProjConstantBuffer, 0, .Vertex);
+    Gaco.bind_buffer(TextPosConstantBuffer, 1, .Vertex);
 
-    Gaco.bind_buffer(font.constant_buffer, 2);
+    Gaco.bind_buffer(font.constant_buffer, 0, .Fragment);
     Gaco.bind_texture(font.texture, 0);
     Gaco.draw(true, font.num_chars_to_render * 6);
     Gaco.set_blend_mode(.None);
