@@ -935,6 +935,7 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
     else {
         ID3D11DeviceContext_CopyResource(device_context, to.texture2d, tex);
     }
+    IUnknown_Release(tex);
 }
 
 // @Incomplete: give more options

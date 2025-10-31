@@ -202,12 +202,14 @@ map_buffer :: (buffer: *Buffer, flags: Map_Flags) -> *void {
 
     if flags & .Read {
         access |= GL_MAP_READ_BIT;
+    }
+
+    if flags & .Write {
+        access |= GL_MAP_WRITE_BIT;
         #if buffer.type != .Copy {
             access |= GL_MAP_INVALIDATE_BUFFER_BIT;
         }
     }
-
-    if flags & .Write access |= GL_MAP_WRITE_BIT;
     return glMapNamedBufferRange(buffer.object, 0, buffer.size, access);
 }
 
@@ -400,18 +402,23 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> S
 }
 
 clear :: (r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
-    glClearColor(r,g,b,a);
-    glClearDepthf(depth);
-    glClearStencil(cast(GLint)stencil);
+    window_render_target := Render_Target.{0, 1};
+    clear(window_render_target, r, g, b, a, depth, stencil, flags);
 
-    mask: GLbitfield;
-    #if flags & .Color
-        mask |= GL_COLOR_BUFFER_BIT;
-    #if flags & .Depth
-        mask |= GL_DEPTH_BUFFER_BIT;
-    #if flags & .Stencil
-        mask |= GL_STENCIL_BUFFER_BIT;
-    glClear(mask);
+    // Commented code clears the currently bound framebuffer.
+
+    // glClearColor(r,g,b,a);
+    // glClearDepthf(depth);
+    // glClearStencil(cast(GLint)stencil);
+
+    // mask: GLbitfield;
+    // #if flags & .Color
+    //     mask |= GL_COLOR_BUFFER_BIT;
+    // #if flags & .Depth
+    //     mask |= GL_DEPTH_BUFFER_BIT;
+    // #if flags & .Stencil
+    //     mask |= GL_STENCIL_BUFFER_BIT;
+    // glClear(mask);
 }
 
 clear :: (render_target: Render_Target, r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
@@ -425,7 +432,7 @@ clear :: (render_target: Render_Target, r: float, g: float, b: float, a: float, 
         glClearNamedFramebufferfv(render_target.framebuffer, GL_DEPTH, 0, *depth);
     }
     #if flags & .Stencil {
-        glClearNamedFramebufferiv(render_target.framebuffer, GL_STENCIL, 0, cast(*s32)*stencil);
+        glClearNamedFramebufferiv(render_target.framebuffer, GL_STENCIL, 0, *(cast(s32)stencil));
     }
 }
 
@@ -591,7 +598,7 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
         draw_buffers[it_index] = attachment;
     }
     if !is_empty(depth_stencil_texture) {
-        glNamedFramebufferTexture(render_target.framebuffer, GL_DEPTH_ATTACHMENT, depth_stencil_texture.object, 0);
+        glNamedFramebufferTexture(render_target.framebuffer, GL_DEPTH_STENCIL_ATTACHMENT , depth_stencil_texture.object, 0);
     }
     glNamedFramebufferDrawBuffers(render_target.framebuffer, cast(u32)draw_buffers.count, draw_buffers.data);
     status := glCheckNamedFramebufferStatus(render_target.framebuffer, GL_FRAMEBUFFER);
