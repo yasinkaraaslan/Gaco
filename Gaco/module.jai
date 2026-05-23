@@ -45,8 +45,7 @@ Buffer_Type :: enum u32 {
     Constant;
     Copy;
 
-    Draw_Indirect;
-    Dispatch_Indirect;
+    Indirect; // Draw indirect or dispatch indirect buffer
 
     Structured;
     RWStructured;
@@ -80,6 +79,7 @@ Texture_Flags :: enum_flags u32 {
 // You may extend this if you need more.
 // Some combinations (e.g. RGB8) have equivalents
 // in OpenGL but not in D3D11.
+
 Texture_Format :: enum u32 {
     Default; // Default one according to the flags, 8 bits per channel most of the time.
     U32; // R32_UINT, R32G32_UINT ...
@@ -93,6 +93,49 @@ Texture_Format :: enum u32 {
     BC6S; // Signed float16
     BC7;
     BC7_SRGB;
+}
+
+Texture_Format2 :: enum u16 {
+    Unknown :: 0;
+
+    R8       :: 1;        // Fixed point formats.
+    RG8      :: 2;
+    RGBA8    :: 4;
+    RGBX8;
+    BGRA8;
+    B5G6R5;
+    RGB10A2;
+    R16;
+
+    R16F :: 0x10;   // Floating point formats.
+    RG16F;
+    RGBA16F;
+    R32F;
+    RG32F;
+    RGBA32F;
+    RG11B10F;
+    RGB9E5F;
+
+    R16I;           // Integer formats.
+    RG16I;
+    RGB16I;
+    RGBA16I;
+    R32I;
+    RG32I;
+    RGB32I;
+    RGBA32I;
+
+    // Block compression formats.
+    BC6U; // Unsigned float16
+    BC6S; // Signed float16
+    BC7;
+    BC7_SRGB;
+
+    // Depth formats.
+    D16;
+    D24S8;
+    D32F;
+    D32FS8;
 }
 
 Sampler_Filtering :: enum u32 {

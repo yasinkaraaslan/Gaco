@@ -1,11 +1,3 @@
-// NOTE(Yasin): Binding to specific stages doesn't make sense in OpenGL!!!
-// Find a way out of this before release!
-//
-// Option 1: Provide the parameter but just for compatibility, so it wouldn't make any difference in OpenGL.
-// Option 2: Set it for every stage in D3D11. (slow)
-// Option 3: Use glGetProgramPipelineiv and glProgramUniform somehow, which would bind it to a specific shader instead of a stage.
-
-
 Shader :: struct {
     type: Shader_Type;
     input_layout: *ID3D11InputLayout;
@@ -22,7 +14,7 @@ Buffer :: struct (type: Buffer_Type) {
         srv: *ID3D11ShaderResourceView;
     }
     else #if type == .RWStructured {
-        // @Incomplete: INDIRECT
+        // @Incomplete: .Indirect
         uav: *ID3D11UnorderedAccessView;
     }
 };
@@ -46,9 +38,7 @@ Texture :: struct {
 };
 
 Render_Target :: struct {
-    // We could hardcode 8 here because that is the maximum number of color views D3D11 supports.
-    // Which would increase the struct size but wouldn't require heap allocation.
-    color_views: []*ID3D11RenderTargetView;
+    color_views: [8]*ID3D11RenderTargetView;
     depth_stencil_view: *ID3D11DepthStencilView;
 }
 
@@ -78,7 +68,8 @@ is_empty :: (using shader: Shader) -> bool {
 }
 
 is_empty :: (using render_target: Render_Target) -> bool {
-    return !color_views && !depth_stencil_view;
+    // This is kinda hacky but if the first one is null then the color view is empty
+    return !color_views[0] && !depth_stencil_view;
 }
 
 init :: (window: HWND, wanted_msaa: u32 = 4) {
@@ -185,9 +176,6 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
         bd.CPUAccessFlags = .WRITE;
     }
 
-    // These are seperate in OpenGL while the same in D3D11
-    INDIRECT :: type == .Draw_Indirect || type == .Dispatch_Indirect;
-
     #if type == {
     case .Vertex;
         bd.BindFlags = .VERTEX_BUFFER;
@@ -206,13 +194,10 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
     case .Copy;
         bd.Usage = .STAGING;
         bd.CPUAccessFlags |= .READ;
-    }
-
-    #if INDIRECT {
+    case .Indirect;
         // If you are creating a draw indirect buffer you probably want unordered access.
         // But I am not sure about the performance implications, so this is @Incomplete.
         // bd.BindFlags = .UNORDERED_ACCESS;
-
         bd.MiscFlags = .DRAWINDIRECT_ARGS;
     }
 
@@ -234,7 +219,7 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
         hr = ID3D11Device_CreateShaderResourceView(device, buffer.buffer, *srv_desc, *buffer.srv);
         check_hr("ID3D11Device.CreateShaderResourceView", #code `return .{});
     }
-    else #if type == .RWStructured { // @Incomplete: || INDIRECT
+    else #if type == .RWStructured { // @Incomplete: || .Indirect
         uav_desc := D3D11_UNORDERED_ACCESS_VIEW_DESC.{
             ViewDimension = .BUFFER,
             Buffer.NumElements = count
@@ -494,7 +479,7 @@ clear :: (render_target: Render_Target, r: float, g: float, b: float, a: float, 
     #if flags & .Color {
         color := float.[r, g, b, a];
         for render_target.color_views {
-            ID3D11DeviceContext_ClearRenderTargetView(device_context, it, *color);
+            if it  ID3D11DeviceContext_ClearRenderTargetView(device_context, it, *color);
         }
     }
 
@@ -596,7 +581,7 @@ draw_instanced :: ($indexed: bool, count: u32, instance_count: u32, first: u32 =
     }
 }
 
-draw_indirect :: ($indexed: bool, buffer: Buffer(.Draw_Indirect), byte_offset: u32 = 0) {
+draw_indirect :: ($indexed: bool, buffer: Buffer(.Indirect), byte_offset: u32 = 0) {
     #if indexed {
         ID3D11DeviceContext_DrawIndexedInstancedIndirect(device_context, buffer.buffer, byte_offset);
     }
@@ -609,9 +594,7 @@ dispatch_compute :: (num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) {
     ID3D11DeviceContext_Dispatch(device_context, num_groups_x, num_groups_y, num_groups_z);
 }
 
-// Actually, both Draw_Indirect and Dispatch_Indirect would work here since they are the same in D3D11.
-// But just to be compatible with a potential OpenGL backend.
-dispatch_compute_indirect :: (buffer: Buffer(.Dispatch_Indirect), byte_offset: u32 = 0) {
+dispatch_compute_indirect :: (buffer: Buffer(.Indirect), byte_offset: u32 = 0) {
     ID3D11DeviceContext_DispatchIndirect(device_context, buffer.buffer, byte_offset);
 }
 
@@ -623,8 +606,6 @@ present :: (interval: u32 = 1) {
 create_render_target :: (color_textures: []Texture, depth_stencil_texture: Texture) -> Render_Target {
     render_target: Render_Target;
     if color_textures {
-        render_target.color_views = NewArray(color_textures.count, *ID3D11RenderTargetView);
-
         for color_textures {
             hr := ID3D11Device_CreateRenderTargetView(device, it.texture2d, null, *render_target.color_views[it_index]);
             check_hr("ID3D11Device.CreateRenderTargetView", #code return .{});
@@ -646,8 +627,6 @@ destroy_render_target :: (render_target: *Render_Target) {
     for * render_target.color_views {
         safe_release_and_reset(it);
     }
-    array_free(render_target.color_views);
-
     safe_release_and_reset(*render_target.depth_stencil_view);
 }
 
@@ -669,7 +648,7 @@ resize :: (width: int, height: int) -> window_render_target: Render_Target {
     destroy_texture(*depth_stencil_texture);
     destroy_texture(*back_buffer);
 
-    set_render_target(*window_render_target);
+    set_render_target(window_render_target);
     set_viewport(0, 0, cast(float)width, cast(float)height);
 
     return window_render_target;
@@ -684,7 +663,7 @@ resize :: (width: int, height: int) -> window_render_target: Render_Target {
 
 // @Incomplete: We should just have a format parameter and remove channels.
 create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None) -> Texture {
-    generate_mips := (flags & .Generate_Mips) && mip_levels_or_msaa > 1;
+    generate_mips := (flags & .Generate_Mips) && mip_levels_or_msaa != 1;
 
     d3d11_format: DXGI_FORMAT;
     bind_flags: D3D11_BIND_FLAG;

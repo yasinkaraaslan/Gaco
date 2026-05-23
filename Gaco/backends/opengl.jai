@@ -108,7 +108,7 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
     init_preloaded_modes();
 
     default_sampler = create_sampler(); // To be the same with d3d11
-    for 0..15 {
+    for 0..47 {
         bind_sampler(default_sampler, cast(u32)it);
     }
 }
@@ -294,19 +294,24 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
     args.shader_model_version = "6_0";
     args.shader_source = source;
     args.add_debug_info = DEBUG;
-    args.compile_as_spirv = true;
+    args.spirv_target_env = "vulkan1.1";
 
     compile :: (entry_point: string, shader_type: DXC.Shader_Type) -> string #expand {
         `args.entry_point = entry_point;
         `args.shader_type = shader_type;
+        extra_args: [..]string;
+        extra_args.allocator = temp;
+
+        array_add(*extra_args, "-fspv-flatten-resource-arrays", "-fspv-reflect");
         shift_args := string.[
-            "-fvk-t-shift", "0", "0",
-            "-fvk-b-shift", "0", "0",
+            "-fvk-t-shift", "0", "all",
+            "-fvk-b-shift", "0", "all",
             "-fvk-s-shift", "0", "all",
             "-fvk-u-shift", "0", "all",
         ];
         shift_amount: string;
         if shader_type == {
+        case .Vertex;
         case .Fragment;
             shift_amount = "16";
         case .Compute;
@@ -316,8 +321,10 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
             for 0..3 {
                 shift_args[3*it+1] = shift_amount;
             }
-            `args.extra_args = shift_args;
+            array_add(*extra_args, ..shift_args);
         }
+
+        `args.extra_args = extra_args;
 
         result := DXC.DXC_Compile(`args);
         if !result {
@@ -391,8 +398,17 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> S
     is_linked: GLint;
     glGetProgramiv(program, GL_LINK_STATUS, *is_linked);
     if is_linked == 0 {
+        info_len: GLint;
+        glGetProgramiv(program, GL_INFO_LOG_LENGTH, *info_len);
+
+        if info_len > 0 {
+            info_log := alloc(info_len,, temp);
+            glGetProgramInfoLog(program, cast(GLsizei)info_len, null, info_log);
+            log_error("[Gaco] Shader compilation failed:\n%", to_string(info_log));
+        } else {
+            log_error("[Gaco] Shader compilation failed with no info log.");
+        }
         glDeleteProgram(program);
-        log_error("[Gaco] Shader program linking failed!"); // @Incomplete: Give more info.
         return .{};
     }
 
@@ -560,7 +576,7 @@ draw_instanced :: ($indexed: bool, count: u32, instance_count: u32, first: u32 =
         glDrawElementsInstancedBaseVertexBaseInstance(current_primitive_mode, count, format, cast(*void)(current_index_stride * first), instance_count, base_vertex, first_instance);
     }
     else {
-        glDrawArraysInstancedBaseInstance(curent_primitive_mode, first, count, instance_count, first_instance);
+        glDrawArraysInstancedBaseInstance(current_primitive_mode, first, count, instance_count, first_instance);
     }
 }
 
@@ -1010,7 +1026,6 @@ get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
     offset: u32;
     for entry_variables {
         assert(it.format != .UNDEFINED);
-
         type, variant := spv_to_gl(it.format);
         if type == 0 {
             glDeleteVertexArrays(1, *input_vao);
