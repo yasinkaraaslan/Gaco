@@ -358,7 +358,17 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> S
         is_compiled: GLint;
         glGetShaderiv(s, GL_COMPILE_STATUS, *is_compiled);
         if is_compiled == 0 {
-            log_error("[Gaco] Shader loading failed."); // @Incomplete: Give more info.
+            info_len: GLint;
+            glGetShaderiv(program, GL_INFO_LOG_LENGTH, *info_len);
+            if info_len > 0 {
+                info_log := alloc(info_len,, temp);
+                glGetShaderInfoLog(program, cast(GLsizei)info_len, null, info_log);
+                log_error("[Gaco] Shader compilation failed: %", to_string(info_log));
+            }
+            else {
+                log_error("[Gaco] Shader compilation failed with no info log.");
+            }
+            log_error("[Gaco] Shader loading failed.");
             `return .{};
         }
         return s;
@@ -404,9 +414,9 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> S
         if info_len > 0 {
             info_log := alloc(info_len,, temp);
             glGetProgramInfoLog(program, cast(GLsizei)info_len, null, info_log);
-            log_error("[Gaco] Shader compilation failed:\n%", to_string(info_log));
+            log_error("[Gaco] Shader linking failed: %", to_string(info_log));
         } else {
-            log_error("[Gaco] Shader compilation failed with no info log.");
+            log_error("[Gaco] Shader linking failed with no info log.");
         }
         glDeleteProgram(program);
         return .{};
@@ -941,9 +951,8 @@ init_preloaded_modes :: () {
     }
 }
 
-// @Incomplete:
-// This is pretty barebones. It doesn't do any alignment checking and stuff.
 get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
+    #import "Sort";
     module: SpvReflectShaderModule;
     check :: (result: SpvReflectResult) #expand {
         if result != .SUCCESS {
@@ -951,100 +960,109 @@ get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
             `return 0;
         }
     }
-    Attrib_Proc_Variant :: enum u32 {
+
+    Attrib_Type :: enum u8 {
         Float;
+        Normalized;
         Int;
         Double;
     }
-    spv_to_gl :: (format: SpvReflectFormat) -> type: GLenum, variant: Attrib_Proc_Variant {
-        type: GLenum;
-        variant: Attrib_Proc_Variant;
 
-        if format >= .R16_UINT && format <= .R16G16B16A16_SFLOAT {
-            base := format - .R16_UINT;
-            if base % 7 == {
-            case 0;
-                type = GL_UNSIGNED_SHORT;
-                variant = .Int;
-            case 1;
-                type = GL_SHORT;
-                variant = .Int;
-            case 2;
-                type = GL_HALF_FLOAT;
-                variant = .Float;
-            };
+    spv_to_gl :: (format: SpvReflectFormat) -> type: GLenum, attrib_type: Attrib_Type {
+        if format == {
+            // 16-bit formats
+            case .R16_UINT; #through; case .R16G16_UINT; #through; case .R16G16B16_UINT; #through; case .R16G16B16A16_UINT;
+                return GL_UNSIGNED_SHORT, .Int;
+            case .R16_SINT; #through; case .R16G16_SINT; #through; case .R16G16B16_SINT; #through; case .R16G16B16A16_SINT;
+                return GL_SHORT, .Int;
+            case .R16_SFLOAT; #through; case .R16G16_SFLOAT; #through; case .R16G16B16_SFLOAT; #through; case .R16G16B16A16_SFLOAT;
+                return GL_HALF_FLOAT, .Float;
+
+            // 32-bit formats
+            case .R32_UINT; #through; case .R32G32_UINT; #through; case .R32G32B32_UINT; #through; case .R32G32B32A32_UINT;
+                return GL_UNSIGNED_INT, .Int;
+            case .R32_SINT; #through; case .R32G32_SINT; #through; case .R32G32B32_SINT; #through; case .R32G32B32A32_SINT;
+                return GL_INT, .Int;
+            case .R32_SFLOAT; #through; case .R32G32_SFLOAT; #through; case .R32G32B32_SFLOAT; #through; case .R32G32B32A32_SFLOAT;
+                return GL_FLOAT, .Float;
+
+            // 64-bit float formats
+            case .R64_SFLOAT; #through; case .R64G64_SFLOAT; #through; case .R64G64B64_SFLOAT; #through; case .R64G64B64A64_SFLOAT;
+                return GL_DOUBLE, .Double;
+
+            case;
+                // This will catch 64-bit ints (which OpenGL VAOs don't handle natively via standard attrib formats)
+                // and UNDEFINED formats.
+                log_error("[Gaco] Unsupported SPIR-V format mapped to OpenGL VAO: %", format);
+                return 0, .Float;
         }
-        else if format >= .R32_UINT && format <= .R32G32B32A32_SFLOAT {
-            base := format - .R32_UINT;
-            if base % 3 == {
-            case 0;
-                type = GL_UNSIGNED_INT;
-                variant = .Int;
-            case 1;
-                type = GL_INT;
-                variant = .Int;
-            case 2;
-                type = GL_FLOAT;
-                variant = .Float;
-            }
-        }
-        else if format >= .R64_UINT && format <= .R64G64B64A64_SFLOAT {
-            base := format - .R64_UINT;
-            variant = .Double;
-            if base % 3 == {
-            case 0;
-            case 1;
-                log_error("[Gaco] OpenGL doesn't support 64 bit integer vertex attributes! Couldn't create input vao!");
-                type = 0;
-            case 2;
-                type = GL_DOUBLE;
-            }
-        }
-        return type, variant;
     }
-
 
     check(spvReflectCreateShaderModule(cast(u64)spv_bytecode.count, spv_bytecode.data, *module));
     defer spvReflectDestroyShaderModule(*module);
 
     entry_count: u32;
     check(spvReflectEnumerateEntryPointInputVariables(*module, VS_ENTRY_POINT, *entry_count, null));
-    entry_variables := NewArray(entry_count, *SpvReflectInterfaceVariable,, temp);
-    check(spvReflectEnumerateEntryPointInputVariables(*module, VS_ENTRY_POINT, *entry_count, entry_variables.data));
+
+    raw_variables := NewArray(entry_count, *SpvReflectInterfaceVariable,, temp);
+    check(spvReflectEnumerateEntryPointInputVariables(*module, VS_ENTRY_POINT, *entry_count, raw_variables.data));
+
+    valid_variables: [..] *SpvReflectInterfaceVariable;
+    valid_variables.allocator = temp;
+    for raw_variables {
+        if it.location != 0xFFFF_FFFF {
+            array_add(*valid_variables, it);
+        }
+    }
+    quick_sort(valid_variables, x => x.location);
 
     input_vao: GLuint;
     glCreateVertexArrays(1, *input_vao);
 
-    offset: u32;
-    for entry_variables {
+    binding_offsets: [2]u32;
+
+    for valid_variables {
         assert(it.format != .UNDEFINED);
-        type, variant := spv_to_gl(it.format);
+        type, attrib_type := spv_to_gl(it.format);
         if type == 0 {
             glDeleteVertexArrays(1, *input_vao);
             return 0;
         }
 
-        comps := ifx it.numeric.vector.component_count else 1;
-        row_count := ifx it.numeric.matrix.row_count else 1;
+        semantic_str := ifx it.semantic then to_string(it.semantic) else to_string(it.name);
+        is_instance, step_rate := get_semantic_info(semantic_str);
+
+        binding_index := ifx is_instance cast(GLuint)1 else 0;
+
+        if is_instance {
+            glVertexArrayBindingDivisor(input_vao, binding_index, step_rate);
+        }
+
+        comps        := ifx it.numeric.vector.component_count else 1;
+        row_count    := ifx it.numeric.matrix.row_count else 1;
+        scalar_bytes := it.numeric.scalar.width / 8;
+
+        binding_offsets[binding_index] = (binding_offsets[binding_index] + scalar_bytes - 1) & ~(scalar_bytes - 1);
+
         for j: 0..row_count - 1 {
             loc := it.location + j;
 
             glEnableVertexArrayAttrib(input_vao, loc);
-            if variant == {
-            case .Float;
-                glVertexArrayAttribFormat (input_vao, loc, cast(s32)comps, type, GL_FALSE, offset);
-            case .Int;
-                glVertexArrayAttribIFormat(input_vao, loc, cast(s32)comps, type, offset);
-            case .Double;
-                glVertexArrayAttribLFormat(input_vao, loc, cast(s32)comps, type, offset);
+
+                case .Float;      glVertexArrayAttribFormat(input_vao, loc, cast(s32)comps, type, GL_FALSE, binding_offsets[binding_index]);
+                case .Normalized; glVertexArrayAttribFormat(input_vao, loc, cast(s32)comps, type, GL_TRUE, binding_offsets[binding_index]);
+                case .Int;        glVertexArrayAttribIFormat(input_vao, loc, cast(s32)comps, type, binding_offsets[binding_index]);
+                case .Double;     glVertexArrayAttribLFormat(input_vao, loc, cast(s32)comps, type, binding_offsets[binding_index]);
             }
-            glVertexArrayAttribBinding(input_vao, loc, 0);
-            offset += comps * it.numeric.scalar.width / 8;
+
+            glVertexArrayAttribBinding(input_vao, loc, binding_index);
+
+            binding_offsets[binding_index] += comps * scalar_bytes;
         }
     }
+
     return input_vao;
 }
-
 using GL_State: struct {
     main_window: WT.Window_Type;
     global_pipeline: GLuint;

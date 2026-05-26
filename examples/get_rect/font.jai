@@ -179,7 +179,6 @@ prepare_text :: (using font: *Font, text: string, effect_flags: Font_Effects = 0
         }
 
     }
-    // @Incomplete: Handle this situation
     assert(num_chars <= MAX_CHARACTERS);
 
     Gaco.write_buffer(*TextVertexBuffer, vertices);
@@ -227,7 +226,7 @@ draw_text_ascended :: inline (font: *Font, text: string, x: float, y: float, col
 
 Font_Effects :: enum{};
 
-// @Incomplete: Can only do ASCII
+// NOTE(Yasin): Can only do ASCII
 Font :: struct {
     face: FT_Face;
     ascent: float;

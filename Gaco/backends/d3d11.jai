@@ -654,14 +654,9 @@ resize :: (width: int, height: int) -> window_render_target: Render_Target {
     return window_render_target;
 }
 
-// @@ Data could be either []*u8 or [][]u8.
-// I am not sure which one makes more sense.
-
 // Data is an array for texture arrays and mipmapping.
 // Index = mip slice + (array slice * mip levels)
 // Image 0 mip data | Image 1 mip data | ...
-
-// @Incomplete: We should just have a format parameter and remove channels.
 create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.None) -> Texture {
     generate_mips := (flags & .Generate_Mips) && mip_levels_or_msaa != 1;
 

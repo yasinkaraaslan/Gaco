@@ -144,7 +144,6 @@ prepare_quads_for_text :: (using font: *Font, text: string, position: Vector2) -
         }
 
     }
-    // @Incomplete: Handle this situation
     assert(num_chars <= MAX_CHARACTERS);
 
     Gaco.write_buffer(*VertexBuffer, vertices);
@@ -186,7 +185,7 @@ draw_text :: (using font: *Font, text: string, position: Vector2, color := Vecto
     Gaco.set_blend_mode(.None);
 }
 
-// @Incomplete: Can only do ASCII
+// NOTE(Yasin): Can only do ASCII
 Font :: struct {
     face: FT_Face;
     size: u32;

@@ -269,8 +269,6 @@ create_texture_from_file :: (file_name: string, mip_levels: u32 = 1, format := T
 create_texture_from_memory :: (memory: string, mip_levels: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.None) -> Texture {
     width, height, file_channels: s32;
 
-    // @Incomplete
-    // desired_channels := get_stbi_channels(format);
     channels : s32;
     if format == {
         case .R8;    channels = 1;
@@ -300,8 +298,16 @@ create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, f
     }
 
     texture_width, texture_height: u32;
-    // desired_channels := get_stbi_channels(format);
-    desired_channels : s32 = 4;
+    channels : s32;
+    if format == {
+        case .R8;    channels = 1;
+        case .RG8;   channels = 2;
+        case .RGBA8; channels = 4;
+        case .RGBA8_SRGB; channels = 4;
+        case .BGRA8; channels = 4;
+        case .BGRA8_SRGB; channels = 4;
+        case; channels = 4;
+    };
 
     for file_names {
         bytes, ok := read_entire_file(it,, temp);
@@ -311,7 +317,7 @@ create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, f
         }
 
         width, height, file_channels: s32;
-        data[it_index] = stbi_load_from_memory(bytes.data, cast(s32)bytes.count, *width, *height, *file_channels, desired_channels);
+        data[it_index] = stbi_load_from_memory(bytes.data, cast(s32)bytes.count, *width, *height, *file_channels, channels);
 
         if !data[it_index] {
             log_error("[Gaco] STBI Failed to decode image for texture array: %", it);
