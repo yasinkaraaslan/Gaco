@@ -741,15 +741,27 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
 
                     if target == GL_TEXTURE_2D {
                         glCompressedTextureSubImage2D(texture.object, cast(s32)mip, 0, 0, mip_width, mip_height, gl_info.internal_format, image_size, pixels);
-                    } else {
-                        // DSA seems to just ignore the zoffset. Will investigate further.
+                    }
+                    else if target == GL_TEXTURE_CUBE_MAP {
+                        glBindTexture(GL_TEXTURE_CUBE_MAP, texture.object);
+                        glCompressedTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + cast(u32)zoffset, cast(s32)mip, 0, 0, mip_width, mip_height, gl_info.internal_format, image_size, pixels);
+                        glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+                    }
+                    else {
                         glCompressedTextureSubImage3D(texture.object, cast(s32)mip, 0, 0, cast(s32)zoffset, mip_width, mip_height, depth_arg, gl_info.internal_format, image_size, pixels);
                     }
                 }
                 else {
                     if target == GL_TEXTURE_2D {
                         glTextureSubImage2D(texture.object, cast(s32)mip, 0, 0, mip_width, mip_height, gl_info.upload_format, gl_info.upload_type, pixels);
-                    } else {
+                    }
+                    else if target == GL_TEXTURE_CUBE_MAP {
+                        // @Workaround: DSA glTextureSubImage3D ignores zoffset on some drivers.
+                        glBindTexture(GL_TEXTURE_CUBE_MAP, texture.object);
+                        glTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + cast(u32)zoffset, cast(s32)mip, 0, 0, mip_width, mip_height, gl_info.upload_format, gl_info.upload_type, pixels);
+                        glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+                    }
+                    else {
                         glTextureSubImage3D(texture.object, cast(s32)mip, 0, 0, cast(s32)zoffset, mip_width, mip_height, depth_arg, gl_info.upload_format, gl_info.upload_type, pixels);
                     }
                 }
