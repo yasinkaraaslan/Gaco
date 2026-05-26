@@ -108,7 +108,7 @@ main :: () {
             if !Gaco.is_empty(screenshot_texture) {
                 Gaco.destroy_texture(*screenshot_texture);
             }
-            screenshot_texture = Gaco.create_texture(.[], cast(u32)it.width, cast(u32)it.height, 4, flags=.Copy);
+            screenshot_texture = Gaco.create_texture(.[], cast(u32)it.width, cast(u32)it.height, flags=.Copy);
             Camera.proj_view = Camera.proj * view;
         }
         for events_this_frame {

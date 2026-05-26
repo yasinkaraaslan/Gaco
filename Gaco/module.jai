@@ -75,39 +75,20 @@ Texture_Flags :: enum_flags u32 {
     Compute_RW; // RWTexture2D
 }
 
-// I only put the most common formats here, for simplicity sake.
-// You may extend this if you need more.
-// Some combinations (e.g. RGB8) have equivalents
-// in OpenGL but not in D3D11.
-
-Texture_Format :: enum u32 {
-    Default; // Default one according to the flags, 8 bits per channel most of the time.
-    U32; // R32_UINT, R32G32_UINT ...
-    SRGB;
-    Float16;
-    Float32;
-
-    // Block compression formats.
-    // These do not care about the channels argument passed to create_texture.
-    BC6U; // Unsigned float16
-    BC6S; // Signed float16
-    BC7;
-    BC7_SRGB;
-}
-
-Texture_Format2 :: enum u16 {
+Texture_Format :: enum u16 {
     Unknown :: 0;
 
-    R8       :: 1;        // Fixed point formats.
-    RG8      :: 2;
-    RGBA8    :: 4;
-    RGBX8;
+    R8      :: 1;        // Fixed point formats.
+    RG8;
+    RGBA8;
+    RGBA8_SRGB;
     BGRA8;
+    BGRA8_SRGB;
     B5G6R5;
     RGB10A2;
     R16;
 
-    R16F :: 0x10;   // Floating point formats.
+    R16F;   // Floating point formats.
     RG16F;
     RGBA16F;
     R32F;
@@ -118,7 +99,6 @@ Texture_Format2 :: enum u16 {
 
     R16I;           // Integer formats.
     RG16I;
-    RGB16I;
     RGBA16I;
     R32I;
     RG32I;
@@ -279,46 +259,76 @@ create_buffer :: (data: $T, $type: Buffer_Type, usage := Buffer_Usage.Default) -
     return create_buffer(data_pointer, count, stride, type, usage);
 }
 
-create_texture_from_file :: (file_name: string, mip_levels : u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None, desired_channels : u32 = 0) -> Texture {
+create_texture_from_file :: (file_name: string, mip_levels: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.None) -> Texture {
     bytes, ok := read_entire_file(file_name,, temp);
-
     if !ok return .{};
-    return create_texture_from_memory(bytes, mip_levels, format, flags, desired_channels);
+
+    return create_texture_from_memory(bytes, mip_levels, format, flags);
 }
 
-create_texture_from_memory :: (memory: string, mip_levels : u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None, desired_channels: u32 = 0) -> Texture {
-    width, height, channels: s32;
+create_texture_from_memory :: (memory: string, mip_levels: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.None) -> Texture {
+    width, height, file_channels: s32;
 
-    // NOTE(Yasin): Unfortunately, this is allocated with malloc and there is no way to read into an existing buffer.
-    // https://github.com/nothings/stb/issues/58
+    // @Incomplete
+    // desired_channels := get_stbi_channels(format);
+    channels : s32;
+    if format == {
+        case .R8;    channels = 1;
+        case .RG8;   channels = 2;
+        case .RGBA8; channels = 4;
+        case .RGBA8_SRGB; channels = 4;
+        case .BGRA8; channels = 4;
+        case .BGRA8_SRGB; channels = 4;
+        case; channels = 4;
+    };
 
-    buffer := stbi_load_from_memory(memory.data, cast(s32)memory.count, *width, *height, *channels, cast(s32) desired_channels);
-    defer stbi_image_free(buffer);
-    return create_texture(.[buffer], cast(u32)width, cast(u32)height, ifx desired_channels desired_channels else cast(u32)channels, 1, mip_levels, format, flags);
+    buffer := stbi_load_from_memory(memory.data, cast(s32)memory.count, *width, *height, *file_channels, channels);
+    defer if buffer stbi_image_free(buffer);
+
+    if !buffer {
+        log_error("[Gaco] Failed to load image from memory.");
+        return .{};
+    }
+
+    return create_texture(.[buffer], cast(u32)width, cast(u32)height, 1, mip_levels, format, flags);
 }
 
-create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None, desired_channels : u32 = 0) -> Texture {
+create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.None) -> Texture {
     data := NewArray(file_names.count, *u8,, temp);
     defer for data {
-        if it  stbi_image_free(it);
+        if it stbi_image_free(it);
     }
 
-    texture_width, texture_height, texture_channels: u32;
+    texture_width, texture_height: u32;
+    // desired_channels := get_stbi_channels(format);
+    desired_channels : s32 = 4;
+
     for file_names {
         bytes, ok := read_entire_file(it,, temp);
-        if !ok return .{};
-        width, height, channels: s32;
+        if !ok {
+            log_error("[Gaco] Failed to read file for texture array: %", it);
+            return .{};
+        }
 
-        data[it_index] = stbi_load_from_memory(bytes.data, cast(s32)bytes.count, *width, *height, *channels, cast(s32)desired_channels);
+        width, height, file_channels: s32;
+        data[it_index] = stbi_load_from_memory(bytes.data, cast(s32)bytes.count, *width, *height, *file_channels, desired_channels);
+
+        if !data[it_index] {
+            log_error("[Gaco] STBI Failed to decode image for texture array: %", it);
+            return .{};
+        }
 
         if it_index == 0 {
-            texture_width    = cast(u32)width;
-            texture_height   = cast(u32)height;
-            texture_channels = ifx desired_channels desired_channels else cast(u32)channels;
+            texture_width  = cast(u32)width;
+            texture_height = cast(u32)height;
+        } else if cast(u32)width != texture_width || cast(u32)height != texture_height {
+            log_error("[Gaco] Texture array mismatch: % dimensions do not match the first slice.", it);
+            return .{};
         }
     }
-    count : u32 = cast(u32)file_names.count;
-    return create_texture(data, texture_width, texture_height, texture_channels, count, mip_levels, format, flags);
+
+    count := cast(u32)file_names.count;
+    return create_texture(data, texture_width, texture_height, count, mip_levels, format, flags);
 }
 
 // Use write_buffer for buffers with .Dynamic usage and update_buffer for those with .Default usage.
@@ -392,6 +402,52 @@ get_semantic_info :: (semantic: string) -> is_instance: bool, step_rate: u32 {
     }
     return false, 0;
 }
+
+TEXTURE_BYTES_PER_BLOCK :: u32.[
+    0,  // Unknown
+
+    // Fixed point
+    1,  // R8
+    2,  // RG8
+    4,  // RGBA8
+    4,  // RGBA8_SRGB
+    4,  // BGRA8
+    4,  // BGRA8_SRGB
+    2,  // B5G6R5
+    4,  // RGB10A2
+    2,  // R16
+
+    // Floating point
+    2,  // R16F
+    4,  // RG16F
+    8,  // RGBA16F
+    4,  // R32F
+    8,  // RG32F
+    16, // RGBA32F
+    4,  // RG11B10F
+    4,  // RGB9E5F
+
+    // Integer
+    2,  // R16I
+    4,  // RG16I
+    8,  // RGBA16I
+    4,  // R32I
+    8,  // RG32I
+    12, // RGB32I
+    16, // RGBA32I
+
+    // Block compression (Bytes per 4x4 block)
+    16, // BC6U
+    16, // BC6S
+    16, // BC7
+    16, // BC7_SRGB
+
+    // Depth
+    2,  // D16
+    4,  // D24S8
+    4,  // D32F
+    8   // D32FS8 (D32_FLOAT_S8X24_UINT is 64 bits = 8 bytes)
+];
 
 #import "String";
 #import "File";

@@ -69,7 +69,7 @@ load_font_from_memory :: (memory: []u8, size: int) -> *Font {
         if rows > texture_height  texture_height = rows;
     }
 
-    font.texture = Gaco.create_texture(.[], texture_width, texture_height, 1);
+    font.texture = Gaco.create_texture(.[], texture_width, texture_height, format=.R8);
 
 
     x : u32;

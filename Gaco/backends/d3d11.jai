@@ -642,7 +642,7 @@ resize :: (width: int, height: int) -> window_render_target: Render_Target {
     hr = IDXGISwapChain_GetBuffer(swap_chain, 0, *uid(ID3D11Texture2D_UUID), xx *back_buffer.texture2d);
     check_hr("IDXGISwapChain.GetBuffer", #code `return .{});
 
-    depth_stencil_texture := create_texture(.[], cast(u32)width, cast(u32)height, 1, 1, msaa, flags=.Depth_Stencil | .Multisample);
+    depth_stencil_texture := create_texture(.[], cast(u32)width, cast(u32)height, 1, msaa, .D24S8, .Depth_Stencil | .Multisample);
     window_render_target = create_render_target(.[back_buffer], depth_stencil_texture);
 
     destroy_texture(*depth_stencil_texture);
@@ -662,10 +662,9 @@ resize :: (width: int, height: int) -> window_render_target: Render_Target {
 // Image 0 mip data | Image 1 mip data | ...
 
 // @Incomplete: We should just have a format parameter and remove channels.
-create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None) -> Texture {
+create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.None) -> Texture {
     generate_mips := (flags & .Generate_Mips) && mip_levels_or_msaa != 1;
 
-    d3d11_format: DXGI_FORMAT;
     bind_flags: D3D11_BIND_FLAG;
     misc_flags: D3D11_RESOURCE_MISC_FLAG;
 
@@ -673,7 +672,6 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
     access_flags: D3D11_CPU_ACCESS_FLAG;
 
     // Pick the flags
-
     if flags & .Compute_RW
         bind_flags = .UNORDERED_ACCESS;
     else if flags & .Render_Target
@@ -698,50 +696,13 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
         misc_flags |= .TEXTURECUBE;
 
     // Pick the format
-
-    formats: [4]DXGI_FORMAT;
-    bytes_per_block := channels;
-    if format == {
-    case .U32;
-        formats = DXGI_FORMAT.[.R32_UINT, .R32G32_UINT, .R32G32B32_UINT, .R32G32B32A32_UINT];
-        bytes_per_block *= 4;
-    case .SRGB;
-        formats[3] = .R8G8B8A8_UNORM_SRGB;
-    case .Float16;
-        formats = DXGI_FORMAT.[.R16_FLOAT, .R16G16_FLOAT, .UNKNOWN, .R16G16B16A16_FLOAT];
-        bytes_per_block *= 2;
-    case .Float32;
-        formats = DXGI_FORMAT.[.R32_FLOAT, .R32G32_FLOAT, .R32G32B32_FLOAT, .R32G32B32A32_FLOAT];
-        bytes_per_block *= 4;
-    case .BC6U;
-        d3d11_format = .BC6H_UF16;
-    case .BC6S;
-        d3d11_format = .BC6H_SF16;
-    case .BC7;
-        d3d11_format = .BC7_UNORM;
-    case .BC7_SRGB;
-        d3d11_format = .BC7_UNORM_SRGB;
-    case .Default;
-        if flags & .Depth_Stencil
-            d3d11_format = .D24_UNORM_S8_UINT;
-        else
-            formats = DXGI_FORMAT.[.R8_UNORM, .R8G8_UNORM, .UNKNOWN, .R8G8B8A8_UNORM];
-    case;
-        log_error("[Gaco] Unknown texture format: %", format);
+    d3d11_format := DXGI_MAPPING_ARRAY[format];
+    if d3d11_format == .DXGI_FORMAT_UNKNOWN {
+        log_error("[Gaco] Error while creating texture: Format % is Unknown or unsupported.", format);
         return .{};
     }
 
-    if is_block_compression(format)
-        bytes_per_block = 16;
-
-    if !d3d11_format {
-        d3d11_format = formats[channels-1];
-
-        if !d3d11_format {
-            log_error("[Gaco] Error while creating texture: % channels with format % is not compatible.", channels, format);
-            return .{};
-        }
-    }
+    bytes_per_block := TEXTURE_BYTES_PER_BLOCK[format];
 
     // Create the thing
     texture := Texture.{width=width, height=height, stride=bytes_per_block, flags=flags};
@@ -831,17 +792,18 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
             index := mip_levels_or_msaa * cast(u32)it_index;
             block_width := width;
             block_height := height;
+
             if is_block_compression(format) {
                 block_width  = cast(u32)max(1, (block_width + 3) / 4);
                 block_height = cast(u32)max(1, (block_height + 3) / 4);
             }
+
             pitch := block_width * bytes_per_block;
             ID3D11DeviceContext_UpdateSubresource(device_context, resource, index, null, it, pitch, pitch * block_height);
         }
     }
 
     // Create the view
-
     // TODO(Yasin): We do not handle arrays right now, which is not good
     if bind_flags & .SHADER_RESOURCE {
         hr := ID3D11Device_CreateShaderResourceView(device, resource, null, *texture.resource_view);
@@ -852,9 +814,8 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
         }
     }
     else if bind_flags & .UNORDERED_ACCESS {
-        hr := ID3D11Device_CreateUnorderedAccessView(device, resource, null, * texture.unordered_access_view);
+        hr := ID3D11Device_CreateUnorderedAccessView(device, resource, null, *texture.unordered_access_view);
         check_hr("ID3D11Device.CreateUnorderedAccessView", #code return .{});
-
     }
 
     return texture;
@@ -1188,6 +1149,52 @@ check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
         #insert code_to_insert_after_fail;
     }
 }
+
+DXGI_MAPPING_ARRAY :: DXGI_FORMAT.[
+    .DXGI_FORMAT_UNKNOWN,               // Unknown
+
+    // Fixed point formats
+    .DXGI_FORMAT_R8_UNORM,              // R8
+    .DXGI_FORMAT_R8G8_UNORM,            // RG8
+    .DXGI_FORMAT_R8G8B8A8_UNORM,        // RGBA8
+    .DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,   // RGBA8_SRGB
+    .DXGI_FORMAT_B8G8R8A8_UNORM,        // BGRA8
+    .DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,   // BGRA8_SRGB
+    .DXGI_FORMAT_B5G6R5_UNORM,          // B5G6R5
+    .DXGI_FORMAT_R10G10B10A2_UNORM,     // RGB10A2
+    .DXGI_FORMAT_R16_UNORM,             // R16
+
+    // Floating point formats
+    .DXGI_FORMAT_R16_FLOAT,             // R16F
+    .DXGI_FORMAT_R16G16_FLOAT,          // RG16F
+    .DXGI_FORMAT_R16G16B16A16_FLOAT,    // RGBA16F
+    .DXGI_FORMAT_R32_FLOAT,             // R32F
+    .DXGI_FORMAT_R32G32_FLOAT,          // RG32F
+    .DXGI_FORMAT_R32G32B32A32_FLOAT,    // RGBA32F
+    .DXGI_FORMAT_R11G11B10_FLOAT,       // RG11B10F
+    .DXGI_FORMAT_R9G9B9E5_SHAREDEXP,    // RGB9E5F
+
+    // Integer formats
+    .DXGI_FORMAT_R16_SINT,              // R16I
+    .DXGI_FORMAT_R16G16_SINT,           // RG16I
+    .DXGI_FORMAT_R16G16B16A16_SINT,     // RGBA16I
+    .DXGI_FORMAT_R32_SINT,              // R32I
+    .DXGI_FORMAT_R32G32_SINT,           // RG32I
+    .DXGI_FORMAT_R32G32B32_SINT,        // RGB32I
+    .DXGI_FORMAT_R32G32B32A32_SINT,     // RGBA32I
+
+    // Block compression formats
+    .DXGI_FORMAT_BC6H_UF16,             // BC6U
+    .DXGI_FORMAT_BC6H_SF16,             // BC6S
+    .DXGI_FORMAT_BC7_UNORM,             // BC7
+    .DXGI_FORMAT_BC7_UNORM_SRGB,        // BC7_SRGB
+
+    // Depth formats
+    .DXGI_FORMAT_D16_UNORM,             // D16
+    .DXGI_FORMAT_D24_UNORM_S8_UINT,     // D24S8
+    .DXGI_FORMAT_D32_FLOAT,             // D32F
+    .DXGI_FORMAT_D32_FLOAT_S8X24_UINT   // D32FS8
+];
 
 #import "d3d11";
 #import "d3d_compiler";

@@ -639,65 +639,24 @@ resize :: (width: int, height: int) -> window_render_target: Render_Target {
     return .{}; // @Incomplete: Use our own framebuffer instead of the default one
 }
 
-create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.Default, flags := Texture_Flags.None) -> Texture {
-    GL_COMPRESSED_RGBA_BPTC_UNORM_ARB :: 0x8E8C;
-    GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_ARB :: 0x8E8D;
-    GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_ARB :: 0x8E8E;
-    GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_ARB :: 0x8E8F;
+create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.None) -> Texture {
+    generate_mips := (flags & .Generate_Mips) && mip_levels_or_msaa != 1;
 
-    formats: [4]GLenum;
-    bytes_per_block := channels;
-    internal_format: GLenum;
-    if format == {
-    case .U32;
-        formats = .[GL_R32UI, GL_RG32UI, GL_RGB32UI, GL_RGBA32UI];
-        bytes_per_block *= 4;
-    case .SRGB;
-        // We do not specify GL_SRGB8 because D3D11 doesn't support it.
-        formats[3] = GL_SRGB8_ALPHA8;
-    case .Float16;
-        formats = .[GL_R16F, GL_RG16F, GL_RGB16F, GL_RGBA16F];
-        bytes_per_block *= 2;
-    case .Float32;
-        formats = .[GL_R32F, GL_RG32F, GL_RGB32F, GL_RGBA32F];
-        bytes_per_block *= 4;
-    case .BC6U;
-        internal_format = GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_ARB;
-    case .BC6S;
-        internal_format = GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_ARB;
-    case .BC7;
-        internal_format = GL_COMPRESSED_RGBA_BPTC_UNORM_ARB;
-    case .BC7_SRGB;
-        internal_format = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_ARB;
-    case .Default;
-        if flags & .Depth_Stencil {
-            internal_format = GL_DEPTH24_STENCIL8;
-        }
-        else {
-            formats = .[GL_R8, GL_RG8, 0, GL_RGBA8];
-        }
-        // @Incomplete: flags & .Depth_Stencil
-    case;
-        log_error("[Gaco] Unknown texture format: %", format);
+    gl_info := GL_MAPPING_ARRAY[format];
+    if gl_info.internal_format == 0 {
+        log_error("[Gaco] Error while creating texture: Format % is Unknown or unsupported.", format);
         return .{};
     }
 
-        if !internal_format {
-            internal_format = formats[channels - 1];
-            if !internal_format {
-                log_error("[Gaco] Error while creating texture: % channels with format % is not compatible.", channels, format);
-                return .{};
-            }
-        }
+    bytes_per_block := TEXTURE_BYTES_PER_BLOCK[format];
 
-    PIXEL_TYPE_TABLE :: GLenum.[GL_UNSIGNED_BYTE, GL_UNSIGNED_INT, GL_UNSIGNED_BYTE, GL_HALF_FLOAT, GL_FLOAT];
-    PIXEL_FORMAT_TABLE :: GLenum.[GL_RED, GL_RG, GL_RGB, GL_RGBA];
-    PIXEL_FORMAT_TABLE_INT :: GLenum.[GL_RED_INTEGER, GL_RG_INTEGER, GL_RGB_INTEGER, GL_RGBA_INTEGER];
-    pixel_format_table := ifx format == .U32 PIXEL_FORMAT_TABLE_INT else PIXEL_FORMAT_TABLE;
-
-    texture := Texture.{width=width, height=height, stride=bytes_per_block, flags=flags,
-        pixel_type = PIXEL_TYPE_TABLE[format],
-        pixel_format = pixel_format_table[channels - 1]
+    texture := Texture.{
+        width = width,
+        height = height,
+        stride = bytes_per_block,
+        flags = flags,
+        pixel_type = gl_info.upload_type,
+        pixel_format = gl_info.upload_format
     };
 
     if flags & .Copy {
@@ -705,82 +664,103 @@ create_texture :: (data: []*u8, width: u32, height: u32, channels: u32, array_co
         glCreateBuffers(1, *texture.object);
         glNamedBufferStorage(texture.object, size, null, GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT);
         texture.pbo_size = size;
+        return texture;
+    }
+
+    target: GLenum = GL_TEXTURE_2D;
+
+    is_cube  := (flags & .Cubemap) != 0;
+    logical_array_count := array_count_or_depth;
+    if is_cube logical_array_count /= 6;
+    is_array := logical_array_count > 1;
+    is_3d    := (flags & .Is_3D) != 0;
+    is_msaa  := (flags & .Multisample) != 0;
+
+    if is_3d {
+        if is_msaa log_error("[Gaco] Warning: MSAA 3D textures are not standard in OpenGL.");
+        target = GL_TEXTURE_3D;
+    }
+    else if is_cube {
+        if is_array target = GL_TEXTURE_CUBE_MAP_ARRAY;
+        else        target = GL_TEXTURE_CUBE_MAP;
+    }
+    else if is_array {
+        if is_msaa target = GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
+        else       target = GL_TEXTURE_2D_ARRAY;
     }
     else {
+        if is_msaa target = GL_TEXTURE_2D_MULTISAMPLE;
+        else       target = GL_TEXTURE_2D;
+    }
 
-        target: GLuint = GL_TEXTURE_2D;
+    glCreateTextures(target, 1, *texture.object);
 
-        msaa: u32 = 1;
-        mip_levels: u32 = 1;
-        array_count: u32 = 1;
-        depth: u32 = 1;
-        if flags & .Multisample
-            msaa = mip_levels_or_msaa;
-        else
-            mip_levels = mip_levels_or_msaa;
+    mip_levels := ifx is_msaa 1 else mip_levels_or_msaa;
 
-        if flags & .Is_3D {
-            target = GL_TEXTURE_3D;
-            depth = array_count_or_depth;
+    if is_msaa {
+        if is_array {
+            glTextureStorage3DMultisample(texture.object, mip_levels_or_msaa, gl_info.internal_format, width, height, array_count_or_depth, GL_TRUE);
+        } else {
+            glTextureStorage2DMultisample(texture.object, mip_levels_or_msaa, gl_info.internal_format, width, height, GL_TRUE);
         }
-        else if flags & .Cubemap {
-            if array_count_or_depth > 6 {
-                target = GL_TEXTURE_CUBE_MAP_ARRAY;
-            }
-            else {
-                target = GL_TEXTURE_CUBE_MAP;
-            }
-        }
-        else if array_count_or_depth > 1 {
-            if flags & .Multisample target = GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
-            else                         target = GL_TEXTURE_2D_ARRAY;
-        }
-        else if flags & .Multisample target = GL_TEXTURE_2D_MULTISAMPLE;
-
-        glCreateTextures(target, 1, *texture.object);
-        if flags & .Is_3D {
-            glTextureStorage3D(texture.object, mip_levels, internal_format, width, height, array_count_or_depth);
-        }
-        else if flags & .Cubemap {
-            // @Temporary. I cannot specify a cubemap's faces with DSA for some reason.
-            glTextureStorage2D(texture.object, 1, internal_format, width, height);
-            glBindTexture(GL_TEXTURE_CUBE_MAP, texture.object);
-            faces := GLenum.[
-                GL_TEXTURE_CUBE_MAP_POSITIVE_X,
-                GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
-                GL_TEXTURE_CUBE_MAP_POSITIVE_Y,
-                GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
-                GL_TEXTURE_CUBE_MAP_POSITIVE_Z,
-                GL_TEXTURE_CUBE_MAP_NEGATIVE_Z
-            ];
-
-            for data {
-                glTexSubImage2D(faces[it_index], 0, 0, 0, width, height, texture.pixel_format, texture.pixel_type, it);
-            }
-            glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+    }
+    else {
+        if target == GL_TEXTURE_3D || target == GL_TEXTURE_2D_ARRAY || target == GL_TEXTURE_CUBE_MAP_ARRAY {
+            depth := ifx target == GL_TEXTURE_CUBE_MAP_ARRAY then logical_array_count * 6 else logical_array_count;
+            glTextureStorage3D(texture.object, mip_levels, gl_info.internal_format, width, height, depth);
         }
         else {
-            glTextureStorage2D(texture.object, mip_levels, internal_format, width, height);
+            // GL_TEXTURE_2D, GL_TEXTURE_1D, and GL_TEXTURE_CUBE_MAP use 2D storage
+            glTextureStorage2D(texture.object, mip_levels, gl_info.internal_format, width, height);
+        }
+    }
 
-            // NOTE(Yasin): We will probably overhaul this before the release.
-            // @Incomplete: Arrays
-            // @Incomplete: Depth_Stencil
-            // @Incomplete: Compression textures
-            if data {
-                if flags & .Cubemap {
-                    for data {
-                        // update_texture(*texture, it, cast(u32)it_index);
+    if data && !is_msaa {
+        mips_to_upload := ifx generate_mips 1 else mip_levels;
+        slices         := ifx is_3d 1 else array_count_or_depth;
+
+        for slice: 0..slices-1 {
+            for mip: 0..mips_to_upload-1 {
+                data_index := mip + slice * mip_levels;
+                if data_index >= data.count break;
+
+                pixels := data[data_index];
+                if !pixels continue;
+
+                mip_width  := cast(u32)max(1, width >> mip);
+                mip_height := cast(u32)max(1, height >> mip);
+                mip_depth  := ifx is_3d cast(u32)max(1, array_count_or_depth >> mip) else 1;
+
+                zoffset   := ifx is_3d then 0 else slice;
+                depth_arg := ifx is_3d then mip_depth else 1;
+
+                if is_block_compression(format) {
+                    bw := (mip_width + 3) / 4;
+                    bh := (mip_height + 3) / 4;
+                    image_size := cast(u32)(bw * bh * bytes_per_block * mip_depth);
+
+                    if target == GL_TEXTURE_2D {
+                        glCompressedTextureSubImage2D(texture.object, cast(s32)mip, 0, 0, mip_width, mip_height, gl_info.internal_format, image_size, pixels);
+                    } else {
+                        // DSA seems to just ignore the zoffset. Will investigate further.
+                        glCompressedTextureSubImage3D(texture.object, cast(s32)mip, 0, 0, cast(s32)zoffset, mip_width, mip_height, depth_arg, gl_info.internal_format, image_size, pixels);
                     }
                 }
-                update_texture(*texture, data[0]);
+                else {
+                    if target == GL_TEXTURE_2D {
+                        glTextureSubImage2D(texture.object, cast(s32)mip, 0, 0, mip_width, mip_height, gl_info.upload_format, gl_info.upload_type, pixels);
+                    } else {
+                        glTextureSubImage3D(texture.object, cast(s32)mip, 0, 0, cast(s32)zoffset, mip_width, mip_height, depth_arg, gl_info.upload_format, gl_info.upload_type, pixels);
+                    }
+                }
             }
         }
-
-        if flags & .Generate_Mips {
-            glGenerateTextureMipmap(texture.object);
-        }
-
     }
+
+    if generate_mips {
+        glGenerateTextureMipmap(texture.object);
+    }
+
     return texture;
 }
 
@@ -1067,6 +1047,59 @@ using GL_State: struct {
     blend_modes: [#run enum_count(Blend_Mode)]Blend_State;
     depth_stencil_modes: [#run enum_count(Depth_Stencil_Mode)]Depth_Stencil_State;
 }
+
+GL_Format_Info :: struct {
+    internal_format : u32;
+    upload_format   : u32;
+    upload_type     : u32;
+}
+
+
+GL_MAPPING_ARRAY :: GL_Format_Info.[
+    .{ GL_NONE, 0, 0 }, // Unknown
+
+    // Fixed point formats
+    .{ GL_R8,             GL_RED,  GL_UNSIGNED_BYTE },                  // R8
+    .{ GL_RG8,            GL_RG,   GL_UNSIGNED_BYTE },                  // RG8
+    .{ GL_RGBA8,          GL_RGBA, GL_UNSIGNED_BYTE },                  // RGBA8
+    .{ GL_SRGB8_ALPHA8,   GL_RGBA, GL_UNSIGNED_BYTE },                  // RGBA8_SRGB
+    .{ GL_RGBA8,          GL_BGRA, GL_UNSIGNED_BYTE },                  // BGRA8
+    .{ GL_SRGB8_ALPHA8,   GL_BGRA, GL_UNSIGNED_BYTE },                  // BGRA8_SRGB
+    .{ GL_RGB565,         GL_RGB,  GL_UNSIGNED_SHORT_5_6_5 },           // B5G6R5
+    .{ GL_RGB10_A2,       GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV },    // RGB10A2
+    .{ GL_R16,            GL_RED,  GL_UNSIGNED_SHORT },                 // R16
+
+    // Floating point formats
+    .{ GL_R16F,     GL_RED,  GL_HALF_FLOAT },                     // R16F
+    .{ GL_RG16F,    GL_RG,   GL_HALF_FLOAT },                     // RG16F
+    .{ GL_RGBA16F,  GL_RGBA, GL_HALF_FLOAT },                     // RGBA16F
+    .{ GL_R32F,     GL_RED,  GL_FLOAT },                          // R32F
+    .{ GL_RG32F,    GL_RG,   GL_FLOAT },                          // RG32F
+    .{ GL_RGBA32F,  GL_RGBA, GL_FLOAT },                          // RGBA32F
+    .{ GL_R11F_G11F_B10F, GL_RGB, GL_UNSIGNED_INT_10F_11F_11F_REV},// RG11B10F
+    .{ GL_RGB9_E5,  GL_RGB,  GL_UNSIGNED_INT_5_9_9_9_REV },       // RGB9E5F
+
+    // Integer formats
+    .{ GL_R16I,     GL_RED_INTEGER,  GL_SHORT },                  // R16I
+    .{ GL_RG16I,    GL_RG_INTEGER,   GL_SHORT },                  // RG16I
+    .{ GL_RGBA16I,  GL_RGBA_INTEGER, GL_SHORT },                  // RGBA16I
+    .{ GL_R32I,     GL_RED_INTEGER,  GL_INT },                    // R32I
+    .{ GL_RG32I,    GL_RG_INTEGER,   GL_INT },                    // RG32I
+    .{ GL_RGB32I,   GL_RGB_INTEGER,  GL_INT },                    // RGB32I
+    .{ GL_RGBA32I,  GL_RGBA_INTEGER, GL_INT },                    // RGBA32I
+
+    // Block compression formats
+    .{ GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT, 0, 0 },             // BC6U
+    .{ GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT,   0, 0 },             // BC6S
+    .{ GL_COMPRESSED_RGBA_BPTC_UNORM,         0, 0 },             // BC7
+    .{ GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM,   0, 0 },             // BC7_SRGB
+
+    // Depth formats
+    .{ GL_DEPTH_COMPONENT16, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT },             // D16
+    .{ GL_DEPTH24_STENCIL8,  GL_DEPTH_STENCIL,   GL_UNSIGNED_INT_24_8 },          // D24S8
+    .{ GL_DEPTH_COMPONENT32F,GL_DEPTH_COMPONENT, GL_FLOAT },                      // D32F
+    .{ GL_DEPTH32F_STENCIL8, GL_DEPTH_STENCIL,   GL_FLOAT_32_UNSIGNED_INT_24_8_REV } // D32FS8
+];
 #import "GL";
 DXC :: #import "dxc_compiler";
 

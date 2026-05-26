@@ -28,7 +28,7 @@ main :: () {
 
     skybox_vertex_buffer := Gaco.create_buffer(vertices, .Vertex, .Immutable);
     skybox_index_buffer := Gaco.create_buffer(indices, .Index, .Immutable);
-    skybox_texture := Gaco.create_texture_array_from_files(SKYBOX_FILE_NAMES, flags=.Cubemap, desired_channels=4);
+    skybox_texture := Gaco.create_texture_array_from_files(SKYBOX_FILE_NAMES, flags=.Cubemap);
 
 
     transform_buffer := Gaco.create_buffer(Matrix4_Identity, .Constant, .Dynamic);
@@ -97,4 +97,4 @@ main :: () {
 #import "Window_Creation";
 #import "Input";
 #import "Math";
-Gaco :: #import,dir "../../Gaco"(BACKEND=.OpenGL);
+Gaco :: #import,dir "../../Gaco";
