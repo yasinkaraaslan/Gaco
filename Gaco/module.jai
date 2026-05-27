@@ -17,17 +17,34 @@
     //
 }
 
-Shader_Type :: enum_flags u32 {
+Shader_Bytecode :: struct {
+    vs: string;
+    fs: string;
+    cs: string;
+}
+
+Shader_Type :: enum_flags u8 {
     Unspecified :: 0;
     Vertex :: 1;
     Fragment;
     Compute;
 };
 
-Shader_Bytecode :: struct {
-    vs: string;
-    fs: string;
-    cs: string;
+Shader_Backend :: enum u8 {
+    Unspecified :: 0;
+    DXBC :: 1;
+    SPIR_V;
+}
+
+Shader_Header :: struct {
+    magic: u32;
+    version: u32;
+    backend: Shader_Backend;
+    type: Shader_Type;
+    sampler_mapping_count: u16; // Only used for SPIR-V
+    vs_size: u32;
+    fs_size: u32;
+    cs_size: u32;
 }
 
 Primitive_Type :: enum u32 {
@@ -209,6 +226,35 @@ compile_shader :: (file_name: string, output_file_without_extension: string, typ
     return true;
 }
 
+compile_shader2 :: (file_name: string, output_file_name: string, type: Shader_Type) -> bool {
+    push_allocator(temp);
+    source, ok := read_entire_file(file_name, zero_terminated=true);
+    if !ok return false;
+
+    bytecode:, ok = compile_shader_to_bytecode(source, type, path_filename(file_name));
+    if !ok return false;
+
+    backend :: #ifx BACKEND == .D3D11 Shader_Backend.DXBC else Shader_Backend.SPIR_V;
+    header := Shader_Header.{
+        magic = GACO_MAGIC,
+        version = 1,
+        backend = backend,
+        type = type,
+        sampler_mapping_count = 0, // for now
+        vs_size = xx bytecode.vs.count,
+        fs_size = xx bytecode.fs.count,
+        cs_size = xx bytecode.cs.count,
+    };
+
+    mapping_size := header.sampler_mapping_count * size_of(Sampler_Mapping);
+    sb: String_Builder;
+    append(*sb, cast(*u8)*header, size_of(Shader_Header));
+    // append(*sb, *sampler_mappings, mapping_size); @Incomplete
+    append(*sb, bytecode.vs);
+    append(*sb, bytecode.fs);
+    append(*sb, bytecode.cs);
+    return write_entire_file(output_file_name, *sb);
+}
 
 load_shader :: (file_name_without_extension: string, type: Shader_Type) -> Shader {
     push_allocator(temp);
@@ -233,6 +279,39 @@ load_shader :: (file_name_without_extension: string, type: Shader_Type) -> Shade
         if !ok return .{};
     }
     return load_shader_from_bytecode(bytecode, type);
+}
+
+load_shader2 :: (file_name: string) -> Shader {
+    push_allocator(temp);
+    data, ok := read_entire_file(file_name);
+    if !ok  return .{};
+    return load_shader_from_memory(data);
+}
+
+load_shader_from_memory :: (data: string) -> Shader {
+    header := (cast(*Shader_Header)data.data).*;
+    if header.magic != GACO_MAGIC {
+        log_error("[Gaco] Shader magic is wrong! Expected: % Got: %", GACO_MAGIC, header.magic);
+        return .{};
+    }
+    bytecode: Shader_Bytecode;
+
+    mappings_offset := size_of(Shader_Header);
+
+    vs_offset := mappings_offset + (header.sampler_mapping_count * size_of(Sampler_Mapping));
+    fs_offset := vs_offset + header.vs_size;
+    cs_offset := fs_offset + header.fs_size;
+
+    bytecode.vs.data = data.data + vs_offset;
+    bytecode.vs.count = header.vs_size;
+
+    bytecode.fs.data = data.data + fs_offset;
+    bytecode.fs.count = header.fs_size;
+
+    bytecode.cs.data = data.data + cs_offset;
+    bytecode.cs.count = header.cs_size;
+
+    return load_shader_from_bytecode(bytecode, header.type);
 }
 
 create_buffer :: (data: $T, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {
@@ -373,6 +452,17 @@ case .Metal;
 }
 
 #scope_module
+
+// This is used for SPIR-V files because the sampler and texture indices
+// are the same in OpenGL so they have to match.
+Sampler_Mapping :: struct {
+    mapped_index: u8;
+    texture_index: u8;
+    sampler_index: u8;
+    stage: Shader_Type;
+}
+
+GACO_MAGIC :: 0x4F434147; // "GACO"
 VS_ENTRY_POINT :: "vertex_main";
 FS_ENTRY_POINT :: "fragment_main";
 CS_ENTRY_POINT :: "compute_main";

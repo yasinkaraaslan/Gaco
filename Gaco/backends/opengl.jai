@@ -85,7 +85,7 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
 
     major, minor := gl_get_version();
     if major < 4 || minor < 5 { // We support 4.5
-        log_error("Unsupported GL version: %.%, need at least 4.5", major, minor);
+        log_error("[Gaco] Unsupported GL version: %.%, need at least 4.5", major, minor);
     }
 
     main_window = window;
@@ -1048,7 +1048,7 @@ get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
             loc := it.location + j;
 
             glEnableVertexArrayAttrib(input_vao, loc);
-
+            if attrib_type == {
                 case .Float;      glVertexArrayAttribFormat(input_vao, loc, cast(s32)comps, type, GL_FALSE, binding_offsets[binding_index]);
                 case .Normalized; glVertexArrayAttribFormat(input_vao, loc, cast(s32)comps, type, GL_TRUE, binding_offsets[binding_index]);
                 case .Int;        glVertexArrayAttribIFormat(input_vao, loc, cast(s32)comps, type, binding_offsets[binding_index]);
@@ -1083,7 +1083,6 @@ GL_Format_Info :: struct {
     upload_format   : u32;
     upload_type     : u32;
 }
-
 
 GL_MAPPING_ARRAY :: GL_Format_Info.[
     .{ GL_NONE, 0, 0 }, // Unknown
