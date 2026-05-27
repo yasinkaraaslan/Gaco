@@ -83,7 +83,7 @@ draw_shadowed_text :: (font: *Font, text: string, pos: Vector2) {
 
 build_shader :: (shader_name: string) {
     shader_file_name := join("shaders/sources/", shader_name, ".hlsl");
-    ok := Gaco.compile_shader(shader_file_name, join("shaders/", shader_name), .Vertex | .Fragment);
+    ok := Gaco.compile_shader(shader_file_name, join("shaders/", shader_name, ".gaco"), .Vertex | .Fragment);
     if !ok {
         compiler_report(tprint("Couldn't compile the shader: %\n", shader_file_name));
         return;

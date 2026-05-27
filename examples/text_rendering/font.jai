@@ -2,7 +2,7 @@ MAX_CHARACTERS :: 512;
 
 fonts_init :: () {
     error := FT_Init_FreeType(*FtLibrary);
-    Shader = Gaco.load_shader("shaders/text", .Vertex | .Fragment);
+    Shader = Gaco.load_shader("shaders/text.gaco");
     assert(!error);
 
     VertexBuffer = Gaco.create_buffer(null, MAX_CHARACTERS * 4, size_of(Text_Vertex_Data), .Vertex, .Dynamic);

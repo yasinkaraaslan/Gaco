@@ -3,8 +3,8 @@ MAX_VERTEX_COUNT :: 2048; // Increase this number if you need
 #import "GetRect_LeftHanded"()(Type_Indicator);
 
 gr_init :: () {
-    ColorShader = Gaco.load_shader("shaders/color", .Vertex | .Fragment);
-    ImageShader = Gaco.load_shader("shaders/image", .Vertex | .Fragment);
+    ColorShader = Gaco.load_shader("shaders/color.gaco");
+    ImageShader = Gaco.load_shader("shaders/image.gaco");
     VerticesBuffer = Gaco.create_buffer(null, MAX_VERTEX_COUNT, size_of(Vertex_Data), .Vertex, .Dynamic);
 
     VerticesToDraw.allocator = temp;

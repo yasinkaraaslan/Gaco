@@ -1,5 +1,5 @@
 #run {
-    ok := Gaco.compile_shader("triangle.hlsl", "triangle", .Vertex | .Fragment);
+    ok := Gaco.compile_shader("triangle.hlsl", "triangle.gaco", .Vertex | .Fragment);
     if !ok {
         compiler_report("Couldn't compile triangle.hlsl");
     }
@@ -10,7 +10,7 @@ main :: () {
     window := create_window(1280, 720,"Gaco Triangle");
     Gaco.init(window);
     defer Gaco.deinit();
-    shader := Gaco.load_shader("triangle", .Vertex | .Fragment);
+    shader := Gaco.load_shader("triangle.gaco");
     vertices := Vector3.[
         .{0.0, 0.5, 0},
         .{0.5, -0.5, 0},

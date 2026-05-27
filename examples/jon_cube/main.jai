@@ -11,7 +11,7 @@ Frame_Info : struct {
 }
 
 #run {
-   Gaco.compile_shader("jon_cube.hlsl", "jon_cube", .Vertex | .Fragment);
+   Gaco.compile_shader("jon_cube.hlsl", "jon_cube.gaco", .Vertex | .Fragment);
 }
 
 Transform_Buffer :: struct {
@@ -22,7 +22,7 @@ main :: () {
    window := create_window(1280, 720, "Jon Cube!");
    Gaco.init(window);
 
-   shader := Gaco.load_shader("jon_cube", .Vertex | .Fragment);
+   shader := Gaco.load_shader("jon_cube.gaco");
    Gaco.set_shader(shader);
 
    Vertex_Input :: struct {

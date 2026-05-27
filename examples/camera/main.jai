@@ -17,7 +17,7 @@ main :: () {
 
     Gaco.init(window);
     defer Gaco.deinit();
-    shader := Gaco.load_shader("shaders/texture", .Vertex | .Fragment);
+    shader := Gaco.load_shader("shaders/texture.gaco");
 
     Vertex_Input :: struct {
         vertex: Vector3;
@@ -138,7 +138,7 @@ draw_cube :: (pos: Vector3, constant_buffer: Gaco.Buffer, indices_count: u32) {
 
 build_shader :: (shader_name: string) {
     shader_file_name := join("shaders/sources/", shader_name, ".hlsl");
-    ok := Gaco.compile_shader(shader_file_name, join("shaders/", shader_name), .Vertex | .Fragment);
+    ok := Gaco.compile_shader(shader_file_name, join("shaders/", shader_name, ".gaco"), .Vertex | .Fragment);
     if !ok {
         compiler_report(tprint("Couldn't compile the shader: %\n", shader_file_name));
         return;

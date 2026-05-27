@@ -18,7 +18,7 @@ Colors_Buffer :: struct {
 main :: () {
     window := create_window(1280, 720, "Colored Cube");
     Gaco.init(window);
-    shader := Gaco.load_shader("colored_cube", .Vertex | .Fragment);
+    shader := Gaco.load_shader("colored_cube.gaco");
     Gaco.set_shader(shader);
 
     vertices := Vector3.[
@@ -104,5 +104,5 @@ draw_the_cube :: (transform_cb: Gaco.Buffer, indices_count: u32) {
 Gaco :: #import,dir "../../Gaco"; // In a real project you should put Gaco into your local modules folder.
 
 #run {
-    Gaco.compile_shader("colored_cube.hlsl", "colored_cube", .Vertex | .Fragment);
+    Gaco.compile_shader("colored_cube.hlsl", "colored_cube.gaco", .Vertex | .Fragment);
 }

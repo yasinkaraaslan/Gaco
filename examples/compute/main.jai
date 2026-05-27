@@ -5,7 +5,7 @@ main :: () {
 
     Gaco.init(null); // We can pass null here if we do not plan to render anything.
 
-    shader := Gaco.load_shader("compute", .Compute);
+    shader := Gaco.load_shader("compute.gaco");
     Gaco.set_shader(shader);
 
     init_data := NewArray(SIZE, float);
@@ -33,7 +33,7 @@ main :: () {
 }
 
 #run {
-    Gaco.compile_shader("compute.hlsl", "compute", .Compute);
+    Gaco.compile_shader("compute.hlsl", "compute.gaco", .Compute);
 }
 
 #import "Basic";

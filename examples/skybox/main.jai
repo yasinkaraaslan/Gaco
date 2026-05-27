@@ -2,10 +2,12 @@ SKYBOX_FILE_NAMES :: string.["images/0.png", "images/1.png", "images/2.png", "im
 
 WindowWidth, WindowHeight := 1280, 720;
 
+
+
 main :: () {
     window := create_window(WindowWidth, WindowHeight, "Skybox Example");
     Gaco.init(window);
-    skybox_shader := Gaco.load_shader("skybox", .Vertex | .Fragment);
+    skybox_shader := Gaco.load_shader("skybox.gaco");
 
     vertices := Vector3.[
         .{-0.5,  0.5,  0.5},
@@ -84,7 +86,7 @@ main :: () {
 
 
 #run {
-    ok := Gaco.compile_shader("skybox.hlsl", "skybox", .Vertex | .Fragment);
+    ok := Gaco.compile_shader("skybox.hlsl", "skybox.gaco", .Vertex | .Fragment);
     if !ok {
         compiler_report("skybox.hlsl", 0, 0, "Couldn't compile the shader\n");
     }

@@ -30,23 +30,6 @@ Shader_Type :: enum_flags u8 {
     Compute;
 };
 
-Shader_Backend :: enum u8 {
-    Unspecified :: 0;
-    DXBC :: 1;
-    SPIR_V;
-}
-
-Shader_Header :: struct {
-    magic: u32;
-    version: u32;
-    backend: Shader_Backend;
-    type: Shader_Type;
-    sampler_mapping_count: u16; // Only used for SPIR-V
-    vs_size: u32;
-    fs_size: u32;
-    cs_size: u32;
-}
-
 Primitive_Type :: enum u32 {
     Line_List;
     Line_Strip;
@@ -148,7 +131,7 @@ Sampler_Edge_Handling :: enum u32 {
 }
 
 // Helper struct for creating Draw_Indirect buffers.
-// This is the same for all rendering APIs out there.
+// This is same for all the rendering APIs out there.
 Draw_Indirect_Args :: struct(indexed: bool) {
     count: u32;
     instance_count: u32;
@@ -197,36 +180,7 @@ Box :: struct {
     width, height, depth: s32;
 }
 
-// compile_shader and load_shader create and load separate files for each shader type.
-// If you want to implement something like a single package file for your shaders,
-// consider using compile_shader_to_bytecode and load_shader_from_bytecode.
-
-compile_shader :: (file_name: string, output_file_without_extension: string, type: Shader_Type) -> bool {
-    push_allocator(temp);
-    source, ok := read_entire_file(file_name, zero_terminated=true);
-    if !ok return false;
-
-    bytecode:, ok = compile_shader_to_bytecode(source, type, path_filename(file_name));
-    if !ok return false;
-    if type & .Vertex {
-        ok = write_entire_file(join(output_file_without_extension, VS_EXTENSION), bytecode.vs);
-        if !ok return false;
-    }
-
-    if type & .Fragment {
-        ok = write_entire_file(join(output_file_without_extension, FS_EXTENSION), bytecode.fs);
-        if !ok return false;
-    }
-
-    if type & .Compute {
-        ok = write_entire_file(join(output_file_without_extension, CS_EXTENSION), bytecode.cs);
-        if !ok return false;
-    }
-
-    return true;
-}
-
-compile_shader2 :: (file_name: string, output_file_name: string, type: Shader_Type) -> bool {
+compile_shader :: (file_name: string, output_file_name: string, type: Shader_Type) -> bool {
     push_allocator(temp);
     source, ok := read_entire_file(file_name, zero_terminated=true);
     if !ok return false;
@@ -256,32 +210,7 @@ compile_shader2 :: (file_name: string, output_file_name: string, type: Shader_Ty
     return write_entire_file(output_file_name, *sb);
 }
 
-load_shader :: (file_name_without_extension: string, type: Shader_Type) -> Shader {
-    push_allocator(temp);
-    bytecode: Shader_Bytecode;
-    ok := false;
-
-    if type & .Vertex {
-        file_name := join(file_name_without_extension, VS_EXTENSION);
-        bytecode.vs, ok = read_entire_file(file_name);
-        if !ok return .{};
-    }
-
-    if type & .Fragment {
-        file_name := join(file_name_without_extension, FS_EXTENSION);
-        bytecode.fs, ok = read_entire_file(file_name);
-        if !ok return .{};
-    }
-
-    if type & .Compute {
-        file_name := join(file_name_without_extension, CS_EXTENSION);
-        bytecode.cs, ok = read_entire_file(file_name);
-        if !ok return .{};
-    }
-    return load_shader_from_bytecode(bytecode, type);
-}
-
-load_shader2 :: (file_name: string) -> Shader {
+load_shader :: (file_name: string) -> Shader {
     push_allocator(temp);
     data, ok := read_entire_file(file_name);
     if !ok  return .{};
@@ -318,6 +247,7 @@ create_buffer :: (data: $T, $type: Buffer_Type, usage := Buffer_Usage.Default) -
     data_pointer : *void = ---;
     DATA_INFO :: type_info(T);
     count, stride: u32;
+
     #if DATA_INFO.type == .ARRAY {
         #if type == .Index {
             ARRAY_INFO :: (cast(*Type_Info_Array)DATA_INFO);
@@ -348,18 +278,7 @@ create_texture_from_file :: (file_name: string, mip_levels: u32 = 1, format := T
 create_texture_from_memory :: (memory: string, mip_levels: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.None) -> Texture {
     width, height, file_channels: s32;
 
-    channels : s32;
-    if format == {
-        case .R8;    channels = 1;
-        case .RG8;   channels = 2;
-        case .RGBA8; channels = 4;
-        case .RGBA8_SRGB; channels = 4;
-        case .BGRA8; channels = 4;
-        case .BGRA8_SRGB; channels = 4;
-        case; channels = 4;
-    };
-
-    buffer := stbi_load_from_memory(memory.data, cast(s32)memory.count, *width, *height, *file_channels, channels);
+    buffer := stbi_load_from_memory(memory.data, cast(s32)memory.count, *width, *height, *file_channels, format_to_channels(format));
     defer if buffer stbi_image_free(buffer);
 
     if !buffer {
@@ -377,16 +296,6 @@ create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, f
     }
 
     texture_width, texture_height: u32;
-    channels : s32;
-    if format == {
-        case .R8;    channels = 1;
-        case .RG8;   channels = 2;
-        case .RGBA8; channels = 4;
-        case .RGBA8_SRGB; channels = 4;
-        case .BGRA8; channels = 4;
-        case .BGRA8_SRGB; channels = 4;
-        case; channels = 4;
-    };
 
     for file_names {
         bytes, ok := read_entire_file(it,, temp);
@@ -396,7 +305,7 @@ create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, f
         }
 
         width, height, file_channels: s32;
-        data[it_index] = stbi_load_from_memory(bytes.data, cast(s32)bytes.count, *width, *height, *file_channels, channels);
+        data[it_index] = stbi_load_from_memory(bytes.data, cast(s32)bytes.count, *width, *height, *file_channels, format_to_channels(format));
 
         if !data[it_index] {
             log_error("[Gaco] STBI Failed to decode image for texture array: %", it);
@@ -453,6 +362,23 @@ case .Metal;
 
 #scope_module
 
+Shader_Backend :: enum u8 {
+    Unspecified :: 0;
+    DXBC :: 1;
+    SPIR_V;
+}
+
+Shader_Header :: struct {
+    magic: u32;
+    version: u32;
+    backend: Shader_Backend;
+    type: Shader_Type;
+    sampler_mapping_count: u16; // Only used for SPIR-V
+    vs_size: u32;
+    fs_size: u32;
+    cs_size: u32;
+}
+
 // This is used for SPIR-V files because the sampler and texture indices
 // are the same in OpenGL so they have to match.
 Sampler_Mapping :: struct {
@@ -468,6 +394,18 @@ FS_ENTRY_POINT :: "fragment_main";
 CS_ENTRY_POINT :: "compute_main";
 
 INSTANCE_PREFIX :: "INST_";
+
+format_to_channels :: (format: Texture_Format) -> s32 {
+    if format == {
+        case .R8;         return 1;
+        case .RG8;        return 2;
+        case .RGBA8;      return 4;
+        case .RGBA8_SRGB; return 4;
+        case .BGRA8;      return 4;
+        case .BGRA8_SRGB; return 4;
+        case;             return 4;
+    };
+}
 
 // This name wouldn't make sense if the enum values jump, but whatever.
 enum_count :: ($T: Type) -> s64 {

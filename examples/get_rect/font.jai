@@ -1,14 +1,14 @@
 #run {
-    Gaco.compile_shader("shaders/sources/text.hlsl",  "shaders/text",   .Vertex | .Fragment);
-    Gaco.compile_shader("shaders/sources/color.hlsl", "shaders/color", .Vertex | .Fragment);
-    Gaco.compile_shader("shaders/sources/image.hlsl", "shaders/image", .Vertex | .Fragment);
+    Gaco.compile_shader("shaders/sources/text.hlsl",  "shaders/text.gaco",   .Vertex | .Fragment);
+    Gaco.compile_shader("shaders/sources/color.hlsl", "shaders/color.gaco", .Vertex | .Fragment);
+    Gaco.compile_shader("shaders/sources/image.hlsl", "shaders/image.gaco", .Vertex | .Fragment);
 }
 
 MAX_CHARACTERS :: 512;
 
 fonts_init :: () {
     error := FT_Init_FreeType(*FtLibrary);
-    TextShader = Gaco.load_shader("shaders/text", .Vertex | .Fragment);
+    TextShader = Gaco.load_shader("shaders/text.gaco");
     assert(!error);
 
     TextVertexBuffer = Gaco.create_buffer(null, MAX_CHARACTERS * 4, size_of(Text_Vertex_Data), .Vertex, .Dynamic);
