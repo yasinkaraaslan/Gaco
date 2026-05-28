@@ -183,13 +183,8 @@ bind_buffer :: (buffer: Buffer(.Constant), slot: u32 = 0, bind_to: Shader_Type) 
 
 }
 
-bind_buffer :: (buffer: Buffer(.Structured), slot: u32 = 0, bind_to: Shader_Type) {
-    if bind_to & .Vertex
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot, buffer.object);
-    if bind_to & .Fragment
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot+16, buffer.object);
-    if bind_to & .Compute
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot+32, buffer.object);
+bind_buffer :: (buffer: Buffer(.Structured), slot: u32 = 0) {
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot, buffer.object);
 }
 
 // Same as above
@@ -304,21 +299,20 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
 
         array_add(*extra_args, "-fspv-flatten-resource-arrays", "-fspv-reflect");
         shift_args := string.[
-            "-fvk-t-shift", "0", "all",
-            "-fvk-b-shift", "0", "all",
-            "-fvk-s-shift", "0", "all",
-            "-fvk-u-shift", "0", "all",
+            "-fvk-t-shift", "0", "0",
+            "-fvk-b-shift", "0", "0",
+            "-fvk-s-shift", "0", "0",
+            // "-fvk-u-shift", "0", "all",
         ];
         shift_amount: string;
         if shader_type == {
-        case .Vertex;
         case .Fragment;
             shift_amount = "16";
         case .Compute;
             shift_amount = "32";
         }
         if shift_amount {
-            for 0..3 {
+            for 0..2 {
                 shift_args[3*it+1] = shift_amount;
             }
             array_add(*extra_args, ..shift_args);
@@ -592,6 +586,7 @@ draw_instanced :: ($indexed: bool, count: u32, instance_count: u32, first: u32 =
 
 dispatch_compute :: (num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) {
     glDispatchCompute(num_groups_x, num_groups_y, num_groups_z);
+    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 }
 
 present :: (interval: u32 = 1) {

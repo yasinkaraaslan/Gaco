@@ -17,8 +17,8 @@ main :: () {
     compute_input_buffer := Gaco.create_buffer(init_data, .Structured);
 
     out_buffer := Gaco.create_buffer(null, SIZE, size_of(float), .RWStructured);
-    Gaco.bind_buffer(compute_input_buffer, bind_to=.Compute);
-    Gaco.bind_buffer(out_buffer);
+    Gaco.bind_buffer(compute_input_buffer);
+    Gaco.bind_buffer(out_buffer, 1);
 
     Gaco.dispatch_compute(69, 105, 1);
 
@@ -38,6 +38,6 @@ main :: () {
 
 #import "Basic";
 #import "Random";
-Gaco :: #import,dir "../../Gaco"(DEBUG=true);
+Gaco :: #import,dir "../../Gaco"(BACKEND=.OpenGL, DEBUG=true);
 
 #if OS == .WINDOWS #import "d3d11"()(INCLUDE_DEBUG_BINDINGS=true);

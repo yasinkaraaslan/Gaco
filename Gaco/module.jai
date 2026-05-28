@@ -344,6 +344,31 @@ write_buffer :: inline (buffer: *Buffer, data: $T) {
     write_buffer(buffer, data_pointer, ifx size < buffer.size else buffer.size);
 }
 
+// Allocates on temp
+// NOTE(Yasin): This creates a huge performance penalty.
+read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *void {
+    buffer_to_map: *Buffer(.Copy) = ---;
+    temp_copy_buffer: Buffer(.Copy) = ---;
+
+    if copy_buffer_to_use {
+        buffer_to_map = copy_buffer_to_use;
+    }
+    else {
+        temp_copy_buffer = create_buffer(null, buffer.size / buffer.stride, buffer.stride, .Copy);
+        buffer_to_map = *temp_copy_buffer;
+    }
+
+    copy_buffer(buffer, buffer_to_map);
+
+    data := alloc(buffer.size,, temp);
+
+    mapped_data := map_buffer(buffer_to_map, .Read);
+    memcpy(data, mapped_data, buffer.size);
+    unmap_buffer(buffer_to_map);
+    if !copy_buffer_to_use destroy_buffer(buffer_to_map);
+    return data;
+}
+
 free :: (bytecode: Shader_Bytecode) {
     if bytecode.vs free(bytecode.vs);
     if bytecode.fs free(bytecode.fs);

@@ -243,7 +243,6 @@ bind_buffer :: (buffer: Buffer(.Index)) {
 }
 
 bind_buffer :: (buffer: Buffer(.Constant), slot: u32 = 0, bind_to: Shader_Type) {
-
     if bind_to & .Vertex
         ID3D11DeviceContext_VSSetConstantBuffers(device_context, slot, 1, *buffer.buffer);
     if bind_to & .Fragment
@@ -252,13 +251,10 @@ bind_buffer :: (buffer: Buffer(.Constant), slot: u32 = 0, bind_to: Shader_Type) 
         ID3D11DeviceContext_CSSetConstantBuffers(device_context, slot, 1, *buffer.buffer);
 }
 
-bind_buffer :: (buffer: Buffer(.Structured), slot: u32 = 0, bind_to: Shader_Type) {
-    if bind_to & .Vertex
-        ID3D11DeviceContext_VSSetShaderResources(device_context, slot, 1, *buffer.srv);
-    if bind_to & .Fragment
-        ID3D11DeviceContext_PSSetShaderResources(device_context, slot, 1, *buffer.srv);
-    if bind_to & .Compute
-        ID3D11DeviceContext_CSSetShaderResources(device_context, slot, 1, *buffer.srv);
+bind_buffer :: (buffer: Buffer(.Structured), slot: u32 = 0) {
+    ID3D11DeviceContext_VSSetShaderResources(device_context, slot, 1, *buffer.srv);
+    ID3D11DeviceContext_PSSetShaderResources(device_context, slot, 1, *buffer.srv);
+    ID3D11DeviceContext_CSSetShaderResources(device_context, slot, 1, *buffer.srv);
 }
 
 // TODO(Yasin): OMSetRenderTargetsAndUnorderedAccessViews
@@ -323,30 +319,6 @@ update_texture :: (using texture: *Texture, data: *void, subresource: u32 = 0) {
     row := width * stride;
     ID3D11DeviceContext_UpdateSubresource(device_context, texture2d, subresource, null, data, row, row * height);
 }
-
-// Allocates on temp
-// NOTE(Yasin): This creates a huge performance penalty.
-read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *void {
-    buffer_to_map: *Buffer(.Copy) = ---;
-
-    if copy_buffer_to_use {
-        buffer_to_map = copy_buffer_to_use;
-    }
-    else {
-        buffer_to_map = * (create_buffer(null, buffer.size / buffer.stride, buffer.stride, .Copy));
-    }
-
-    copy_buffer(buffer, buffer_to_map);
-
-    data := alloc(buffer.size,, temp);
-
-    mapped_data := map_buffer(buffer_to_map, .Read);
-    memcpy(data, mapped_data, buffer.size);
-    unmap_buffer(buffer_to_map);
-    if !copy_buffer_to_use destroy_buffer(buffer_to_map);
-    return data;
-}
-
 write_buffer :: (buffer: *Buffer, data: *void, size: int) {
     write :: (buffer_to_write: *Buffer) #expand {
         mapped_data := map_buffer(buffer_to_write, .Write);
