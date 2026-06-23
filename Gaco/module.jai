@@ -387,6 +387,11 @@ case .Metal;
 
 #scope_module
 
+#program_export
+NvOptimusEnablement: u32 = 1;
+#program_export
+AmdPowerXpressRequestHighPerformance: s32 = 1;
+
 Shader_Backend :: enum u8 {
     Unspecified :: 0;
     DXBC :: 1;

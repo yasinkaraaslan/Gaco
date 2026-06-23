@@ -68,14 +68,14 @@ is_empty :: (texture: Texture) -> bool {
 }
 
 is_empty :: (using shader: Shader) -> bool {
-    empty_vao := glIsVertexArray(input_vao) == GL_TRUE;
+    empty_vao := glIsVertexArray(input_vao) != GL_TRUE;
 
-    return type == .Unspecified || glIsProgram(program) || (!empty_vao && type & .Vertex);
+    return type == .Unspecified || !glIsProgram(program) || (empty_vao && type & .Vertex);
 }
 
 is_empty :: (render_target: Render_Target) -> bool {
-    // 0 is actually a valid id (window back buffer) but we hope that the user doesn't check that :)
-    return render_target.framebuffer != 0;
+    status := glCheckNamedFramebufferStatus(render_target.framebuffer, GL_FRAMEBUFFER);
+    return status != GL_FRAMEBUFFER_COMPLETE;
 }
 
 init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
@@ -218,7 +218,7 @@ unmap_buffer :: (buffer: *Buffer) {
 // The 'Texture' we have here is a pixel buffer object. So we assert that before doing anything.
 
 // Note that this gives a different data than the D3D11 one because the lower-left is 0,0 as opposed to upper-left.
-// You have to check the backend when using it.
+// You have to check the backend before using it.
 map_texture :: (texture: *Texture, flags: Map_Flags) -> *void {
     assert(texture.flags & .Copy != 0, "Only copy buffers can be mapped to read.");
     access: GLbitfield;
@@ -289,7 +289,8 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
     args.shader_model_version = "6_0";
     args.shader_source = source;
     args.add_debug_info = DEBUG;
-    args.spirv_target_env = "vulkan1.1";
+    args.spirv_target_env = "vulkan1.0";
+    args.spirv_generate_non_semanantic_debug_info = DEBUG;
 
     compile :: (entry_point: string, shader_type: DXC.Shader_Type) -> string #expand {
         `args.entry_point = entry_point;
@@ -346,17 +347,17 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> S
 
     load :: (shader_type: GLenum, binary: string, entry_point: string) -> GLuint #expand {
         s := glCreateShader(shader_type);
+
         glShaderBinary(1, *s, GL_SHADER_BINARY_FORMAT_SPIR_V, binary.data, cast(u32)binary.count);
         glSpecializeShader(s, entry_point, 0, null, null);
-
         is_compiled: GLint;
         glGetShaderiv(s, GL_COMPILE_STATUS, *is_compiled);
         if is_compiled == 0 {
             info_len: GLint;
-            glGetShaderiv(program, GL_INFO_LOG_LENGTH, *info_len);
+            glGetShaderiv(s, GL_INFO_LOG_LENGTH, *info_len);
             if info_len > 0 {
                 info_log := alloc(info_len,, temp);
-                glGetShaderInfoLog(program, cast(GLsizei)info_len, null, info_log);
+                glGetShaderInfoLog(s, cast(GLsizei)info_len, null, info_log);
                 log_error("[Gaco] Shader compilation failed: %", to_string(info_log));
             }
             else {
@@ -498,6 +499,17 @@ set_shader :: (shader: Shader) {
 
     glUseProgramStages(global_pipeline, stages, shader.program);
     glValidateProgramPipeline(global_pipeline);
+    isValid: GLint;
+    glGetProgramPipelineiv(global_pipeline, GL_VALIDATE_STATUS, *isValid);
+    if isValid == 0 {
+        info_len: GLint;
+        glGetProgramPipelineiv(global_pipeline, GL_INFO_LOG_LENGTH, *info_len);
+        if info_len > 0 {
+            info_log := alloc(info_len,, temp);
+            glGetProgramPipelineInfoLog(global_pipeline, cast(GLsizei)info_len, null, info_log);
+            log_error("[Gaco] Pipeline validation failed: %", to_string(info_log));
+        }
+    }
 }
 
 set_scissor :: (using rect: Rect) {
@@ -649,7 +661,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
 
     gl_info := GL_MAPPING_ARRAY[format];
     if gl_info.internal_format == 0 {
-        log_error("[Gaco] Error while creating texture: Format % is Unknown or unsupported.", format);
+        log_error("[Gaco] Couldn't create texture: Format % is Unknown or unsupported.", format);
         return .{};
     }
 
@@ -682,7 +694,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     is_msaa  := (flags & .Multisample) != 0;
 
     if is_3d {
-        if is_msaa log_error("[Gaco] Warning: MSAA 3D textures are not standard in OpenGL.");
+        if is_msaa log("[Gaco] MSAA 3D textures are not standard in OpenGL.", flags=.WARNING);
         target = GL_TEXTURE_3D;
     }
     else if is_cube {
@@ -773,6 +785,8 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
             }
         }
     }
+
+    glTextureParameteri(texture.object, GL_TEXTURE_MAX_LEVEL, cast(s32)(mip_levels - 1));
 
     if generate_mips {
         glGenerateTextureMipmap(texture.object);
