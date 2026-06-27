@@ -11,7 +11,7 @@
 *.spfs
 *.spvs
 /spirv_reflect/.build
-*.dll
+# *.dll
 *.ilk
 *.dxcs
 *.spcs

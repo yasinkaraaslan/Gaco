@@ -108,8 +108,11 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
     init_preloaded_modes();
 
     default_sampler = create_sampler(); // To be the same with d3d11
-    for 0..47 {
-        bind_sampler(default_sampler, cast(u32)it);
+    max_units: GLint;
+    glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, *max_units);
+    limit := ifx max_units > 0 then max_units else 96;
+    for 0..limit-1 {
+        glBindSampler(cast(u32)it, default_sampler.object);
     }
 }
 
@@ -298,26 +301,32 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
         extra_args: [..]string;
         extra_args.allocator = temp;
 
-        array_add(*extra_args, "-fspv-flatten-resource-arrays", "-fspv-reflect");
-        shift_args := string.[
-            "-fvk-t-shift", "0", "0",
-            "-fvk-b-shift", "0", "0",
-            "-fvk-s-shift", "0", "0",
-            // "-fvk-u-shift", "0", "all",
-        ];
-        shift_amount: string;
+        array_add(*extra_args, "-fspv-flatten-resource-arrays");
+        t_shift := "0";
+        b_shift := "0";
+        s_shift := "0";
+
         if shader_type == {
+        case .Vertex;
+            t_shift = "0";
+            b_shift = "0";
+            s_shift = "8";
         case .Fragment;
-            shift_amount = "16";
+            t_shift = "16";
+            b_shift = "16";
+            s_shift = "24";
         case .Compute;
-            shift_amount = "32";
+            t_shift = "32";
+            b_shift = "32";
+            s_shift = "40";
         }
-        if shift_amount {
-            for 0..2 {
-                shift_args[3*it+1] = shift_amount;
-            }
-            array_add(*extra_args, ..shift_args);
-        }
+
+        shift_args := string.[
+            "-fvk-t-shift", t_shift, "0",
+            "-fvk-b-shift", b_shift, "0",
+            "-fvk-s-shift", s_shift, "0",
+        ];
+        array_add(*extra_args, ..shift_args);
 
         `args.extra_args = extra_args;
 
@@ -443,17 +452,33 @@ clear :: (r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0,
 }
 
 clear :: (render_target: Render_Target, r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
-    #if flags & .Color {
-        color := float.[r,g,b,a];
-        for 0..render_target.color_view_count - 1 {
-            glClearNamedFramebufferfv(render_target.framebuffer, GL_COLOR, cast(s32)it, color.data);
+    if render_target.framebuffer == 0 {
+        glClearColor(r, g, b, a);
+        glClearDepth(depth);
+        glClearStencil(cast(GLint)stencil);
+
+        mask: GLbitfield;
+        #if flags & .Color
+            mask |= GL_COLOR_BUFFER_BIT;
+        #if flags & .Depth
+            mask |= GL_DEPTH_BUFFER_BIT;
+        #if flags & .Stencil
+            mask |= GL_STENCIL_BUFFER_BIT;
+        glClear(mask);
+    } else {
+        #if flags & .Color {
+            color := float.[r,g,b,a];
+            for 0..render_target.color_view_count - 1 {
+                glClearNamedFramebufferfv(render_target.framebuffer, GL_COLOR, cast(s32)it, color.data);
+            }
         }
-    }
-    #if flags & .Depth {
-        glClearNamedFramebufferfv(render_target.framebuffer, GL_DEPTH, 0, *depth);
-    }
-    #if flags & .Stencil {
-        glClearNamedFramebufferiv(render_target.framebuffer, GL_STENCIL, 0, *(cast(s32)stencil));
+        #if flags & .Depth {
+            glClearNamedFramebufferfv(render_target.framebuffer, GL_DEPTH, 0, *depth);
+        }
+        #if flags & .Stencil {
+            val := cast(s32)stencil;
+            glClearNamedFramebufferiv(render_target.framebuffer, GL_STENCIL, 0, *val);
+        }
     }
 }
 
@@ -1038,7 +1063,11 @@ get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
             return 0;
         }
 
-        semantic_str := ifx it.semantic then to_string(it.semantic) else to_string(it.name);
+        semantic_str := ifx it.semantic then to_string(it.semantic) else {
+            name := to_string(it.name);
+            advance(name, 7) // "in.var."
+        }
+        
         is_instance, step_rate := get_semantic_info(semantic_str);
 
         binding_index := ifx is_instance cast(GLuint)1 else 0;
