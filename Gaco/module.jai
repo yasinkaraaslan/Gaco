@@ -185,25 +185,25 @@ compile_shader :: (file_name: string, output_file_name: string, type: Shader_Typ
     source, ok := read_entire_file(file_name, zero_terminated=true);
     if !ok return false;
 
-    bytecode:, ok = compile_shader_to_bytecode(source, type, path_filename(file_name));
+    bytecode:, sampler_mappings:, ok = compile_shader_to_bytecode(source, type, path_filename(file_name));
     if !ok return false;
 
     backend :: #ifx BACKEND == .D3D11 Shader_Backend.DXBC else Shader_Backend.SPIR_V;
+
     header := Shader_Header.{
         magic = GACO_MAGIC,
         version = 1,
         backend = backend,
         type = type,
-        sampler_mapping_count = 0, // for now
+        sampler_mapping_count = cast(u16)sampler_mappings.count,
         vs_size = xx bytecode.vs.count,
         fs_size = xx bytecode.fs.count,
         cs_size = xx bytecode.cs.count,
     };
 
-    mapping_size := header.sampler_mapping_count * size_of(Sampler_Mapping);
     sb: String_Builder;
     append(*sb, cast(*u8)*header, size_of(Shader_Header));
-    // append(*sb, *sampler_mappings, mapping_size); @Incomplete
+    append(*sb, cast(*u8)sampler_mappings.data, sampler_mappings.count * size_of(Sampler_Mapping));
     append(*sb, bytecode.vs);
     append(*sb, bytecode.fs);
     append(*sb, bytecode.cs);
@@ -218,29 +218,34 @@ load_shader :: (file_name: string) -> Shader {
 }
 
 load_shader_from_memory :: (data: string) -> Shader {
-    header := (cast(*Shader_Header)data.data).*;
+    cursor := data.data;
+    header := (cast(*Shader_Header)cursor).*;
+
     if header.magic != GACO_MAGIC {
         log_error("[Gaco] Shader magic is wrong! Expected: % Got: %", GACO_MAGIC, header.magic);
         return .{};
     }
+
     bytecode: Shader_Bytecode;
+    sampler_mappings: []Sampler_Mapping;
 
-    mappings_offset := size_of(Shader_Header);
+    cursor += size_of(Shader_Header);
+    sampler_mappings.data = cast(*Sampler_Mapping)cursor;
+    sampler_mappings.count = header.sampler_mapping_count;
 
-    vs_offset := mappings_offset + (header.sampler_mapping_count * size_of(Sampler_Mapping));
-    fs_offset := vs_offset + header.vs_size;
-    cs_offset := fs_offset + header.fs_size;
-
-    bytecode.vs.data = data.data + vs_offset;
+    cursor += header.sampler_mapping_count * size_of(Sampler_Mapping);
+    bytecode.vs.data = cursor;
     bytecode.vs.count = header.vs_size;
 
-    bytecode.fs.data = data.data + fs_offset;
+    cursor += header.vs_size;
+    bytecode.fs.data = cursor;
     bytecode.fs.count = header.fs_size;
 
-    bytecode.cs.data = data.data + cs_offset;
+    cursor += header.fs_size;
+    bytecode.cs.data = cursor;
     bytecode.cs.count = header.cs_size;
 
-    return load_shader_from_bytecode(bytecode, header.type);
+    return load_shader_from_bytecode(bytecode, sampler_mappings, header.type);
 }
 
 create_buffer :: (data: $T, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {
@@ -380,7 +385,7 @@ case .D3D11;
 #load "backends/d3d11.jai";
 case .OpenGL;
 #load "backends/opengl.jai";
-#import,dir "spirv_reflect";
+#import,dir "modules/spirv_reflect";
 case .Metal;
 #load "backends/metal.jai";
 }

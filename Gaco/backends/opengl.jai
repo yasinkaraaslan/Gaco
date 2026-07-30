@@ -84,8 +84,8 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
     gl_load(*gl);
 
     major, minor := gl_get_version();
-    if major < 4 || minor < 5 { // We support 4.5
-        log_error("[Gaco] Unsupported GL version: %.%, need at least 4.5", major, minor);
+    if major < 4 || minor < 6 { // We support 4.6
+        log_error("[Gaco] Unsupported GL version: %.%, need at least 4.6", major, minor);
     }
 
     main_window = window;
@@ -284,7 +284,7 @@ destroy_shader :: (shader: *Shader) {
     }
 }
 
-compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, bool {
+compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, []Sampler_Mapping, bool {
     bytecode: Shader_Bytecode;
     dxc_shader_type: DXC.Shader_Type;
     args: DXC.Dxc_Shader_Compiler_Args;
@@ -301,6 +301,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
         extra_args: [..]string;
         extra_args.allocator = temp;
 
+
         array_add(*extra_args, "-fspv-flatten-resource-arrays");
         t_shift := "0";
         b_shift := "0";
@@ -310,21 +311,21 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
         case .Vertex;
             t_shift = "0";
             b_shift = "0";
-            s_shift = "8";
+            s_shift = "0";
         case .Fragment;
             t_shift = "16";
             b_shift = "16";
-            s_shift = "24";
+            s_shift = "16";
         case .Compute;
             t_shift = "32";
             b_shift = "32";
-            s_shift = "40";
+            s_shift = "32";
         }
 
         shift_args := string.[
-            "-fvk-t-shift", t_shift, "0",
-            "-fvk-b-shift", b_shift, "0",
-            "-fvk-s-shift", s_shift, "0",
+            "-fvk-t-shift", t_shift, "all",
+            "-fvk-b-shift", b_shift, "all",
+            "-fvk-s-shift", s_shift, "all",
         ];
         array_add(*extra_args, ..shift_args);
 
@@ -332,9 +333,8 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
 
         result := DXC.DXC_Compile(`args);
         if !result {
-            `return .{}, false;
+            `return .{}, .[], false;
         }
-        `args.extra_args = .[];
         return cast(string)result;
     }
 
@@ -348,10 +348,10 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
         bytecode.cs = compile(CS_ENTRY_POINT, .Compute);
     }
 
-    return bytecode, true;
+    return bytecode, .[], true;
 }
 
-load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> Shader {
+load_shader_from_bytecode :: (bytecode: Shader_Bytecode, sampler_mappings: []Sampler_Mapping, type: Shader_Type) -> Shader {
     shader: Shader;
 
     load :: (shader_type: GLenum, binary: string, entry_point: string) -> GLuint #expand {
@@ -845,6 +845,7 @@ copy_texture :: (from: Texture, to: *Texture, source_rect: Rect) {
     }
 }
 
+// TODO(Yasin): Use a scratch fbo to invert y
 copy_from_render_target :: (render_target: Render_Target, to: *Texture, depth_stencil := false, index: u32 = 0) {
     if render_target.framebuffer == 0 { // Back buffer
         glNamedFramebufferReadBuffer(0, GL_BACK);
@@ -1065,9 +1066,9 @@ get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
 
         semantic_str := ifx it.semantic then to_string(it.semantic) else {
             name := to_string(it.name);
-            advance(name, 7) // "in.var."
+            advance(name, 7); // "in.var."
         }
-        
+
         is_instance, step_rate := get_semantic_info(semantic_str);
 
         binding_index := ifx is_instance cast(GLuint)1 else 0;

@@ -385,7 +385,7 @@ destroy_shader :: (using shader: *Shader) {
         safe_release_and_reset(*compute_shader);
 }
 
-compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, bool {
+compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, []Sampler_Mapping, bool {
     bytecode: Shader_Bytecode;
     flags := D3DCOMPILE.ENABLE_STRICTNESS;
     defines: []string;
@@ -399,7 +399,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
         check_hr("D3DCompile", #code {
             free(bytecode);
             log_error(errors);
-            `return .{}, false;
+            `return .{}, .[], false;
         });
         return output;
     }
@@ -408,10 +408,10 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
     if type & .Fragment  bytecode.fs = compile(FS_ENTRY_POINT, "ps_5_0");
     if type & .Compute   bytecode.cs = compile(CS_ENTRY_POINT, "cs_5_0");
 
-    return bytecode, true;
+    return bytecode, .[], true;
 }
 
-load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> Shader {
+load_shader_from_bytecode :: (bytecode: Shader_Bytecode, sampler_mappings: []Sampler_Mapping, type: Shader_Type) -> Shader {
     shader: Shader;
     if type & .Vertex {
         hr := ID3D11Device_CreateVertexShader(device, bytecode.vs.data, xx bytecode.vs.count, null, *shader.vertex_shader);
