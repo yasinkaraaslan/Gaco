@@ -286,7 +286,7 @@ destroy_shader :: (shader: *Shader) {
 
 compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, []Sampler_Mapping, bool {
     bytecode: Shader_Bytecode;
-    dxc_shader_type: DXC.Shader_Type;
+
     args: DXC.Dxc_Shader_Compiler_Args;
     args.shader_name = shader_name;
     args.shader_model_version = "6_0";
@@ -295,9 +295,18 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
     args.spirv_target_env = "vulkan1.0";
     args.spirv_generate_non_semanantic_debug_info = DEBUG;
 
-    compile :: (entry_point: string, shader_type: DXC.Shader_Type) -> string #expand {
+    sampler_mappings := [..]Sampler_Mapping.{allocator=temp};
+
+    compile :: (entry_point: string, shader_type: Shader_Type) -> string #expand {
         `args.entry_point = entry_point;
-        `args.shader_type = shader_type;
+
+        // Convert to DXC shader type
+        if shader_type == {
+        case .Vertex;   `args.shader_type = .Vertex;
+        case .Fragment; `args.shader_type = .Fragment;
+        case .Compute;  `args.shader_type = .Compute;
+        }
+
         extra_args: [..]string;
         extra_args.allocator = temp;
 
@@ -331,15 +340,18 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
 
         `args.extra_args = extra_args;
 
-        result := DXC.DXC_Compile(`args);
+        result := DXC.DXC_Compile(`args,, temp);
         if !result {
             `return .{}, .[], false;
         }
-        return cast(string)result;
+        new_bytecode, mappings := build_combined_image_samplers(cast(string)result, shader_type);
+        array_add(*`sampler_mappings, ..mappings);
+        return new_bytecode;
     }
 
     if type & .Vertex {
         bytecode.vs = compile(VS_ENTRY_POINT, .Vertex);
+
     }
     if type & .Fragment {
         bytecode.fs = compile(FS_ENTRY_POINT, .Fragment);
@@ -348,7 +360,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
         bytecode.cs = compile(CS_ENTRY_POINT, .Compute);
     }
 
-    return bytecode, .[], true;
+    return bytecode, sampler_mappings, true;
 }
 
 load_shader_from_bytecode :: (bytecode: Shader_Bytecode, sampler_mappings: []Sampler_Mapping, type: Shader_Type) -> Shader {
@@ -1102,6 +1114,216 @@ get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
 
     return input_vao;
 }
+
+// I had to reimplement this function from spv-opt because OpenGL...
+build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> (new_bytecode: string, mappings: []Sampler_Mapping) {
+    if bytecode.count < 20 return "", .[];
+
+    words := cast(*u32) bytecode.data;
+    num_words := bytecode.count / 4;
+
+    id_bound := words[3];
+
+    // Word 3 in the header is the "ID Bound".
+    // All SPIR-V IDs are guaranteed to be strictly less than this number.
+    // This lets us use simple arrays for lookups.
+
+    bindings      := NewArray(id_bound, u32,, temp);       // Result ID -> Binding value
+    loads         := NewArray(id_bound, u32,, temp);       // Result ID -> Variable ID it loaded from
+    id_remap      := NewArray(id_bound, u32,, temp);       // Old ID -> New ID to replace it with
+    deleted_ids   := NewArray(id_bound, bool,, temp);      // IDs marked for deletion
+    inst_ptrs     := NewArray(id_bound, *[..]u32,, temp);  // ID -> Pointer to instruction data
+    binding_insts := NewArray(id_bound, *[..]u32,, temp);
+
+    for i: 0..id_bound-1 {
+        bindings[i] = 0xFFFF_FFFF;
+        loads[i]    = 0;
+        id_remap[i] = 0;
+        deleted_ids[i] = false;
+    }
+
+    instructions: [..] *[..]u32;
+    instructions.allocator = temp;
+
+    // Parsing the instructions
+    i := 5;
+    while i < num_words {
+        count := words[i] >> 16;
+        inst := New([..]u32,, temp);
+        array_reserve(inst, count);
+        for w: 0..count-1 array_add(inst, words[i + w]);
+
+        op := cast(SpvOp) (inst.*[0] & 0xFFFF);
+        if op == {
+            case .Decorate;
+                decoration := cast(SpvDecoration) inst.*[2];
+                if decoration == .Binding {
+                    bindings[inst.*[1]] = inst.*[3];
+                    binding_insts[inst.*[1]] = inst; // Save the instruction pointer to edit later
+                }
+            case .Load;
+                loads[inst.*[2]] = inst.*[3];
+                inst_ptrs[inst.*[2]] = inst;
+            case .Variable;
+                inst_ptrs[inst.*[2]] = inst;
+        }
+
+        array_add(*instructions, inst);
+        i += count;
+    }
+
+    mappings: [..]Sampler_Mapping;
+
+    // Helper: Find an existing Pointer type for our combined SampledImage, or inject a new one.
+    get_or_create_ptr_type :: (type_id: u32, insts: *[..] *[..]u32, bound: *u32) -> u32 {
+        for inst_ptr: insts.* {
+            inst := inst_ptr.*;
+            op := cast(SpvOp) (inst[0] & 0xFFFF);
+            if op == .TypePointer {
+                if inst[2] == 0 && inst[3] == type_id return inst[1];
+            }
+        }
+        new_id := bound.*;
+        bound.* += 1;
+        new_inst := New([..]u32,, temp);
+        array_add(new_inst, (4 << 16) | cast(u32) SpvOp.TypePointer);
+        array_add(new_inst, new_id);
+        array_add(new_inst, 0);
+        array_add(new_inst, type_id);
+
+        // Inject before the first Variable or Function definition
+        insert_idx := insts.count;
+        for idx: 0..insts.count-1 {
+            op := cast(SpvOp) (insts.*[idx].*[0] & 0xFFFF);
+            if op == .Variable || op == .Function {
+                insert_idx = idx;
+                break;
+            }
+        }
+        array_insert_at(insts, new_inst, insert_idx);
+        return new_id;
+    }
+
+    // Look for where a separate Texture and Sampler are merged (OpSampledImage).
+    // We rewrite the original Texture variable to be a combined SampledImage instead,
+    // and delete the separate Sampler.
+    for inst_ptr: instructions {
+        inst := inst_ptr;
+        op := cast(SpvOp) (inst.*[0] & 0xFFFF);
+
+        if op == .SampledImage {
+            sampled_img_type := inst.*[1];
+            sampled_img_id   := inst.*[2];
+            image_load_id    := inst.*[3];
+            sampler_load_id  := inst.*[4];
+
+            image_var_id   := loads[image_load_id];
+            sampler_var_id := loads[sampler_load_id];
+
+            img_binding  := bindings[image_var_id];
+            samp_binding := bindings[sampler_var_id];
+
+            // If we found a valid pairing, record it and update the SPIR-V binding literal
+            if img_binding != 0xFFFF_FFFF && samp_binding != 0xFFFF_FFFF {
+                mapped_idx: u8;
+                found := false;
+                for m: mappings {
+                    if m.texture_index == cast(u8)img_binding && m.sampler_index == cast(u8)samp_binding {
+                        mapped_idx = m.mapped_index;
+                        found = true;
+                        break;
+                    }
+                }
+
+                if !found {
+                    // @Temporary: Will replace with mappings.count when we have the logic for it
+                    mapped_idx = cast(u8) img_binding;
+                    mapping: Sampler_Mapping;
+                    mapping.mapped_index  = mapped_idx;
+                    mapping.texture_index = cast(u8) img_binding;
+                    mapping.sampler_index = cast(u8) samp_binding;
+                    mapping.stage         = stage;
+                    array_add(*mappings, mapping);
+                }
+
+                // Overwrite the original Texture's SPIR-V OpDecorate Binding with the new mapped binding slot
+                decorate_inst := binding_insts[image_var_id];
+                if decorate_inst {
+                    decorate_inst.*[3] = cast(u32) mapped_idx;
+                }
+            }
+
+            // Route all future usages of this combined image back to the texture's load ID
+            id_remap[sampled_img_id] = image_load_id;
+
+            // Change the Texture Variable's type to pointer-to-SampledImage
+            ptr_type := get_or_create_ptr_type(sampled_img_type, *instructions, *id_bound);
+            var_inst := inst_ptrs[image_var_id];
+            if var_inst var_inst.*[1] = ptr_type;
+
+            // Change all  OpLoads of this texture variable to return a SampledImage
+            for ptr: instructions {
+                if cast(SpvOp) (ptr.*[0] & 0xFFFF) == .Load {
+                    if ptr.*[3] == image_var_id ptr.*[1] = sampled_img_type;
+                }
+            }
+
+            // Mark the Sampler definitions and the OpSampledImage itself for deletion (.Nop)
+            inst.*[0] = 0;
+            if sampler_var_id && inst_ptrs[sampler_var_id]   inst_ptrs[sampler_var_id].*[0] = 0;
+            if sampler_load_id && inst_ptrs[sampler_load_id] inst_ptrs[sampler_load_id].*[0] = 0;
+
+            deleted_ids[sampler_var_id] = true;
+            deleted_ids[sampler_load_id] = true;
+        }
+    }
+
+
+    // If we leave OpNames or OpDecorates pointing to deleted samplers, validation will fail.
+    for inst_ptr: instructions {
+        inst := inst_ptr.*;
+        op := cast(SpvOp) (inst[0] & 0xFFFF);
+
+        if op == .Name || op == .Decorate {
+            target_id := inst[1];
+            if target_id < deleted_ids.count && deleted_ids[target_id] {
+                inst_ptr.*[0] = 0; // Nop it out
+            }
+        }
+    }
+
+    // Reconstruct the flat bytecode, skipping Nops and rewiring usages.
+    out: [..]u32;
+    for w: 0..4 array_add(*out, words[w]);
+    out[3] = id_bound;
+
+    for inst_ptr: instructions {
+        inst := inst_ptr.*;
+        op := cast(SpvOp) (inst[0] & 0xFFFF);
+
+        if op == .Nop continue;
+
+        // Safely remap IDs only where we guarantee they are IDs, not literal numbers.
+        // For texture sampling, Word 3 is always the target SampledImage ID.
+        if (op >= .ImageSampleImplicitLod && op <= .ImageDrefGather) || op == .Image {
+            if inst.count > 3 {
+                id := inst[3];
+                if id < id_remap.count && id_remap[id] != 0 {
+                    inst[3] = id_remap[id];
+                }
+            }
+        }
+
+        for w: 0..inst.count-1 array_add(*out, inst[w]);
+    }
+
+    new_bytecode: string;
+    new_bytecode.data  = cast(*u8) out.data;
+    new_bytecode.count = out.count * size_of(u32);
+
+    return new_bytecode, mappings;
+}
+
 using GL_State: struct {
     main_window: WT.Window_Type;
     global_pipeline: GLuint;
