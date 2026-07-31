@@ -26,15 +26,9 @@ cbuffer Fragment_CBuffer : register(b0) {
     float4 text_color : COLOR;
 }
 
-#ifdef __spirv__
-[[vk::combinedImageSampler]]
-#endif
 Texture2D shader_texture: register(t0);
-
-#ifdef __spirv__
-[[vk::combinedImageSampler]]
-#endif
 SamplerState texture_sampler: register(s0);
+
 float4 fragment_main(Fragment_Input input) : SV_Target {
     float4 color = float4(1,1,1, shader_texture.Sample(texture_sampler, input.tex).r);
     return color * text_color;

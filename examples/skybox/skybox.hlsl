@@ -21,15 +21,9 @@ Fragment_Input vertex_main(Vertex_Input input) {
 
 
 // Fragment Shader
-#ifdef __spirv__
-[[vk::combinedImageSampler]]
-#endif
 TextureCube cubemap: register(t0);
-
-#ifdef __spirv__
-[[vk::combinedImageSampler]]
-#endif
 SamplerState texture_sampler: register(s0);
+
 float4 fragment_main(Fragment_Input input) : SV_Target {
 
     float4 color = cubemap.Sample(texture_sampler, input.dir);

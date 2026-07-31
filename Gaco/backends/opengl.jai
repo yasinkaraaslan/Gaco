@@ -108,6 +108,8 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
     glBindProgramPipeline(global_pipeline);
     init_preloaded_modes();
 
+    set_swap_interval(0);
+
     default_sampler = create_sampler(); // To be the same with d3d11
     max_units: GLint;
     glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, *max_units);
@@ -131,9 +133,7 @@ deinit :: () {
     else #if OS == .LINUX {
         // @Incomplete
     }
-    else {
-        #assert false;
-    }
+
     glDeleteProgramPipelines(1, *global_pipeline);
     glDeleteVertexArrays(1, *empty_stupid_vao);
     destroy_sampler(*default_sampler);
@@ -649,13 +649,7 @@ dispatch_compute :: (num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) {
 
 present :: (interval: u32 = 1) {
     if interval != current_swap_interval {
-        #if OS == .WINDOWS {
-            wglSwapIntervalEXT(cast(s32)interval);
-        }
-        else #if OS == .LINUX {
-            glXSwapIntervalEXT(x_global_display, main_window, interval);
-        }
-        current_swap_interval = interval;
+        set_swap_interval(interval);
     }
     #if OS == .WINDOWS {
         dc := wglGetCurrentDC();
@@ -1027,6 +1021,16 @@ init_preloaded_modes :: () {
     }
 }
 
+set_swap_interval :: (interval: u32) {
+        #if OS == .WINDOWS {
+            wglSwapIntervalEXT(cast(s32)interval);
+        }
+        else #if OS == .LINUX {
+            glXSwapIntervalEXT(x_global_display, main_window, interval);
+        }
+        current_swap_interval = interval;
+}
+
 get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
     #import "Sort";
     module: SpvReflectShaderModule;
@@ -1360,7 +1364,7 @@ using GL_State: struct {
 
     current_primitive_mode: GLuint = GL_TRIANGLES;
     current_index_stride: GLenum; // GL_UNSIGNED_SHORT, GL_UNSIGNED_INT
-    current_swap_interval: u32; // We shouldn't trust that the default is 0 actually.
+    current_swap_interval: u32;
 
     vs_mappings: []Sampler_Mapping;
     fs_mappings: []Sampler_Mapping;
