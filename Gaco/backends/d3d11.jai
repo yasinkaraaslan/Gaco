@@ -34,6 +34,7 @@ Texture :: struct {
     }
     width, height, stride: u32;
     depth: u32 = 1;
+    format: Texture_Format;
     flags: Texture_Flags;
 };
 
@@ -672,7 +673,12 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     bytes_per_block := TEXTURE_BYTES_PER_BLOCK[format];
 
     // Create the thing
-    texture := Texture.{width=width, height=height, stride=bytes_per_block, flags=flags};
+    texture := Texture.{
+        width=width,
+        height=height,
+        stride=bytes_per_block,
+        format=format,
+        flags=flags};
 
     init_data: []D3D11_SUBRESOURCE_DATA;
 

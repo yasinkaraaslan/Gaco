@@ -20,6 +20,7 @@ Sampler :: struct {
 
 Texture :: struct {
     object: GLuint;
+    format: Texture_Format;
     pixel_format: GLuint;
     pixel_type: GLuint;
     width, height, stride: u32;
@@ -65,6 +66,7 @@ Depth_Stencil_State :: struct {
 }
 
 is_empty :: (texture: Texture) -> bool {
+    if texture.flags & .Copy return glIsBuffer(texture.object) == GL_FALSE;
     return glIsTexture(texture.object) == GL_FALSE;
 }
 
@@ -171,7 +173,7 @@ bind_buffer :: (buffer: Buffer(.Vertex), slot: u32 = 0, offset: u32 = 0) {
 }
 
 bind_buffer :: (buffer: Buffer(.Index)) {
-    // assert(buffer.stride == 2 || buffer.stride == 4);
+    assert(buffer.stride == 2 || buffer.stride == 4);
     current_index_stride = buffer.stride;
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer.object);
 }
@@ -245,13 +247,52 @@ update_buffer :: (buffer: *Buffer, data: *void) {
 
 update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 = 0) {
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    // @Incomplete: This is wrong for texture arrays
-    glTextureSubImage2D(texture.object, cast(s32)subresource, rect.x, rect.y, cast(u32)rect.width, cast(u32)rect.height, texture.pixel_format, texture.pixel_type, data);
+
+    if is_block_compression(texture.format) {
+        bw := (cast(u32)rect.width + 3) / 4;
+        bh := (cast(u32)rect.height + 3) / 4;
+        image_size := cast(u32)(bw * bh * texture.stride);
+
+        glCompressedTextureSubImage2D(texture.object, cast(s32)subresource,
+            rect.x, rect.y, cast(u32)rect.width, cast(u32)rect.height,
+            texture.pixel_format, image_size, data);
+    }
+    else {
+        // @Incomplete: This is wrong for texture arrays
+        glTextureSubImage2D(texture.object, cast(s32)subresource,
+            rect.x, rect.y, cast(u32)rect.width, cast(u32)rect.height,
+            texture.pixel_format, texture.pixel_type, data);
+    }
+
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 }
 
-// update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 0) {
-// }
+update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 0) {
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+    if is_block_compression(texture.format) {
+        bw := (cast(u32)box.width + 3) / 4;
+        bh := (cast(u32)box.height + 3) / 4;
+        image_size := cast(u32)(bw * bh * texture.stride * cast(u32)box.depth);
+
+        glCompressedTextureSubImage3D(
+            texture.object, cast(s32)subresource,
+            box.x, box.y, box.z,
+            cast(u32)box.width, cast(u32)box.height, cast(u32)box.depth,
+            texture.pixel_format, image_size, data
+        );
+    }
+    else {
+        glTextureSubImage3D(
+            texture.object, cast(s32)subresource,
+            box.x, box.y, box.z,
+            cast(u32)box.width, cast(u32)box.height, cast(u32)box.depth,
+            texture.pixel_format, texture.pixel_type, data
+        );
+    }
+
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+}
 
 update_texture :: inline (using texture: *Texture, data: *void, subresource: u32 = 0) {
     update_texture(texture, data, .{0, 0, cast(s32)width, cast(s32)height}, subresource);
@@ -271,7 +312,10 @@ destroy_buffer :: (buffer: *Buffer) {
 }
 
 destroy_texture :: (texture: *Texture) {
-    glDeleteTextures(1, *texture.object);
+    if texture.flags & .Copy
+        glDeleteBuffers(1, *texture.object);
+    else
+        glDeleteTextures(1, *texture.object);
     texture.object = 0;
 }
 
@@ -557,6 +601,18 @@ set_shader :: (shader: Shader) {
         }
     }
 }
+set_primitive_type :: (primitive_type: Primitive_Type) {
+    if #complete primitive_type == {
+    case .Line_List;
+        current_primitive_mode = GL_LINES;
+    case .Line_Strip;
+        current_primitive_mode = GL_LINE_STRIP;
+    case .Triangle_List;
+        current_primitive_mode = GL_TRIANGLES;
+    case .Triangle_Strip;
+        current_primitive_mode = GL_TRIANGLE_STRIP;
+    }
+}
 
 set_scissor :: (using rect: Rect) {
     glScissor(x, y, cast(u32)width, cast(u32)height);
@@ -642,9 +698,27 @@ draw_instanced :: ($indexed: bool, count: u32, instance_count: u32, first: u32 =
     }
 }
 
+draw_indirect :: ($indexed: bool, buffer: Buffer(.Indirect), byte_offset: u32 = 0) {
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, buffer.buffer);
+    #if indexed {
+        glDrawElementsIndirect(current_primitive_mode, cast(*void)byte_offset);
+    }
+    else {
+        format := ifx current_index_stride == 4 cast(u32)GL_UNSIGNED_INT else cast(u32)GL_UNSIGNED_SHORT;
+        glDrawArraysIndirect(current_primitive_mode, format, cast(*void)byte_offset);
+    }
+}
+
+
 dispatch_compute :: (num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) {
     glDispatchCompute(num_groups_x, num_groups_y, num_groups_z);
-    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
+}
+
+dispatch_compute_indirect :: (buffer: Buffer(.Indirect), byte_offset: u32 = 0) {
+    glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, buffer.object);
+    glDispatchComputeIndirect(cast(GLintptr)byte_offset);
+    glMemoryBarrier(GL_COMMAND_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
 }
 
 present :: (interval: u32 = 1) {
@@ -713,7 +787,8 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
         stride = bytes_per_block,
         flags = flags,
         pixel_type = gl_info.upload_type,
-        pixel_format = gl_info.upload_format
+        pixel_format = gl_info.upload_format,
+        format = format,
     };
 
     if flags & .Copy {
@@ -876,6 +951,17 @@ copy_texture :: (from: Texture, to: *Texture, source_rect: Rect) {
         glCopyImageSubData(from.object, GL_TEXTURE_2D, 0, source_rect.x, source_rect.y, 0, to.object, GL_TEXTURE_2D, 0, 0, 0, 0, cast(u32)source_rect.width, cast(u32)source_rect.height, 1);
     }
 }
+
+copy_texture :: (from: Texture, to: *Texture, source_box: Box) {
+    glCopyImageSubData(
+        from.object, GL_TEXTURE_3D, 0,
+        source_box.x, source_box.y, source_box.z,
+        to.object, GL_TEXTURE_3D, 0,
+        0, 0, 0,
+        cast(u32)source_box.width, cast(u32)source_box.height, cast(u32)source_box.depth
+    );
+}
+
 
 // TODO(Yasin): Use a scratch fbo to invert y
 copy_from_render_target :: (render_target: Render_Target, to: *Texture, depth_stencil := false, index: u32 = 0) {
@@ -1363,7 +1449,7 @@ using GL_State: struct {
     empty_stupid_vao: GLuint; // Because we cannot bind a vertex buffer without a vao
 
     current_primitive_mode: GLuint = GL_TRIANGLES;
-    current_index_stride: GLenum; // GL_UNSIGNED_SHORT, GL_UNSIGNED_INT
+    current_index_stride: u32;
     current_swap_interval: u32;
 
     vs_mappings: []Sampler_Mapping;
