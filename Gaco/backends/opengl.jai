@@ -143,27 +143,28 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
     buffer.size = count * stride;
     buffer.stride = stride;
 
-    // D3D11 also doesn't allow it.
     assert(count > 0 && stride > 0, "Creating a buffer with 0 size is not permitted");
 
     glCreateBuffers(1, *buffer.object);
-    storage_flags: GLbitfield;
 
-    #if type == .Copy {
-        storage_flags |= GL_MAP_READ_BIT;
+    if usage == .Dynamic {
+        glNamedBufferData(buffer.object, buffer.size, data, GL_DYNAMIC_DRAW);
+    } else {
+        storage_flags: GLbitfield;
+
+        #if type == .Copy {
+            storage_flags |= GL_MAP_READ_BIT;
+        }
+        if usage == .Default {
+            storage_flags |= GL_DYNAMIC_STORAGE_BIT;
+        }
+
+        glNamedBufferStorage(buffer.object, buffer.size, data, storage_flags);
     }
 
-    if usage == {
-    case .Dynamic;
-        storage_flags |= GL_MAP_WRITE_BIT;
-        #through;
-    case .Default;
-        storage_flags |= GL_DYNAMIC_STORAGE_BIT;
-    }
-
-    glNamedBufferStorage(buffer.object, buffer.size, data, storage_flags);
     return buffer;
 }
+
 bind_buffer :: (buffer: Buffer(.Vertex), slot: u32 = 0, offset: u32 = 0) {
     glBindVertexBuffer(slot, buffer.object, offset, buffer.stride);
 }
@@ -242,7 +243,7 @@ update_buffer :: (buffer: *Buffer, data: *void) {
 }
 
 update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 = 0) {
-    glPixelStorei(GL_UNPACK_ALIGNMENT, cast(s32)texture.stride);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     // @Incomplete: This is wrong for texture arrays
     glTextureSubImage2D(texture.object, cast(s32)subresource, rect.x, rect.y, cast(u32)rect.width, cast(u32)rect.height, texture.pixel_format, texture.pixel_type, data);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
@@ -256,9 +257,7 @@ update_texture :: inline (using texture: *Texture, data: *void, subresource: u32
 }
 
 write_buffer :: (buffer: *Buffer, data: *void, size: int) {
-    mapped_data := map_buffer(buffer, .Write);
-    memcpy(mapped_data, data, size);
-    unmap_buffer(buffer);
+    glNamedBufferSubData(buffer.object, 0, size, data);
 }
 
 copy_buffer :: (from: Buffer, to: *Buffer) {
@@ -716,7 +715,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     if flags & .Copy {
         size := width * height * bytes_per_block;
         glCreateBuffers(1, *texture.object);
-        glNamedBufferStorage(texture.object, size, null, GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT);
+        glNamedBufferStorage(texture.object, size, null, GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT | GL_MAP_WRITE_BIT);
         texture.pbo_size = size;
         return texture;
     }
