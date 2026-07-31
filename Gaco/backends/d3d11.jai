@@ -13,8 +13,7 @@ Buffer :: struct (type: Buffer_Type) {
     #if type == .Structured {
         srv: *ID3D11ShaderResourceView;
     }
-    else #if type == .RWStructured {
-        // @Incomplete: .Indirect
+    else #if type == .Structured_RW || type == .Indirect {
         uav: *ID3D11UnorderedAccessView;
     }
 };
@@ -77,12 +76,6 @@ init :: (window: HWND, wanted_msaa: u32 = 4) {
     flags: D3D11_CREATE_DEVICE_FLAG;
     #if DEBUG flags |= .DEBUG;
     feature_levels := D3D_FEATURE_LEVEL.[._11_1];
-
-    // NOTE(Yasin): D3D11 just spins a bunch of threads for lots of different things.
-    // MSDN says we can prevent it by passing .PREVENT_INTERNAL_THREADING_OPTIMIZATIONS but it still
-    // seems to create about 20 threads (can probably disabled in some driver setting),
-    // this isn't recommended also. I don't know man...
-    // flags |= .PREVENT_INTERNAL_THREADING_OPTIMIZATIONS;
 
     // @@ Explain why this is here.
     flags |= .SINGLETHREADED;
@@ -188,7 +181,7 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
         bd.BindFlags = .SHADER_RESOURCE;
         bd.MiscFlags = .BUFFER_STRUCTURED;
         bd.StructureByteStride = stride;
-    case .RWStructured;
+    case .Structured_RW;
         bd.BindFlags = .UNORDERED_ACCESS;
         bd.MiscFlags = .BUFFER_STRUCTURED;
         bd.StructureByteStride = stride;
@@ -196,10 +189,8 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
         bd.Usage = .STAGING;
         bd.CPUAccessFlags |= .READ;
     case .Indirect;
-        // If you are creating a draw indirect buffer you probably want unordered access.
-        // But I am not sure about the performance implications, so this is @Incomplete.
-        // bd.BindFlags = .UNORDERED_ACCESS;
-        bd.MiscFlags = .DRAWINDIRECT_ARGS;
+        bd.BindFlags = .UNORDERED_ACCESS;
+        bd.MiscFlags = .DRAWINDIRECT_ARGS | .BUFFER_ALLOW_RAW_VIEWS;
     }
 
     init_data: *D3D11_SUBRESOURCE_DATA = null;
@@ -220,11 +211,17 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
         hr = ID3D11Device_CreateShaderResourceView(device, buffer.buffer, *srv_desc, *buffer.srv);
         check_hr("ID3D11Device.CreateShaderResourceView", #code `return .{});
     }
-    else #if type == .RWStructured { // @Incomplete: || .Indirect
+    else #if type == .Structured_RW || type == .Indirect {
         uav_desc := D3D11_UNORDERED_ACCESS_VIEW_DESC.{
             ViewDimension = .BUFFER,
             Buffer.NumElements = count
         };
+        #if type == .Indirect {
+            uav_desc.Format = .R32_TYPELESS;
+            uav_desc.Buffer.NumElements = stride / 4;
+            uav_desc.Buffer.Flags = xx D3D11_BUFFER_UAV_FLAG.RAW;
+        }
+
         hr = ID3D11Device_CreateUnorderedAccessView(device, buffer.buffer, *uav_desc, *buffer.uav);
         check_hr("ID3D11Device.CreateUnorderedAccessView", #code `return .{});
     }
@@ -252,14 +249,23 @@ bind_buffer :: (buffer: Buffer(.Constant), slot: u32 = 0, bind_to: Shader_Type) 
         ID3D11DeviceContext_CSSetConstantBuffers(device_context, slot, 1, *buffer.buffer);
 }
 
-bind_buffer :: (buffer: Buffer(.Structured), slot: u32 = 0) {
-    ID3D11DeviceContext_VSSetShaderResources(device_context, slot, 1, *buffer.srv);
-    ID3D11DeviceContext_PSSetShaderResources(device_context, slot, 1, *buffer.srv);
-    ID3D11DeviceContext_CSSetShaderResources(device_context, slot, 1, *buffer.srv);
+bind_buffer :: (buffer: Buffer(.Structured), slot: u32 = 0, bind_to: Shader_Type) {
+    if bind_to & .Vertex
+        ID3D11DeviceContext_VSSetShaderResources(device_context, slot, 1, *buffer.srv);
+    if bind_to & .Fragment
+        ID3D11DeviceContext_PSSetShaderResources(device_context, slot, 1, *buffer.srv);
+    if bind_to & .Compute
+        ID3D11DeviceContext_CSSetShaderResources(device_context, slot, 1, *buffer.srv);
 }
 
 // TODO(Yasin): OMSetRenderTargetsAndUnorderedAccessViews
-bind_buffer :: (buffer: Buffer(.RWStructured), slot: u32 = 0) {
+// Note that these need to be unbound when drawing indirect so... we'll have to come up with something.
+bind_buffer :: (buffer: Buffer(.Structured_RW), slot: u32 = 0) {
+    ID3D11DeviceContext_CSSetUnorderedAccessViews(device_context, slot, 1, *buffer.uav, null);
+}
+
+// Same as above
+bind_buffer :: (buffer: Buffer(.Indirect), slot: u32 = 0) {
     ID3D11DeviceContext_CSSetUnorderedAccessViews(device_context, slot, 1, *buffer.uav, null);
 }
 
@@ -302,7 +308,6 @@ update_buffer :: (buffer: *Buffer, data: *void) {
     ID3D11DeviceContext_UpdateSubresource(device_context, buffer.buffer, 0, null, data, buffer.stride, 0);
 }
 
-// @Incomplete: Cannot update sub texture3d
 update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 = 0) {
     row := cast(u32)rect.width * texture.stride;
     box := box_from_rect(rect);
@@ -312,7 +317,7 @@ update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 
 update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 0) {
     row := cast(u32)box.width * texture.stride;
     d_box := box_from_box(box);
-    ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture3d, subresource, *d_box, data, row, row * box.height);
+    ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture3d, subresource, *d_box, data, row, row * box.height.(u32));
 
 }
 
@@ -320,6 +325,7 @@ update_texture :: (using texture: *Texture, data: *void, subresource: u32 = 0) {
     row := width * stride;
     ID3D11DeviceContext_UpdateSubresource(device_context, texture2d, subresource, null, data, row, row * height);
 }
+
 write_buffer :: (buffer: *Buffer, data: *void, size: int) {
     write :: (buffer_to_write: *Buffer) #expand {
         mapped_data := map_buffer(buffer_to_write, .Write);
@@ -327,11 +333,11 @@ write_buffer :: (buffer: *Buffer, data: *void, size: int) {
         unmap_buffer(buffer_to_write);
     }
 
-    #if buffer.type == .RWStructured {
+    #if buffer.type == .Structured_RW {
         buffer_to_write := * (create_buffer(null, buffer.size / buffer.stride, buffer.stride, .Copy, .Dynamic));
+        defer destroy_buffer(buffer_to_write);
         write(buffer_to_write);
         copy_buffer(buffer_to_write, buffer);
-        destroy_buffer(buffer_to_write);
     }
     else {
         write(buffer);
@@ -348,7 +354,7 @@ destroy_buffer :: (buffer: *Buffer) {
     #if buffer.type == .Structured   {
         safe_release_and_reset(*buffer.srv);
     }
-    else #if buffer.type == .RWStructured {
+    else #if buffer.type == .Structured_RW {
         safe_release_and_reset(*buffer.uav);
     }
 
@@ -386,7 +392,7 @@ destroy_shader :: (using shader: *Shader) {
         safe_release_and_reset(*compute_shader);
 }
 
-compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, []Sampler_Mapping, bool {
+compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, bool {
     bytecode: Shader_Bytecode;
     flags := D3DCOMPILE.ENABLE_STRICTNESS;
     defines: []string;
@@ -400,7 +406,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
         check_hr("D3DCompile", #code {
             free(bytecode);
             log_error(errors);
-            `return .{}, .[], false;
+            `return .{}, false;
         });
         return output;
     }
@@ -409,10 +415,10 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
     if type & .Fragment  bytecode.fs = compile(FS_ENTRY_POINT, "ps_5_0");
     if type & .Compute   bytecode.cs = compile(CS_ENTRY_POINT, "cs_5_0");
 
-    return bytecode, .[], true;
+    return bytecode, true;
 }
 
-load_shader_from_bytecode :: (bytecode: Shader_Bytecode, sampler_mappings: []Sampler_Mapping, type: Shader_Type) -> Shader {
+load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> Shader {
     shader: Shader;
     if type & .Vertex {
         hr := ID3D11Device_CreateVertexShader(device, bytecode.vs.data, xx bytecode.vs.count, null, *shader.vertex_shader);

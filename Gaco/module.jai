@@ -18,6 +18,7 @@
 }
 
 Shader_Bytecode :: struct {
+    mappings: []Sampler_Mapping;
     vs: string;
     fs: string;
     cs: string;
@@ -48,7 +49,7 @@ Buffer_Type :: enum u32 {
     Indirect; // Draw indirect or dispatch indirect buffer
 
     Structured;
-    RWStructured;
+    Structured_RW;
 }
 
 Buffer_Usage :: enum u32 {
@@ -185,7 +186,7 @@ compile_shader :: (file_name: string, output_file_name: string, type: Shader_Typ
     source, ok := read_entire_file(file_name, zero_terminated=true);
     if !ok return false;
 
-    bytecode:, sampler_mappings:, ok = compile_shader_to_bytecode(source, type, path_filename(file_name));
+    bytecode:, ok = compile_shader_to_bytecode(source, type, path_filename(file_name));
     if !ok return false;
 
     backend :: #ifx BACKEND == .D3D11 Shader_Backend.DXBC else Shader_Backend.SPIR_V;
@@ -195,7 +196,7 @@ compile_shader :: (file_name: string, output_file_name: string, type: Shader_Typ
         version = 1,
         backend = backend,
         type = type,
-        sampler_mapping_count = cast(u16)sampler_mappings.count,
+        sampler_mapping_count = cast(u16)bytecode.mappings.count,
         vs_size = xx bytecode.vs.count,
         fs_size = xx bytecode.fs.count,
         cs_size = xx bytecode.cs.count,
@@ -203,7 +204,7 @@ compile_shader :: (file_name: string, output_file_name: string, type: Shader_Typ
 
     sb: String_Builder;
     append(*sb, cast(*u8)*header, size_of(Shader_Header));
-    append(*sb, cast(*u8)sampler_mappings.data, sampler_mappings.count * size_of(Sampler_Mapping));
+    append(*sb, cast(*u8)bytecode.mappings.data, bytecode.mappings.count * size_of(Sampler_Mapping));
     append(*sb, bytecode.vs);
     append(*sb, bytecode.fs);
     append(*sb, bytecode.cs);
@@ -226,11 +227,10 @@ load_shader_from_memory :: (data: string) -> Shader {
     }
 
     bytecode: Shader_Bytecode;
-    sampler_mappings: []Sampler_Mapping;
 
     cursor += size_of(Shader_Header);
-    sampler_mappings.data = cast(*Sampler_Mapping)cursor;
-    sampler_mappings.count = header.sampler_mapping_count;
+    bytecode.mappings.data = cast(*Sampler_Mapping)cursor;
+    bytecode.mappings.count = header.sampler_mapping_count;
 
     cursor += header.sampler_mapping_count * size_of(Sampler_Mapping);
     bytecode.vs.data = cursor;
@@ -244,7 +244,7 @@ load_shader_from_memory :: (data: string) -> Shader {
     bytecode.cs.data = cursor;
     bytecode.cs.count = header.cs_size;
 
-    return load_shader_from_bytecode(bytecode, sampler_mappings, header.type);
+    return load_shader_from_bytecode(bytecode, header.type);
 }
 
 create_buffer :: (data: $T, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {

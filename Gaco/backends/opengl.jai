@@ -20,12 +20,12 @@ Sampler :: struct {
 
 Texture :: struct {
     object: GLuint;
-    format: Texture_Format;
-    pixel_format: GLuint;
-    pixel_type: GLuint;
     width, height, stride: u32;
     depth: u32 = 1;
+    format: Texture_Format;
     flags: Texture_Flags;
+    pixel_format: GLuint;
+    pixel_type: GLuint;
     pbo_size: u32;
 }
 
@@ -158,7 +158,7 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
         #if type == .Copy {
             storage_flags |= GL_MAP_READ_BIT;
         }
-        if usage == .Default {
+        else #if type != .Structured_RW if usage == .Default {
             storage_flags |= GL_DYNAMIC_STORAGE_BIT;
         }
 
@@ -190,12 +190,21 @@ bind_buffer :: (buffer: Buffer(.Constant), slot: u32 = 0, bind_to: Shader_Type) 
 
 }
 
-bind_buffer :: (buffer: Buffer(.Structured), slot: u32 = 0) {
+bind_buffer :: (buffer: Buffer(.Structured), slot: u32 = 0, bind_to: Shader_Type) {
+    if bind_to & .Vertex
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot, buffer.object);
+    if bind_to & .Fragment
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot+16, buffer.object);
+    if bind_to & .Compute
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot+32, buffer.object);
+}
+
+bind_buffer :: (buffer: Buffer(.Structured_RW), slot: u32 = 0) {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot, buffer.object);
 }
 
 // Same as above
-bind_buffer :: (buffer: Buffer(.RWStructured), slot: u32 = 0) {
+bind_buffer :: (buffer: Buffer(.Indirect), slot: u32 = 0) {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot, buffer.object);
 }
 
@@ -208,10 +217,15 @@ map_buffer :: (buffer: *Buffer, flags: Map_Flags) -> *void {
 
     if flags & .Write {
         access |= GL_MAP_WRITE_BIT;
+
         #if buffer.type != .Copy {
-            access |= GL_MAP_INVALIDATE_BUFFER_BIT;
+            // Orphan the buffer
+            // This forces the driver to allocate a fresh chunk of memory.
+            glNamedBufferData(buffer.object, buffer.size, null, GL_DYNAMIC_DRAW);
+            access |= GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_UNSYNCHRONIZED_BIT;
         }
     }
+
     return glMapNamedBufferRange(buffer.object, 0, buffer.size, access);
 }
 
@@ -299,6 +313,8 @@ update_texture :: inline (using texture: *Texture, data: *void, subresource: u32
 }
 
 write_buffer :: (buffer: *Buffer, data: *void, size: int) {
+    // Orphan the buffer
+    glNamedBufferData(buffer.object, size, null, GL_DYNAMIC_DRAW);
     glNamedBufferSubData(buffer.object, 0, size, data);
 }
 
@@ -329,7 +345,7 @@ destroy_shader :: (shader: *Shader) {
     array_free(shader.mappings);
 }
 
-compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, []Sampler_Mapping, bool {
+compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, bool {
     bytecode: Shader_Bytecode;
 
     args: DXC.Dxc_Shader_Compiler_Args;
@@ -387,7 +403,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
 
         result := DXC.DXC_Compile(`args,, temp);
         if !result {
-            `return .{}, .[], false;
+            `return .{}, false;
         }
         new_bytecode, mappings := build_combined_image_samplers(cast(string)result, shader_type);
         array_add(*`sampler_mappings, ..mappings);
@@ -404,11 +420,11 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
     if type & .Compute {
         bytecode.cs = compile(CS_ENTRY_POINT, .Compute);
     }
-
-    return bytecode, sampler_mappings, true;
+    bytecode.mappings = sampler_mappings;
+    return bytecode, true;
 }
 
-load_shader_from_bytecode :: (bytecode: Shader_Bytecode, sampler_mappings: []Sampler_Mapping, type: Shader_Type) -> Shader {
+load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> Shader {
     shader: Shader;
     load :: (shader_type: GLenum, binary: string, entry_point: string) -> GLuint #expand {
         s := glCreateShader(shader_type);
@@ -484,7 +500,7 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, sampler_mappings: []Sam
 
     shader.program = program;
     shader.type = type;
-    shader.mappings = array_copy(sampler_mappings);
+    shader.mappings = array_copy(bytecode.mappings);
 
     return shader;
 }
@@ -1355,7 +1371,6 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> (new_
                 }
 
                 if !found {
-                    // @Temporary: Will replace with mappings.count when we have the logic for it
                     mapped_idx = cast(u8) mappings.count;
                     mapping: Sampler_Mapping;
                     mapping.mapped_index  = mapped_idx;
