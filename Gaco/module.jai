@@ -211,8 +211,7 @@ compile_shader :: (file_name: string, output_file_name: string, type: Shader_Typ
 }
 
 load_shader :: (file_name: string) -> Shader {
-    push_allocator(temp);
-    data, ok := read_entire_file(file_name);
+    data, ok := read_entire_file(file_name,, temp);
     if !ok  return .{};
     return load_shader_from_memory(data);
 }

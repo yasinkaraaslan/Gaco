@@ -4,6 +4,7 @@ Shader :: struct {
     type: Shader_Type;
     input_vao: GLuint;
     program: GLuint; // This is a 'seperable' program that contains the shaders specified with type.
+    mappings: []Sampler_Mapping;
 }
 
 Buffer :: struct (type: Buffer_Type) {
@@ -281,6 +282,7 @@ destroy_shader :: (shader: *Shader) {
         glDeleteVertexArrays(1, *shader.input_vao);
         shader.input_vao = 0;
     }
+    array_free(shader.mappings);
 }
 
 compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, []Sampler_Mapping, bool {
@@ -364,7 +366,6 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
 
 load_shader_from_bytecode :: (bytecode: Shader_Bytecode, sampler_mappings: []Sampler_Mapping, type: Shader_Type) -> Shader {
     shader: Shader;
-
     load :: (shader_type: GLenum, binary: string, entry_point: string) -> GLuint #expand {
         s := glCreateShader(shader_type);
 
@@ -439,6 +440,8 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, sampler_mappings: []Sam
 
     shader.program = program;
     shader.type = type;
+    shader.mappings = array_copy(sampler_mappings);
+
     return shader;
 }
 
@@ -529,9 +532,16 @@ set_shader :: (shader: Shader) {
         bind(vertex_buffer, 0);
         bind(instance_buffer, 1);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_buffer);
+        vs_mappings = shader.mappings;
     }
-    if shader.type & .Fragment  stages |= GL_FRAGMENT_SHADER_BIT;
-    if shader.type & .Compute   stages |= GL_COMPUTE_SHADER_BIT;
+    if shader.type & .Fragment {
+        stages |= GL_FRAGMENT_SHADER_BIT;
+        fs_mappings = shader.mappings;
+    }
+    if shader.type & .Compute {
+        stages |= GL_COMPUTE_SHADER_BIT;
+        cs_mappings = shader.mappings;
+    }
 
     glUseProgramStages(global_pipeline, stages, shader.program);
     glValidateProgramPipeline(global_pipeline);
@@ -832,12 +842,29 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
 }
 
 bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
+    if texture.flags & .Compute_RW {
+        // Compute UAVs don't use samplers so no need to map
+        glBindImageTexture(slot, texture.object, 0, GL_FALSE, 0, GL_READ_WRITE, texture.pixel_format);
+        return;
+    }
+
+    search_and_bind :: (mappings: []Sampler_Mapping, $stage: Shader_Type) #expand {
+        index := `slot;
+        #if stage == .Fragment index += 16;
+        else #if stage == .Compute index += 32;
+        for mappings {
+            if it.stage == stage && it.texture_index == index {
+                glBindTextureUnit(cast(GLuint)it.mapped_index, texture.object);
+            }
+        }
+    }
+
     if bind_to & .Vertex
-        glBindTextureUnit(slot, texture.object);
+        search_and_bind(vs_mappings, .Vertex);
     if bind_to & .Fragment
-        glBindTextureUnit(slot + 16, texture.object);
+        search_and_bind(fs_mappings, .Fragment);
     if bind_to & .Compute
-        glBindTextureUnit(slot + 32, texture.object);
+        search_and_bind(cs_mappings, .Compute);
 }
 
 copy_texture :: inline (from: Texture, to: *Texture) {
@@ -899,26 +926,29 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
 }
 
 bind_sampler :: (sampler: Sampler, slot: u32, bind_to := Shader_Type.Fragment) {
+    search_and_bind :: (mappings: []Sampler_Mapping, $stage: Shader_Type) #expand {
+        index := `slot;
+        #if stage == .Fragment index += 16;
+        else #if stage == .Compute index += 32;
+        for mappings {
+            if it.stage == stage && it.sampler_index == index {
+                glBindSampler(cast(GLuint)it.mapped_index, sampler.object);
+            }
+        }
+    }
+
     if bind_to & .Vertex
-        glBindSampler(slot, sampler.object);
+        search_and_bind(vs_mappings, .Vertex);
     if bind_to & .Fragment
-        glBindSampler(slot+16, sampler.object);
+        search_and_bind(fs_mappings, .Fragment);
     if bind_to & .Compute
-        glBindSampler(slot+32, sampler.object);
+        search_and_bind(cs_mappings, .Compute);
 }
 
 destroy_sampler :: (sampler: *Sampler) {
     glDeleteSamplers(1, *sampler.object);
     sampler.object = 0;
 }
-
-#scope_module
-// Unlike D3D11, a single SPIR-V file can actually have multiple entry-points.
-// We might want to use this fact later on.
-
-VS_EXTENSION :: ".spvs";
-FS_EXTENSION :: ".spfs";
-CS_EXTENSION :: ".spcs";
 
 #scope_file
 init_preloaded_modes :: () {
@@ -1236,7 +1266,7 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> (new_
 
                 if !found {
                     // @Temporary: Will replace with mappings.count when we have the logic for it
-                    mapped_idx = cast(u8) img_binding;
+                    mapped_idx = cast(u8) mappings.count;
                     mapping: Sampler_Mapping;
                     mapping.mapped_index  = mapped_idx;
                     mapping.texture_index = cast(u8) img_binding;
@@ -1331,6 +1361,11 @@ using GL_State: struct {
     current_primitive_mode: GLuint = GL_TRIANGLES;
     current_index_stride: GLenum; // GL_UNSIGNED_SHORT, GL_UNSIGNED_INT
     current_swap_interval: u32; // We shouldn't trust that the default is 0 actually.
+
+    vs_mappings: []Sampler_Mapping;
+    fs_mappings: []Sampler_Mapping;
+    cs_mappings: []Sampler_Mapping;
+
 
     default_sampler: Sampler;
     rasterizer_modes: [#run enum_count(Rasterizer_Mode)]Rasterizer_State;

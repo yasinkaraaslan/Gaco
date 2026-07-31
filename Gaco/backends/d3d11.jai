@@ -311,7 +311,7 @@ update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 
 update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 0) {
     row := cast(u32)box.width * texture.stride;
     d_box := box_from_box(box);
-    ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture3d, subresource, *d_box, data, row, row * texture.height);
+    ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture3d, subresource, *d_box, data, row, row * box.height);
 
 }
 
@@ -891,11 +891,6 @@ bind_sampler :: (sampler: Sampler, slot: u32, bind_to := Shader_Type.Fragment) {
 destroy_sampler :: (sampler: *Sampler) {
     safe_release_and_reset(*sampler.state);
 }
-
-#scope_module
-VS_EXTENSION :: ".dxvs";
-FS_EXTENSION :: ".dxfs";
-CS_EXTENSION :: ".dxcs";
 
 #scope_file
 using D3D11_State: struct {
