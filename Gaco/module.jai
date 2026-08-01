@@ -133,7 +133,7 @@ Sampler_Edge_Handling :: enum u32 {
     Border;
 }
 
-Comparison_Op :: enum u8 {
+Compare_Op :: enum u8 {
     Never;
     Less;
     Equal;
@@ -160,7 +160,7 @@ Draw_Indirect_Args :: struct(indexed: bool) {
 Depth_Stencil_Desc :: struct {
     depth_enable: bool;
     depth_write: bool;
-    depth_func: Comparison_Op;
+    depth_func: Compare_Op;
 
     stencil_enable: bool;
     // TODO(Yasin): Fill the rest.

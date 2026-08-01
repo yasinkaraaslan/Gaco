@@ -34,6 +34,12 @@ Render_Target :: struct {
     color_view_count: u32;
 }
 
+Timer :: struct {
+    start_query: GLuint;
+    end_query: GLuint;
+    #overlay(start_query) queries: [2]GLuint;
+}
+
 Blend_State :: struct {
     enabled: bool;
     src_blend: GLenum;
@@ -1009,7 +1015,7 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, depth_st
     }
 }
 
-create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, max_anisotropy: u32 = 1, comparison_op := Comparison_Op.Never) -> Sampler {
+create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, max_anisotropy: u32 = 1, compare_op := Compare_Op.Never) -> Sampler {
     sampler: Sampler;
     glCreateSamplers(1, *sampler.object);
     FILTER_TABLE :: GLint.[GL_LINEAR, GL_NEAREST];
@@ -1018,9 +1024,9 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
     gl_filtering := FILTER_TABLE[filtering];
     gl_edge := EDGE_TABLE[edge_handling];
 
-    if comparison_op != .Never {
+    if compare_op != .Never {
         glSamplerParameteri(sampler.object, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
-        glSamplerParameteri(sampler.object, GL_TEXTURE_COMPARE_FUNC, xx GL_COMPARISON_ARRAY[comparison_op]); // @Incomplete
+        glSamplerParameteri(sampler.object, GL_TEXTURE_COMPARE_FUNC, xx GL_COMPARISON_ARRAY[compare_op]); // @Incomplete
     }
 
     glSamplerParameteri(sampler.object, GL_TEXTURE_MIN_FILTER, gl_filtering);
@@ -1055,6 +1061,37 @@ bind_sampler :: (sampler: Sampler, slot: u32, bind_to := Shader_Type.Fragment) {
 destroy_sampler :: (sampler: *Sampler) {
     glDeleteSamplers(1, *sampler.object);
     sampler.object = 0;
+}
+
+create_timer :: () -> Timer {
+    timer: Timer;
+    glCreateQueries(GL_TIMESTAMP, 2, timer.queries.data);
+    return timer;
+}
+
+start_timer :: (timer: *Timer) {
+    glQueryCounter(timer.start_query, GL_TIMESTAMP);
+}
+
+stop_timer :: (timer:  *Timer) {
+    glQueryCounter(timer.end_query, GL_TIMESTAMP);
+}
+
+// NOTE(Yasin): We poll the gpu until it finishes processing. If you call this immediately after
+// stop_timer, you will force the cpu to stall. It's better to call this 2-3 frames later.
+timer_get_ms :: (timer: Timer) -> float {
+    start_timestamp: u64;
+    end_timestamp: u64;
+
+    available: GLint = 0;
+    while !available {
+        glGetQueryObjectiv(timer.end_query, GL_QUERY_RESULT_AVAILABLE, *available);
+    }
+
+    glGetQueryObjectui64v(timer.start_query, GL_QUERY_RESULT, *start_timestamp);
+    glGetQueryObjectui64v(timer.end_query, GL_QUERY_RESULT, *end_timestamp);
+
+    return cast(float)((end_timestamp - start_timestamp).(float64) / 1000000.0);
 }
 
 #scope_file

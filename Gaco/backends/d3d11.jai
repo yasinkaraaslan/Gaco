@@ -42,6 +42,12 @@ Render_Target :: struct {
     depth_stencil_view: *ID3D11DepthStencilView;
 }
 
+Timer :: struct {
+    disjoint_query: *ID3D11Query;
+    start_query:    *ID3D11Query;
+    end_query:      *ID3D11Query;
+}
+
 // @Incomplete: You cannot create or destroy these
 Blend_State :: struct {
     state: *ID3D11BlendState;
@@ -899,7 +905,7 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
 }
 
 // @Incomplete: give more options
-create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, max_anisotropy: u32 = 1, comparison_op := Comparison_Op.Never) -> Sampler {
+create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, max_anisotropy: u32 = 1, compare_op := Compare_Op.Never) -> Sampler {
     d3d11_filter: D3D11_FILTER;
     if max_anisotropy > 1 {
         // We override the filter, there is no such requirement in OpenGL.
@@ -912,7 +918,7 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
     ADDRESS_MODE_TABLE :: D3D11_TEXTURE_ADDRESS_MODE.[.WRAP, .MIRROR, .CLAMP, .BORDER];
     address_mode := ADDRESS_MODE_TABLE[edge_handling];
 
-    if comparison_op != .Never {
+    if compare_op != .Never {
         // Comparison and non-comparison filters are 0x80 apart.
         d3d11_filter += 0x80;
     }
@@ -921,7 +927,7 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
         Filter = d3d11_filter,
         AddressU = address_mode, AddressV = address_mode, AddressW = address_mode,
         MaxAnisotropy = max_anisotropy,
-        ComparisonFunc = xx comparison_op, // Maps to the same enum
+        ComparisonFunc = xx compare_op, // Maps to the same enum
         MinLOD = 0,
         MaxLOD = cast(float32)D3D11_FLOAT32_MAX,
     };
@@ -943,6 +949,42 @@ bind_sampler :: (sampler: Sampler, slot: u32, bind_to := Shader_Type.Fragment) {
 
 destroy_sampler :: (sampler: *Sampler) {
     safe_release_and_reset(*sampler.state);
+}
+
+create_timer :: () -> Timer {
+    desc_disjoint := D3D11_QUERY_DESC.{ Query = .TIMESTAMP_DISJOINT };
+    desc_ts       := D3D11_QUERY_DESC.{ Query = .TIMESTAMP };
+
+    timer: Timer;
+    ID3D11Device_CreateQuery(device, *desc_disjoint, *timer.disjoint_query);
+    ID3D11Device_CreateQuery(device, *desc_ts, *timer.start_query);
+    ID3D11Device_CreateQuery(device, *desc_ts, *timer.end_query);
+    return timer;
+}
+
+start_timer :: (timer: *Timer) {
+    ID3D11DeviceContext_Begin(device_context, timer.disjoint_query);
+    ID3D11DeviceContext_End(device_context, timer.start_query);
+}
+
+stop_timer :: (timer: *Timer) {
+    ID3D11DeviceContext_End(device_context, timer.end_query);
+    ID3D11DeviceContext_End(device_context, timer.disjoint_query);
+}
+
+
+// NOTE(Yasin): We poll the gpu until it finishes processing. If you call this immediately after
+// stop_timer, you will force the cpu to stall. It's better to call this 2-3 frames later.
+timer_get_ms :: (timer: Timer) -> float {
+    disjoint_data: D3D11_QUERY_DATA_TIMESTAMP_DISJOINT;
+    start_timestamp: u64;
+    end_timestamp: u64;
+    while ID3D11DeviceContext_GetData(device_context, timer.disjoint_query, *disjoint_data, size_of(D3D11_QUERY_DATA_TIMESTAMP_DISJOINT), 0) != S_OK {}
+    while ID3D11DeviceContext_GetData(device_context, timer.start_query, *start_timestamp, size_of(u64), 0) != S_OK {}
+    while ID3D11DeviceContext_GetData(device_context, timer.end_query, *end_timestamp, size_of(u64), 0) != S_OK {}
+    // If a disjoint event occurred, the reading is garbage
+    if disjoint_data.Disjoint return 0.0;
+    return cast(float)((end_timestamp - start_timestamp).(float64) * 1000.0 / disjoint_data.Frequency.(float64));
 }
 
 #scope_file
