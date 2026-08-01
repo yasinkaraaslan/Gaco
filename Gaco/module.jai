@@ -133,6 +133,17 @@ Sampler_Edge_Handling :: enum u32 {
     Border;
 }
 
+Comparison_Op :: enum u8 {
+    Never;
+    Less;
+    Equal;
+    Less_Equal;
+    Greater;
+    Not_Equal;
+    Greater_Equal;
+    Always;
+}
+
 // Helper struct for creating Draw_Indirect buffers.
 // This is same for all the rendering APIs out there.
 Draw_Indirect_Args :: struct(indexed: bool) {
@@ -146,6 +157,15 @@ Draw_Indirect_Args :: struct(indexed: bool) {
 }
 
 
+Depth_Stencil_Desc :: struct {
+    depth_enable: bool;
+    depth_write: bool;
+    depth_func: Comparison_Op;
+
+    stencil_enable: bool;
+    // TODO(Yasin): Fill the rest.
+}
+
 // If you want to add a mode, remember to do it on init_preloaded_modes as well.
 Blend_Mode :: enum u32 {
     None;
@@ -158,6 +178,7 @@ Rasterizer_Mode :: enum u32 {
     No_Cull;
     Scissor;
 }
+
 Depth_Stencil_Mode :: enum u32 {
     Depth_Stencil;
     No_Depth;
@@ -485,6 +506,15 @@ get_semantic_info :: (semantic: string) -> is_instance: bool, step_rate: u32 {
         return true, step_rate;
     }
     return false, 0;
+}
+
+#assert size_of(Depth_Stencil_Desc) == size_of(u32);
+get_ds_hash :: (desc: Depth_Stencil_Desc) -> u32 {
+    return (*desc).(*u32).*;
+}
+
+compare_ds :: (d0: Depth_Stencil_Desc, d1: Depth_Stencil_Desc) -> bool{
+    return memcmp(*d0, *d1, size_of(Depth_Stencil_Desc)) == 0;
 }
 
 TEXTURE_BYTES_PER_BLOCK :: u32.[

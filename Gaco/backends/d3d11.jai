@@ -129,7 +129,7 @@ init :: (window: HWND, wanted_msaa: u32 = 4) {
 
     // There are very few cases where one wouldn't want depth testing.
     // So we enable it by default.
-    set_depth_stencil_mode(.Depth_Stencil);
+    set_depth_stencil_state(.Depth_Stencil);
 }
 
 deinit :: () {
@@ -530,17 +530,47 @@ set_viewport :: (x: float, y: float, width: float, height: float, near_depth := 
     ID3D11DeviceContext_RSSetViewports(device_context, 1, *vp);
 }
 
-set_blend_mode :: (mode: Blend_Mode) {
+set_blend_state :: (mode: Blend_Mode) {
     ID3D11DeviceContext_OMSetBlendState(device_context, blend_modes[mode], null, SampleMask=0xFFFFFFFF);
 }
 
-set_rasterizer_mode :: (mode: Rasterizer_Mode) {
+set_rasterizer_state :: (mode: Rasterizer_Mode) {
     ID3D11DeviceContext_RSSetState(device_context, rasterizer_modes[mode]);
 }
 
-set_depth_stencil_mode :: (mode: Depth_Stencil_Mode) {
-    ID3D11DeviceContext_OMSetDepthStencilState(device_context, depth_stencil_modes[mode], StencilRef=0xFF);
+set_depth_stencil_state :: (mode: Depth_Stencil_Mode, stencil_ref: u8 = 0xFF) {
+    ID3D11DeviceContext_OMSetDepthStencilState(device_context, depth_stencil_modes[mode], StencilRef=stencil_ref);
 }
+
+
+set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
+    found, state := table_find(*depth_stencil_table, desc);
+    if !found {
+        d3d11_desc := D3D11_DEPTH_STENCIL_DESC.{
+            DepthEnable = xx desc.depth_enable,
+            DepthWriteMask = xx desc.depth_write,
+            DepthFunc = xx desc.depth_func, // Same enum
+            StencilEnable = xx desc.stencil_enable,
+
+            // TODO(Yasin): Fill the rest
+            StencilReadMask = D3D11_DEFAULT_STENCIL_READ_MASK,
+            StencilWriteMask = D3D11_DEFAULT_STENCIL_WRITE_MASK,
+
+            FrontFace.StencilFunc = .ALWAYS,
+            FrontFace.StencilFailOp = .KEEP,
+            FrontFace.StencilDepthFailOp = .KEEP,
+            FrontFace.StencilPassOp = .KEEP,
+
+            BackFace.StencilFunc = .ALWAYS,
+            BackFace.StencilFailOp = .KEEP,
+            BackFace.StencilDepthFailOp = .KEEP,
+            BackFace.StencilPassOp = .KEEP,
+        };
+        ID3D11Device_CreateDepthStencilState(device, *d3d11_desc, *state);
+    }
+    ID3D11DeviceContext_OMSetDepthStencilState(device_context, state, stencil_ref);
+}
+
 // base_vertex only makes sense in indexed drawing.
 draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex: s32 = 0) {
     #if indexed {
@@ -693,6 +723,13 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
 
         // If we are multisampled, we cannot pass initial data anyway.
         array_count := ifx flags & .Is_3D 1 else array_count_or_depth;
+
+        expected_count := array_count * mip_levels_or_msaa;
+        if data.count < expected_count {
+            log_error("[Gaco] Incomplete data array. Expected count %, got %.", expected_count, data.count);
+            return .{};
+        }
+
         for i: 0..array_count-1 {
             for j: 0..mip_levels_or_msaa-1 {
                 // D3D11CalcSubresource
@@ -785,8 +822,8 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     }
 
     // Create the view
-    // TODO(Yasin): We do not handle arrays right now, which is not good
     if bind_flags & .SHADER_RESOURCE {
+        // Passing null here should be fine in our case since we want to map the entire resource
         hr := ID3D11Device_CreateShaderResourceView(device, resource, null, *texture.resource_view);
         check_hr("ID3D11Device.CreateShaderResourceView", #code return .{});
 
@@ -862,7 +899,7 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
 }
 
 // @Incomplete: give more options
-create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, max_anisotropy: u32 = 1, comparison := false) -> Sampler {
+create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, max_anisotropy: u32 = 1, comparison_op := Comparison_Op.Never) -> Sampler {
     d3d11_filter: D3D11_FILTER;
     if max_anisotropy > 1 {
         // We override the filter, there is no such requirement in OpenGL.
@@ -875,7 +912,7 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
     ADDRESS_MODE_TABLE :: D3D11_TEXTURE_ADDRESS_MODE.[.WRAP, .MIRROR, .CLAMP, .BORDER];
     address_mode := ADDRESS_MODE_TABLE[edge_handling];
 
-    if comparison {
+    if comparison_op != .Never {
         // Comparison and non-comparison filters are 0x80 apart.
         d3d11_filter += 0x80;
     }
@@ -884,7 +921,7 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
         Filter = d3d11_filter,
         AddressU = address_mode, AddressV = address_mode, AddressW = address_mode,
         MaxAnisotropy = max_anisotropy,
-        ComparisonFunc = .NEVER, // @Incomplete
+        ComparisonFunc = xx comparison_op, // Maps to the same enum
         MinLOD = 0,
         MaxLOD = cast(float32)D3D11_FLOAT32_MAX,
     };
@@ -916,6 +953,8 @@ using D3D11_State: struct {
 
     window_render_target: Render_Target;
     // bound_render_target: *Render_Target;
+
+    depth_stencil_table: Table(Depth_Stencil_Desc, *ID3D11DepthStencilState, get_ds_hash, compare_ds);
 
     rasterizer_modes: [#run enum_count(Rasterizer_Mode)]*ID3D11RasterizerState;
     blend_modes: [#run enum_count(Blend_Mode)]*ID3D11BlendState;
@@ -1174,67 +1213,69 @@ DXGI_MAPPING_ARRAY :: DXGI_FORMAT.[
     .DXGI_FORMAT_D32_FLOAT_S8X24_UINT   // D32FS8
 ];
 
+#if DEBUG {
+
+Crash_Handler :: #import "Runtime_Support_Crash_Handler";
+init_exception_handler :: () {
+    info: *ID3D11InfoQueue;
+    hr := IUnknown_QueryInterface(device, *uid(ID3D11InfoQueue_UUID), cast(**void) *info);
+    if(SUCCEEDED(hr))
+    {
+        ID3D11InfoQueue_SetBreakOnSeverity(info, .CORRUPTION, 1);
+        ID3D11InfoQueue_SetBreakOnSeverity(info, .ERROR, 1);
+    }
+    safe_release(info);
+    SetUnhandledExceptionFilter(xx handle_exception);
+}
+
+handle_exception :: (pExceptionInfo: *Crash_Handler.EXCEPTION_POINTERS) -> s32 #c_call {
+    push_context {
+        msg, found := log_messages_and_get_last();
+        if found {
+            MessageBoxA(null, msg.data, "D3D11 Error", MB_OK | MB_ICONERROR);
+        }
+    }
+    return Crash_Handler.handle_exception(pExceptionInfo);
+}
+log_messages_and_get_last :: () -> string, bool {
+    info: *ID3D11InfoQueue;
+    IUnknown_QueryInterface(device, *uid(ID3D11InfoQueue_UUID), cast(**void) *info);
+
+    message_count := ID3D11InfoQueue_GetNumStoredMessages(info);
+    if message_count == 0 return .{}, false;
+    logged_ids: [..]D3D11_MESSAGE_ID;
+    message_str: string;
+
+    error := false;
+    for i: 0..message_count-1 {
+        message_size: u64;
+        ID3D11InfoQueue_GetMessageA(info, i, null, *message_size);
+
+        message := cast(*D3D11_MESSAGE) alloc(cast(s64)message_size,, temp);
+        ID3D11InfoQueue_GetMessageA(info, i, message, *message_size);
+
+        for logged_ids {
+            if it == message.ID  continue i;
+        }
+        array_add(*logged_ids, message.ID);
+
+        if message.Severity == .ERROR || message.Severity == .CORRUPTION {
+            error = true;
+        }
+
+        message_str = string.{data=message.pDescription, count=xx message.DescriptionByteLength-1};
+        flags := ifx error Log_Flags.ERROR else .WARNING;
+        log("[Gaco] %1%2 generated. %", message.ID, ifx error " error" else " ", message_str, flags=flags);
+    }
+    ID3D11InfoQueue_ClearStoredMessages(info);
+    safe_release(info);
+    return message_str, error;
+}
+
+}
+
 #import "d3d11";
 #import "d3d_compiler";
 #import "dxgi";
 #import "Windows";
-
-#if DEBUG {
-    Crash_Handler :: #import "Runtime_Support_Crash_Handler";
-    init_exception_handler :: () {
-        info: *ID3D11InfoQueue;
-        hr := IUnknown_QueryInterface(device, *uid(ID3D11InfoQueue_UUID), cast(**void) *info);
-        if(SUCCEEDED(hr))
-        {
-            ID3D11InfoQueue_SetBreakOnSeverity(info, .CORRUPTION, 1);
-            ID3D11InfoQueue_SetBreakOnSeverity(info, .ERROR, 1);
-
-        }
-        safe_release(info);
-        SetUnhandledExceptionFilter(xx handle_exception);
-    }
-
-    handle_exception :: (pExceptionInfo: *Crash_Handler.EXCEPTION_POINTERS) -> s32 #c_call {
-        push_context {
-            msg, found := log_messages_and_get_last();
-            if found {
-                MessageBoxA(null, msg.data, "D3D11 Error", MB_OK | MB_ICONERROR);
-            }
-        }
-        return Crash_Handler.handle_exception(pExceptionInfo);
-    }
-    log_messages_and_get_last :: () -> string, bool {
-        info: *ID3D11InfoQueue;
-        IUnknown_QueryInterface(device, *uid(ID3D11InfoQueue_UUID), cast(**void) *info);
-
-        message_count := ID3D11InfoQueue_GetNumStoredMessages(info);
-        if message_count == 0 return .{}, false;
-        logged_ids: [..]D3D11_MESSAGE_ID;
-        message_str: string;
-
-        error := false;
-        for i: 0..message_count-1 {
-            message_size: u64;
-            ID3D11InfoQueue_GetMessageA(info, i, null, *message_size);
-
-            message := cast(*D3D11_MESSAGE) alloc(cast(s64)message_size,, temp);
-            ID3D11InfoQueue_GetMessageA(info, i, message, *message_size);
-
-            for logged_ids {
-                if it == message.ID  continue i;
-            }
-            array_add(*logged_ids, message.ID);
-
-            if message.Severity == .ERROR || message.Severity == .CORRUPTION {
-                error = true;
-            }
-
-            message_str = string.{data=message.pDescription, count=xx message.DescriptionByteLength-1};
-            flags := ifx error Log_Flags.ERROR else .WARNING;
-            log("[Gaco] % - %\n", message.ID, message_str, flags=flags);
-        }
-        ID3D11InfoQueue_ClearStoredMessages(info);
-        safe_release(info);
-        return message_str, error;
-    }
-}
+#import "Hash_Table";

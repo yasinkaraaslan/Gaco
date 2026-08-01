@@ -56,14 +56,8 @@ Rasterizer_State :: struct {
     scissor_enabled: bool;
 }
 
-Depth_Stencil_State :: struct {
-    depth_enabled: bool;
-    depth_write_mask: GLboolean;
-    depth_func: GLenum;
+Depth_Stencil_State :: Depth_Stencil_Desc;
 
-    stencil_enabled: bool;
-    // @Incomplete: Add the rest of the stencil fields here.
-}
 
 is_empty :: (texture: Texture) -> bool {
     if texture.flags & .Copy return glIsBuffer(texture.object) == GL_FALSE;
@@ -96,8 +90,10 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
     #if DEBUG {
         // D3D11 crashes on errors (because there is no way to register a callback...)
         // so we do the same thing here to be compatible, is this a good idea?
-        gl_enable_debug_output(break_on_error=true);
+        glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+        glDebugMessageCallback(gl_debug_callback, null);
     }
+
     glFrontFace(GL_CW); // We use clockwise for both OpenGL and D3D11
     glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
 
@@ -109,6 +105,11 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
     glCreateProgramPipelines(1, *global_pipeline);
     glBindProgramPipeline(global_pipeline);
     init_preloaded_modes();
+
+    set_depth_stencil_state(.Depth_Stencil);
+    set_rasterizer_state(.Default);
+    set_blend_state(.None);
+
 
     set_swap_interval(0);
 
@@ -639,7 +640,7 @@ set_viewport :: (x: float, y: float, width: float, height: float, near_depth := 
     glDepthRangef(near_depth, far_depth);
 }
 
-set_blend_mode :: (mode: Blend_Mode) {
+set_blend_state :: (mode: Blend_Mode) {
     state := blend_modes[mode];
     if state.enabled {
         glEnable(GL_BLEND);
@@ -655,7 +656,7 @@ set_blend_mode :: (mode: Blend_Mode) {
     }
 }
 
-set_rasterizer_mode :: (mode: Rasterizer_Mode) {
+set_rasterizer_state :: (mode: Rasterizer_Mode) {
     state := rasterizer_modes[mode];
     glPolygonMode(GL_FRONT_AND_BACK, state.polygon_mode);
     if state.cull_mode {
@@ -673,21 +674,25 @@ set_rasterizer_mode :: (mode: Rasterizer_Mode) {
     }
 }
 
-set_depth_stencil_mode :: (mode: Depth_Stencil_Mode) {
-    state := depth_stencil_modes[mode];
-    if state.depth_enabled {
-        using state;
+set_depth_stencil_state :: (mode: Depth_Stencil_Mode, stencil_ref: u8 = 0xFF) {
+    desc := depth_stencil_modes[mode];
+    set_depth_stencil_state(desc, stencil_ref);
+}
+
+set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
+    if desc.depth_enable {
         glEnable(GL_DEPTH_TEST);
-        glDepthMask(depth_write_mask);
-        glDepthFunc(depth_func);
+        glDepthMask(desc.depth_write);
+        glDepthFunc(GL_COMPARISON_ARRAY[desc.depth_func]);
     }
     else {
         glDisable(GL_DEPTH_TEST);
     }
 
-    if state.stencil_enabled {
+    if desc.stencil_enable {
         glEnable(GL_STENCIL_TEST);
-        // @Incomplete: Rest of the procedures
+        // TODO(Yasin): Complete everything
+        glStencilFunc(GL_ALWAYS, stencil_ref, 0xFFFFFFFF);
     }
     else {
         glDisable(GL_STENCIL_TEST);
@@ -808,7 +813,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     };
 
     if flags & .Copy {
-        size := width * height * bytes_per_block;
+        size := width * height * bytes_per_block * array_count_or_depth;
         glCreateBuffers(1, *texture.object);
         glNamedBufferStorage(texture.object, size, null, GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT | GL_MAP_WRITE_BIT);
         texture.pbo_size = size;
@@ -867,13 +872,17 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
 
     if data && !is_msaa {
         mips_to_upload := ifx generate_mips 1 else mip_levels;
-        slices         := ifx is_3d 1 else array_count_or_depth;
+        array_count    := ifx is_3d 1 else array_count_or_depth;
 
-        for slice: 0..slices-1 {
+        expected_count := array_count * mip_levels_or_msaa;
+        if data.count < expected_count {
+            log_error("[Gaco] Incomplete data array. Expected count %, got %.", expected_count, data.count);
+            return .{};
+        }
+
+        for 0..array_count-1 {
             for mip: 0..mips_to_upload-1 {
-                data_index := mip + slice * mip_levels;
-                if data_index >= data.count break;
-
+                data_index := mip + it * mip_levels;
                 pixels := data[data_index];
                 if !pixels continue;
 
@@ -881,7 +890,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
                 mip_height := cast(u32)max(1, height >> mip);
                 mip_depth  := ifx is_3d cast(u32)max(1, array_count_or_depth >> mip) else 1;
 
-                zoffset   := ifx is_3d then 0 else slice;
+                zoffset   := ifx is_3d then 0 else it;
                 depth_arg := ifx is_3d then mip_depth else 1;
 
                 if is_block_compression(format) {
@@ -1000,7 +1009,7 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, depth_st
     }
 }
 
-create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, max_anisotropy: u32 = 1, comparison := false) -> Sampler {
+create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, max_anisotropy: u32 = 1, comparison_op := Comparison_Op.Never) -> Sampler {
     sampler: Sampler;
     glCreateSamplers(1, *sampler.object);
     FILTER_TABLE :: GLint.[GL_LINEAR, GL_NEAREST];
@@ -1009,9 +1018,9 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
     gl_filtering := FILTER_TABLE[filtering];
     gl_edge := EDGE_TABLE[edge_handling];
 
-    if comparison {
+    if comparison_op != .Never {
         glSamplerParameteri(sampler.object, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
-        glSamplerParameteri(sampler.object, GL_TEXTURE_COMPARE_FUNC, GL_NEVER); // @Incomplete
+        glSamplerParameteri(sampler.object, GL_TEXTURE_COMPARE_FUNC, xx GL_COMPARISON_ARRAY[comparison_op]); // @Incomplete
     }
 
     glSamplerParameteri(sampler.object, GL_TEXTURE_MIN_FILTER, gl_filtering);
@@ -1054,32 +1063,30 @@ init_preloaded_modes :: () {
     {
         using Depth_Stencil_Mode;
         state := Depth_Stencil_State.{
-            depth_enabled = true,
-            depth_write_mask = GL_TRUE,
-            depth_func = GL_LEQUAL,
-            stencil_enabled = true
+            depth_enable = true,
+            depth_write = true,
+            depth_func = .Less_Equal,
+            stencil_enable = true
         };
         depth_stencil_modes[Depth_Stencil] = state;
 
-        state.depth_func = GL_GEQUAL;
+        state.depth_func = .Greater_Equal;
         depth_stencil_modes[Depth_Reversed] = state;
 
-        state.depth_func = GL_LEQUAL;
-        state.depth_write_mask = GL_FALSE;
+        state.depth_func = .Less_Equal;
+        state.depth_write = false;
         depth_stencil_modes[No_Depth_Mask] = state;
 
-        state.depth_enabled = false;
+        state.depth_enable = false;
         depth_stencil_modes[No_Depth] = state;
 
-        state.stencil_enabled = false;
+        state.stencil_enable = false;
         depth_stencil_modes[No_Depth_Stencil] = state;
 
-        state.depth_enabled = true;
-        state.depth_write_mask = GL_TRUE;
-        state.depth_func = GL_LEQUAL;
+        state.depth_enable = true;
+        state.depth_write = true;
+        state.depth_func = .Less_Equal;
         depth_stencil_modes[No_Stencil] = state;
-
-        set_depth_stencil_mode(.Depth_Stencil);
     }
 
     // Rasterizer Modes
@@ -1100,7 +1107,6 @@ init_preloaded_modes :: () {
 
         state.cull_mode = 0; // Special
         rasterizer_modes[No_Cull] = state;
-        set_rasterizer_mode(.Default);
     }
 
     // Blend Modes
@@ -1121,7 +1127,6 @@ init_preloaded_modes :: () {
 
         state.enabled = false;
         blend_modes[None] = state;
-        set_blend_mode(.None);
     }
 }
 
@@ -1531,6 +1536,25 @@ GL_MAPPING_ARRAY :: GL_Format_Info.[
     .{ GL_DEPTH_COMPONENT32F,GL_DEPTH_COMPONENT, GL_FLOAT },                      // D32F
     .{ GL_DEPTH32F_STENCIL8, GL_DEPTH_STENCIL,   GL_FLOAT_32_UNSIGNED_INT_24_8_REV } // D32FS8
 ];
+
+GL_COMPARISON_ARRAY :: GLenum.[GL_NEVER, GL_LESS, GL_EQUAL, GL_LEQUAL, GL_GREATER, GL_NOTEQUAL, GL_GEQUAL, GL_ALWAYS];
+
+#if DEBUG {
+gl_debug_callback :: (source: GLenum, type: GLenum, id: GLuint, severity: GLenum, length: GLsizei, message: *u8, userParam: *void) #c_call {
+    push_context,defer_pop;
+
+    if source != GL_DEBUG_SOURCE_APPLICATION && type != GL_DEBUG_TYPE_OTHER && type != GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR {
+        error := type == GL_DEBUG_TYPE_ERROR;
+        flags := ifx error Log_Flags.ERROR else .WARNING;
+        message_str := string.{length, message};
+
+        log("[Gaco] %", message_str, flags=flags);
+        if error {
+            debug_break();
+        }
+    }
+}
+}
 #import "GL";
 DXC :: #import "dxc_compiler";
 
