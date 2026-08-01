@@ -766,9 +766,11 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     resource := ifx flags & .Is_3D cast(*ID3D11Resource) texture.texture3d else texture.texture2d;
 
     if generate_mips {
+        mip_levels := ifx mip_levels_or_msaa else max_mip_levels(width, height);
+
         for data {
             // D3D11CalcSubresource
-            index := mip_levels_or_msaa * cast(u32)it_index;
+            index := mip_levels * cast(u32)it_index;
             block_width := width;
             block_height := height;
 
@@ -833,10 +835,13 @@ copy_texture :: (from: Texture, to: *Texture, source_box: Box) {
 copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u32 = 0) {
     resource: *ID3D11Resource;
     ID3D11View_GetResource(render_target.color_views[index], *resource);
+    defer IUnknown_Release(resource);
+
     tex: *ID3D11Texture2D;
     hr := IUnknown_QueryInterface(resource, *uid(ID3D11Texture2D_UUID), cast(**void)*tex);
     check_hr("IUnknown.QueryInterface");
-    IUnknown_Release(resource);
+    defer IUnknown_Release(tex);
+
 
     desc: D3D11_TEXTURE2D_DESC;
     ID3D11Texture2D_GetDesc(tex, *desc);
@@ -846,15 +851,14 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
         temp_desc.SampleDesc = .{1, 0};
         temp_tex: *ID3D11Texture2D;
         ID3D11Device_CreateTexture2D(device, *temp_desc, null, *temp_tex);
+        defer IUnknown_Release(temp_tex);
 
         ID3D11DeviceContext_ResolveSubresource(device_context, temp_tex, 0, tex, 0, desc.Format);
         ID3D11DeviceContext_CopyResource(device_context, to.texture2d, temp_tex);
-        IUnknown_Release(temp_tex);
     }
     else {
         ID3D11DeviceContext_CopyResource(device_context, to.texture2d, tex);
     }
-    IUnknown_Release(tex);
 }
 
 // @Incomplete: give more options

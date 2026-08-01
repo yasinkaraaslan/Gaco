@@ -420,7 +420,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: s
     if type & .Compute {
         bytecode.cs = compile(CS_ENTRY_POINT, .Compute);
     }
-    bytecode.mappings = sampler_mappings;
+    bytecode.mappings = array_copy(sampler_mappings);
     return bytecode, true;
 }
 
@@ -843,7 +843,9 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
 
     glCreateTextures(target, 1, *texture.object);
 
-    mip_levels := ifx is_msaa 1 else mip_levels_or_msaa;
+    mip_levels := ifx is_msaa 1 else ifx mip_levels_or_msaa;
+    if mip_levels == 0 && generate_mips
+        mip_levels = max_mip_levels(width, height);
 
     if is_msaa {
         if is_array {

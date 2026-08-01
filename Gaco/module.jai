@@ -46,8 +46,7 @@ Buffer_Type :: enum u32 {
     Constant;
     Copy;
 
-    Indirect; // Draw indirect or dispatch indirect buffer
-
+    Indirect;
     Structured;
     Structured_RW;
 }
@@ -79,7 +78,8 @@ Texture_Flags :: enum_flags u32 {
 Texture_Format :: enum u16 {
     Unknown :: 0;
 
-    R8      :: 1;        // Fixed point formats.
+    // Fixed point formats.
+    R8      :: 1;
     RG8;
     RGBA8;
     RGBA8_SRGB;
@@ -89,7 +89,8 @@ Texture_Format :: enum u16 {
     RGB10A2;
     R16;
 
-    R16F;   // Floating point formats.
+    // Floating point formats.
+    R16F;
     RG16F;
     RGBA16F;
     R32F;
@@ -98,7 +99,8 @@ Texture_Format :: enum u16 {
     RG11B10F;
     RGB9E5F;
 
-    R16I;           // Integer formats.
+    // Integer formats.
+    R16I;
     RG16I;
     RGBA16I;
     R32I;
@@ -222,7 +224,7 @@ load_shader_from_memory :: (data: string) -> Shader {
     header := (cast(*Shader_Header)cursor).*;
 
     if header.magic != GACO_MAGIC {
-        log_error("[Gaco] Shader magic is wrong! Expected: % Got: %", GACO_MAGIC, header.magic);
+        log_error("[Gaco] Shader magic is wrong! Expected: % Got: %", formatInt(GACO_MAGIC, 16), formatInt(header.magic, 16));
         return .{};
     }
 
@@ -336,6 +338,7 @@ write_buffer :: inline (buffer: *Buffer, data: $T) {
     #if type_info(T).type == .ARRAY {
         ELEMENT_SIZE :: size_of(type_of(data[0]));
         if ELEMENT_SIZE != buffer.stride {
+            // This is probably an error most of the time, so maybe a warning will be in place
             buffer.stride = ELEMENT_SIZE;
         }
         data_pointer = data.data;
@@ -350,9 +353,11 @@ write_buffer :: inline (buffer: *Buffer, data: $T) {
 
 // Allocates on temp
 // NOTE(Yasin): This creates a huge performance penalty.
+// So it's advised to use this only when debugging.
 read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *void {
     buffer_to_map: *Buffer(.Copy) = ---;
     temp_copy_buffer: Buffer(.Copy) = ---;
+    defer if temp_copy_buffer destroy_buffer(temp_copy_buffer);
 
     if copy_buffer_to_use {
         buffer_to_map = copy_buffer_to_use;
@@ -369,14 +374,14 @@ read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *
     mapped_data := map_buffer(buffer_to_map, .Read);
     memcpy(data, mapped_data, buffer.size);
     unmap_buffer(buffer_to_map);
-    if !copy_buffer_to_use destroy_buffer(buffer_to_map);
     return data;
 }
 
 free :: (bytecode: Shader_Bytecode) {
-    if bytecode.vs free(bytecode.vs);
-    if bytecode.fs free(bytecode.fs);
-    if bytecode.cs free(bytecode.cs);
+    if bytecode.mappings array_free(bytecode.mappings);
+    if bytecode.vs  free(bytecode.vs);
+    if bytecode.fs  free(bytecode.fs);
+    if bytecode.cs  free(bytecode.cs);
 }
 
 #if BACKEND == {
@@ -414,7 +419,8 @@ Shader_Header :: struct {
 }
 
 // This is used for SPIR-V files because the sampler and texture indices
-// are the same in OpenGL so they have to match.
+// are the same in OpenGL so we have to have a system to map our seperate
+// sampler and texture indices.
 Sampler_Mapping :: struct {
     mapped_index: u8;
     texture_index: u8;
@@ -449,6 +455,16 @@ enum_count :: ($T: Type) -> s64 {
 
 is_block_compression :: inline (format: Texture_Format) -> bool {
     return format >= .BC6U && format <= .BC7_SRGB;
+}
+
+max_mip_levels :: inline (width: u32, height: u32) -> u32 {
+    mip_levels: u32 = 0;
+    max_dim := max(width, height);
+    while max_dim > 0 {
+        mip_levels += 1;
+        max_dim >>= 1;
+    }
+    return mip_levels;
 }
 
 get_semantic_info :: (semantic: string) -> is_instance: bool, step_rate: u32 {
