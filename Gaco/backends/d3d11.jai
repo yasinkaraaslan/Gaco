@@ -398,15 +398,16 @@ destroy_shader :: (using shader: *Shader) {
         safe_release_and_reset(*compute_shader);
 }
 
-compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, bool {
+compile_shader_to_bytecode :: (source: string, type: Shader_Type, file_name: string, defines := string.[]) -> Shader_Bytecode, bool {
     bytecode: Shader_Bytecode;
     flags := D3DCOMPILE.ENABLE_STRICTNESS;
-    defines: []string;
+
     #if DEBUG {
-        flags |= .DEBUG | .SKIP_OPTIMIZATION;
+        flags |= .DEBUG | .SKIP_OPTIMIZATION | .WARNINGS_ARE_ERRORS;
     }
+
     compile :: (entry_point: string, target: string) -> string #expand {
-        output, errors, hr := D3DCompile(source, shader_name, defines, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry_point, target, xx flags, 0);
+        output, errors, hr := D3DCompile(source, file_name, defines, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry_point, target, xx flags, 0);
         defer free(errors);
 
         check_hr("D3DCompile", #code {
@@ -1243,6 +1244,15 @@ DXGI_MAPPING_ARRAY :: DXGI_FORMAT.[
     .DXGI_FORMAT_R32G32B32_SINT,        // RGB32I
     .DXGI_FORMAT_R32G32B32A32_SINT,     // RGBA32I
 
+    // Unsigned integer formats
+    .DXGI_FORMAT_R16_UINT,              // R16U
+    .DXGI_FORMAT_R16G16_UINT,           // RG16U
+    .DXGI_FORMAT_R16G16B16A16_UINT,     // RGBA16U
+    .DXGI_FORMAT_R32_UINT,              // R32U
+    .DXGI_FORMAT_R32G32_UINT,           // RG32U
+    .DXGI_FORMAT_R32G32B32_UINT,        // RGB32U
+    .DXGI_FORMAT_R32G32B32A32_UINT,     // RGBA32U
+
     // Block compression formats
     .DXGI_FORMAT_BC6H_UF16,             // BC6U
     .DXGI_FORMAT_BC6H_SF16,             // BC6S
@@ -1308,7 +1318,7 @@ log_messages_and_get_last :: () -> string, bool {
 
         message_str = string.{data=message.pDescription, count=xx message.DescriptionByteLength-1};
         flags := ifx error Log_Flags.ERROR else .WARNING;
-        log("[Gaco] %1%2 generated. %", message.ID, ifx error " error" else " ", message_str, flags=flags);
+        log("[Gaco] % %", message.ID, message_str, flags=flags);
     }
     ID3D11InfoQueue_ClearStoredMessages(info);
     safe_release(info);

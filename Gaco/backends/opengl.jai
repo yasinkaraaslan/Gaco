@@ -352,16 +352,16 @@ destroy_shader :: (shader: *Shader) {
     array_free(shader.mappings);
 }
 
-compile_shader_to_bytecode :: (source: string, type: Shader_Type, shader_name: string) -> Shader_Bytecode, bool {
+compile_shader_to_bytecode :: (source: string, type: Shader_Type, file_name: string, defines := string.[]) -> Shader_Bytecode, bool {
     bytecode: Shader_Bytecode;
 
     args: DXC.Dxc_Shader_Compiler_Args;
-    args.shader_name = shader_name;
+    args.shader_name = file_name;
     args.shader_model_version = "6_0";
     args.shader_source = source;
     args.add_debug_info = DEBUG;
     args.spirv_target_env = "vulkan1.0";
-    args.spirv_generate_non_semanantic_debug_info = DEBUG;
+    args.defines = defines;
 
     sampler_mappings := [..]Sampler_Mapping.{allocator=temp};
 
@@ -576,6 +576,7 @@ set_shader :: (shader: Shader) {
             offset: u32;
         }
 
+        // TODO(Yasin): Save the bound buffer ourselves so we don't have to call gl
         get_bound :: (slot: u32) -> Bound_Buffer {
             buffer: Bound_Buffer;
             glGetIntegeri_v(GL_VERTEX_BINDING_BUFFER, slot, cast(*GLint)*buffer.object);
@@ -596,6 +597,7 @@ set_shader :: (shader: Shader) {
         glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, cast(*GLint)*index_buffer);
 
         glBindVertexArray(shader.input_vao);
+
         bind(vertex_buffer, 0);
         bind(instance_buffer, 1);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_buffer);
@@ -800,7 +802,7 @@ resize :: (width: int, height: int) -> window_render_target: Render_Target {
 create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.None) -> Texture {
     generate_mips := (flags & .Generate_Mips) && mip_levels_or_msaa != 1;
 
-    gl_info := GL_MAPPING_ARRAY[format];
+    gl_info := GL_TEXTURE_MAP_ARRAY[format];
     if gl_info.internal_format == 0 {
         log_error("[Gaco] Couldn't create texture: Format % is Unknown or unsupported.", format);
         return .{};
@@ -1528,7 +1530,7 @@ GL_Format_Info :: struct {
     upload_type     : u32;
 }
 
-GL_MAPPING_ARRAY :: GL_Format_Info.[
+GL_TEXTURE_MAP_ARRAY :: GL_Format_Info.[
     .{ GL_NONE, 0, 0 }, // Unknown
 
     // Fixed point formats
@@ -1560,6 +1562,15 @@ GL_MAPPING_ARRAY :: GL_Format_Info.[
     .{ GL_RG32I,    GL_RG_INTEGER,   GL_INT },                    // RG32I
     .{ GL_RGB32I,   GL_RGB_INTEGER,  GL_INT },                    // RGB32I
     .{ GL_RGBA32I,  GL_RGBA_INTEGER, GL_INT },                    // RGBA32I
+
+    // Unsigned integer formats
+    .{ GL_R16UI,    GL_RED_INTEGER,  GL_UNSIGNED_SHORT },         // R16U
+    .{ GL_RG16UI,   GL_RG_INTEGER,   GL_UNSIGNED_SHORT },         // RG16U
+    .{ GL_RGBA16UI, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT },         // RGBA16U
+    .{ GL_R32UI,    GL_RED_INTEGER,  GL_UNSIGNED_INT },           // R32U
+    .{ GL_RG32UI,   GL_RG_INTEGER,   GL_UNSIGNED_INT },           // RG32U
+    .{ GL_RGB32UI,  GL_RGB_INTEGER,  GL_UNSIGNED_INT },           // RGB32U
+    .{ GL_RGBA32UI, GL_RGBA_INTEGER, GL_UNSIGNED_INT },           // RGBA32U
 
     // Block compression formats
     .{ GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT, 0, 0 },             // BC6U

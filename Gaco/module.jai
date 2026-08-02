@@ -108,6 +108,15 @@ Texture_Format :: enum u16 {
     RGB32I;
     RGBA32I;
 
+    // Unsigned integer formats
+    R16U;
+    RG16U;
+    RGBA16U;
+    R32U;
+    RG32U;
+    RGB32U;
+    RGBA32U;
+
     // Block compression formats.
     BC6U; // Unsigned float16
     BC6S; // Signed float16
@@ -204,12 +213,12 @@ Box :: struct {
     width, height, depth: s32;
 }
 
-compile_shader :: (file_name: string, output_file_name: string, type: Shader_Type) -> bool {
+compile_shader :: (file_name: string, output_file_name: string, type: Shader_Type, defines := string.[]) -> bool {
     push_allocator(temp);
     source, ok := read_entire_file(file_name, zero_terminated=true);
     if !ok return false;
 
-    bytecode:, ok = compile_shader_to_bytecode(source, type, file_name);
+    bytecode:, ok = compile_shader_to_bytecode(source, type, file_name, defines);
     if !ok return false;
 
     backend :: #ifx BACKEND == .D3D11 Shader_Backend.DXBC else Shader_Backend.SPIR_V;
@@ -549,6 +558,15 @@ TEXTURE_BYTES_PER_BLOCK :: u32.[
     8,  // RG32I
     12, // RGB32I
     16, // RGBA32I
+
+    // Unsigned integer
+    2,  // R16U
+    4,  // RG16U
+    8,  // RGBA16U
+    4,  // R32U
+    8,  // RG32U
+    12, // RGB32U
+    16, // RGBA32U
 
     // Block compression (Bytes per 4x4 block)
     16, // BC6U
