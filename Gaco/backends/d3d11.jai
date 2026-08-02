@@ -61,21 +61,21 @@ Depth_Stencil_State :: struct {
     state: *ID3D11DepthStencilState;
 }
 
-is_empty :: (texture: Texture) -> bool {
-    return texture.texture2d == null; // and texture3d
+is_valid :: (texture: Texture) -> bool {
+    return texture.texture2d != null; // and texture3d
 }
 
-is_empty :: (using shader: Shader) -> bool {
+is_valid :: (using shader: Shader) -> bool {
     empty_vs := type & .Vertex   && (!vertex_shader || !input_layout);
     empty_fs := type & .Fragment && !fragment_shader;
     empty_cs := type & .Compute  && !compute_shader;
 
-    return type == .Unspecified || empty_vs || empty_fs || empty_cs;
+    return type != .Unspecified && !empty_vs && !empty_fs && !empty_cs;
 }
 
-is_empty :: (using render_target: Render_Target) -> bool {
-    // This is kinda hacky but if the first one is null then the color view is empty
-    return !color_views[0] && !depth_stencil_view;
+is_valid :: (using render_target: Render_Target) -> bool {
+    // If the first one is null then the color view is empty
+    return color_views[0] || depth_stencil_view;
 }
 
 init :: (window: HWND, wanted_msaa: u32 = 4) {
@@ -627,7 +627,7 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
         }
     }
 
-    if !is_empty(depth_stencil_texture) {
+    if is_valid(depth_stencil_texture) {
         hr := ID3D11Device_CreateDepthStencilView(device, depth_stencil_texture.texture2d, null, *render_target.depth_stencil_view);
         check_hr("ID3D11Device.CreateDepthStencilView", #code return .{});
     }
@@ -982,6 +982,7 @@ timer_get_ms :: (timer: Timer) -> float {
     while ID3D11DeviceContext_GetData(device_context, timer.disjoint_query, *disjoint_data, size_of(D3D11_QUERY_DATA_TIMESTAMP_DISJOINT), 0) != S_OK {}
     while ID3D11DeviceContext_GetData(device_context, timer.start_query, *start_timestamp, size_of(u64), 0) != S_OK {}
     while ID3D11DeviceContext_GetData(device_context, timer.end_query, *end_timestamp, size_of(u64), 0) != S_OK {}
+
     // If a disjoint event occurred, the reading is garbage
     if disjoint_data.Disjoint return 0.0;
     return cast(float)((end_timestamp - start_timestamp).(float64) * 1000.0 / disjoint_data.Frequency.(float64));

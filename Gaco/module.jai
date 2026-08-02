@@ -209,7 +209,7 @@ compile_shader :: (file_name: string, output_file_name: string, type: Shader_Typ
     source, ok := read_entire_file(file_name, zero_terminated=true);
     if !ok return false;
 
-    bytecode:, ok = compile_shader_to_bytecode(source, type, path_filename(file_name));
+    bytecode:, ok = compile_shader_to_bytecode(source, type, file_name);
     if !ok return false;
 
     backend :: #ifx BACKEND == .D3D11 Shader_Backend.DXBC else Shader_Backend.SPIR_V;

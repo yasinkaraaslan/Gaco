@@ -87,7 +87,7 @@ gr_texture_load_from_memory :: (texture: *Gaco.Texture, memory: []u8, srgb: bool
     format := ifx srgb then Gaco.Texture_Format.RGBA8_SRGB else Gaco.Texture_Format.RGBA8;
     result := Gaco.create_texture_from_memory(cast(string)memory, format=format);
 
-    if Gaco.is_empty(result) {
+    if !Gaco.is_valid(result) {
         return false;
     }
     texture.* = result;

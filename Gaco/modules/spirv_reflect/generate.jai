@@ -33,21 +33,11 @@ generate_bindings :: (args: [] string) -> bool {
 
     lib_directory := "lib";
 
-    // Sad that they didn't provide a SPV_REFLECT_API macro
-    // @Incomplete: This wouldn't work on other operating systems so I have to change this
-    // before release.
-    extra: [..]string;
-    array_add(*extra, tprint("/DEF:%/spirv_reflect.def", SOURCE_PATH));
-
     if compile {
         source_file := tprint("%/spirv_reflect.c", SOURCE_PATH);
 
         make_directory_if_it_does_not_exist(lib_directory, recursive = true);
         lib_path := tprint("%/%", lib_directory, LIB_BASE_NAME);
-
-        // WARNING: I am a bad person
-        // I wanted to specify additional linker arguments so I pass them as library_files
-        // because there is no other way to do it.
 
         success := build_cpp_dynamic_lib(lib_path, source_file, target=os_target, debug=compile_debug);
         success &&= build_cpp_static_lib(lib_path, source_file, target=os_target, debug=compile_debug);

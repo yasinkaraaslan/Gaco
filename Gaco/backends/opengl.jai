@@ -65,20 +65,20 @@ Rasterizer_State :: struct {
 Depth_Stencil_State :: Depth_Stencil_Desc;
 
 
-is_empty :: (texture: Texture) -> bool {
-    if texture.flags & .Copy return glIsBuffer(texture.object) == GL_FALSE;
-    return glIsTexture(texture.object) == GL_FALSE;
+is_valid :: (texture: Texture) -> bool {
+    if texture.flags & .Copy return glIsBuffer(texture.object);
+    return glIsTexture(texture.object);
 }
 
-is_empty :: (using shader: Shader) -> bool {
-    empty_vao := glIsVertexArray(input_vao) != GL_TRUE;
+is_valid :: (using shader: Shader) -> bool {
+    empty_vao := !glIsVertexArray(input_vao) && type & .Vertex;
 
-    return type == .Unspecified || !glIsProgram(program) || (empty_vao && type & .Vertex);
+    return type != .Unspecified && glIsProgram(program) && !empty_vao;
 }
 
-is_empty :: (render_target: Render_Target) -> bool {
+is_valid :: (render_target: Render_Target) -> bool {
     status := glCheckNamedFramebufferStatus(render_target.framebuffer, GL_FRAMEBUFFER);
-    return status != GL_FRAMEBUFFER_COMPLETE;
+    return status == GL_FRAMEBUFFER_COMPLETE;
 }
 
 init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
@@ -771,7 +771,7 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
         glNamedFramebufferTexture(render_target.framebuffer, attachment, it.object, 0);
         draw_buffers[it_index] = attachment;
     }
-    if !is_empty(depth_stencil_texture) {
+    if is_valid(depth_stencil_texture) {
         glNamedFramebufferTexture(render_target.framebuffer, GL_DEPTH_STENCIL_ATTACHMENT , depth_stencil_texture.object, 0);
     }
     glNamedFramebufferDrawBuffers(render_target.framebuffer, cast(u32)draw_buffers.count, draw_buffers.data);
@@ -1065,7 +1065,7 @@ destroy_sampler :: (sampler: *Sampler) {
 
 create_timer :: () -> Timer {
     timer: Timer;
-    glCreateQueries(GL_TIMESTAMP, 2, timer.queries.data);
+    glCreateQueries(GL_TIMESTAMP, timer.queries.count, timer.queries.data);
     return timer;
 }
 
