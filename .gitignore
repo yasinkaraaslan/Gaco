@@ -17,3 +17,4 @@
 *.spcs
 examples/screenshot/screenshot.png
 *.gaco
+*.o

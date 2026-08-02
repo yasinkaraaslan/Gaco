@@ -83,12 +83,12 @@ is_valid :: (render_target: Render_Target) -> bool {
 
 init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
     // TODO(Yasin): Replace this with our own procedure so we can use stencil buffers.
-    gl_create_context(window, 4, 6, false, DEBUG, cast(s32)wanted_msaa);
+    gl_create_context(window, 4, 5, false, DEBUG, cast(s32)wanted_msaa);
     gl_load(*gl);
 
     major, minor := gl_get_version();
-    if major < 4 || minor < 6 { // We support 4.6
-        log_error("[Gaco] Unsupported GL version: %.%, need at least 4.6", major, minor);
+    if major < 4 || minor < 5 { // We support 4.5 and require SPIR-V extension.
+        log_error("[Gaco] Unsupported GL version: %.%, need at least 4.5", major, minor);
     }
 
     main_window = window;
@@ -140,7 +140,11 @@ deinit :: () {
         }
     }
     else #if OS == .LINUX {
-        // @Incomplete
+        gl_context := glXGetCurrentContext();
+        if gl_context {
+            glXMakeCurrent(x_global_display, 0, null);
+            glXDestroyContext(x_global_display, gl_context);
+        }
     }
 
     glDeleteProgramPipelines(1, *global_pipeline);
@@ -751,8 +755,8 @@ dispatch_compute_indirect :: (buffer: Buffer(.Indirect), byte_offset: u32 = 0) {
 }
 
 present :: (interval: u32 = 1) {
-    if interval != current_swap_interval {
-        set_swap_interval(interval);
+    if xx interval != current_swap_interval {
+        set_swap_interval(xx interval);
     }
     #if OS == .WINDOWS {
         dc := wglGetCurrentDC();
@@ -1028,7 +1032,7 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
 
     if compare_op != .Never {
         glSamplerParameteri(sampler.object, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
-        glSamplerParameteri(sampler.object, GL_TEXTURE_COMPARE_FUNC, xx GL_COMPARISON_ARRAY[compare_op]); // @Incomplete
+        glSamplerParameteri(sampler.object, GL_TEXTURE_COMPARE_FUNC, xx GL_COMPARISON_ARRAY[compare_op]);
     }
 
     glSamplerParameteri(sampler.object, GL_TEXTURE_MIN_FILTER, gl_filtering);
@@ -1169,9 +1173,9 @@ init_preloaded_modes :: () {
     }
 }
 
-set_swap_interval :: (interval: u32) {
+set_swap_interval :: (interval: s32) {
         #if OS == .WINDOWS {
-            wglSwapIntervalEXT(cast(s32)interval);
+            wglSwapIntervalEXT(interval);
         }
         else #if OS == .LINUX {
             glXSwapIntervalEXT(x_global_display, main_window, interval);
@@ -1441,7 +1445,7 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> (new_
             var_inst := inst_ptrs[image_var_id];
             if var_inst var_inst.*[1] = ptr_type;
 
-            // Change all  OpLoads of this texture variable to return a SampledImage
+            // Change all OpLoads of this texture variable to return a SampledImage
             for ptr: instructions {
                 if cast(SpvOp) (ptr.*[0] & 0xFFFF) == .Load {
                     if ptr.*[3] == image_var_id ptr.*[1] = sampled_img_type;
@@ -1511,7 +1515,7 @@ using GL_State: struct {
 
     current_primitive_mode: GLuint = GL_TRIANGLES;
     current_index_stride: u32;
-    current_swap_interval: u32;
+    current_swap_interval: s32;
 
     vs_mappings: []Sampler_Mapping;
     fs_mappings: []Sampler_Mapping;

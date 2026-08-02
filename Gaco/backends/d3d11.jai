@@ -48,7 +48,6 @@ Timer :: struct {
     end_query:      *ID3D11Query;
 }
 
-// @Incomplete: You cannot create or destroy these
 Blend_State :: struct {
     state: *ID3D11BlendState;
 }
