@@ -784,13 +784,17 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
     draw_buffers := NewArray(color_textures.count, GLenum,, temp);
     glCreateFramebuffers(1, *render_target.framebuffer);
     for color_textures {
-        assert(it.flags & .Render_Target != 0, "[Gaco] A color texture used for creating a render target has to have the Render_Target flag. This is a requirement for keeping the api compatible with D3D11.");
+        assert(it.flags & .Render_Target != 0, "[Gaco] Color texture used for creating a render target must have Render_Target flag.");
         attachment := GL_COLOR_ATTACHMENT0 + cast(u32)it_index;
         glNamedFramebufferTexture(render_target.framebuffer, attachment, it.object, 0);
         draw_buffers[it_index] = attachment;
     }
     if is_valid(depth_stencil_texture) {
-        glNamedFramebufferTexture(render_target.framebuffer, GL_DEPTH_STENCIL_ATTACHMENT , depth_stencil_texture.object, 0);
+        attachment : GLenum = GL_DEPTH_ATTACHMENT;
+        if depth_stencil_texture.pixel_format == GL_DEPTH_STENCIL {
+            attachment = GL_DEPTH_STENCIL_ATTACHMENT;
+        }
+        glNamedFramebufferTexture(render_target.framebuffer, attachment, depth_stencil_texture.object, 0);
     }
     glNamedFramebufferDrawBuffers(render_target.framebuffer, cast(u32)draw_buffers.count, draw_buffers.data);
     status := glCheckNamedFramebufferStatus(render_target.framebuffer, GL_FRAMEBUFFER);
@@ -815,7 +819,7 @@ resize :: (width: int, height: int) -> window_render_target: Render_Target {
     return .{}; // @Incomplete: Use our own framebuffer instead of the default one
 }
 
-create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.None) -> Texture {
+create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.Sampled) -> Texture {
     generate_mips := (flags & .Generate_Mips) && mip_levels_or_msaa != 1;
 
     gl_info := GL_TEXTURE_MAP_ARRAY[format];
@@ -968,6 +972,8 @@ bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
         return;
     }
 
+    assert(texture.flags & .Sampled != 0, "[Gaco] Texture must have the .Sampled flag to be bound to a shader.");
+
     search_and_bind :: (mappings: []Sampler_Mapping, $stage: Shader_Type) #expand {
         index := `slot;
         #if stage == .Fragment index += 16;
@@ -1015,7 +1021,7 @@ copy_texture :: (from: Texture, to: *Texture, source_box: Box) {
 
 
 // TODO(Yasin): Use a scratch fbo to invert y
-copy_from_render_target :: (render_target: Render_Target, to: *Texture, depth_stencil := false, index: u32 = 0) {
+copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u32 = 0) {
     if render_target.framebuffer == 0 { // Back buffer
         glNamedFramebufferReadBuffer(0, GL_BACK);
     }

@@ -66,11 +66,11 @@ Map_Flags :: enum_flags u32 {
 Texture_Flags :: enum_flags u32 {
     None :: 0;
     Cubemap :: 1;
+    Sampled;
     Generate_Mips;
     Is_3D;
     Multisample;
     Render_Target;
-    Depth_Stencil;
     Copy; // This actually makes the 'Texture' a pixel buffer object on OpenGL and a staging texture on D3D11.
     Compute_RW; // RWTexture2D
 }
@@ -324,14 +324,14 @@ create_buffer :: (data: $T, $type: Buffer_Type, usage := Buffer_Usage.Default) -
     return create_buffer(data_pointer, count, stride, type, usage);
 }
 
-create_texture_from_file :: (file_name: string, mip_levels: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.None) -> Texture {
+create_texture_from_file :: (file_name: string, mip_levels: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.Sampled) -> Texture {
     bytes, ok := read_entire_file(file_name,, temp);
     if !ok return .{};
 
     return create_texture_from_memory(bytes, mip_levels, format, flags);
 }
 
-create_texture_from_memory :: (memory: string, mip_levels: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.None) -> Texture {
+create_texture_from_memory :: (memory: string, mip_levels: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.Sampled) -> Texture {
     width, height, file_channels: s32;
 
     buffer := stbi_load_from_memory(memory.data, cast(s32)memory.count, *width, *height, *file_channels, format_to_channels(format));
@@ -345,7 +345,7 @@ create_texture_from_memory :: (memory: string, mip_levels: u32 = 1, format := Te
     return create_texture(.[buffer], cast(u32)width, cast(u32)height, 1, mip_levels, format, flags);
 }
 
-create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.None) -> Texture {
+create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.Sampled) -> Texture {
     data := NewArray(file_names.count, *u8,, temp);
     defer for data {
         if it stbi_image_free(it);

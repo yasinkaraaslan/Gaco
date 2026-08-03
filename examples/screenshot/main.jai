@@ -155,6 +155,8 @@ take_screenshot :: (window_render_target: Gaco.Render_Target, screenshot_texture
     h := screenshot_texture.height;
     FILE_NAME :: "screenshot.png";
     #if Gaco.BACKEND == .OpenGL {
+        // I am not sure if it's possible flip pixel pack buffers in OpenGL.
+        // This will have to be here until I figure it out.
         stbi_flip_vertically_on_write(cast(s32)true);
     }
     stbi_write_png(FILE_NAME, xx w, xx h, 4, image_buffer.data, xx (w * 4));

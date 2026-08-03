@@ -625,6 +625,8 @@ present :: (interval: u32 = 1) {
     check_hr("IDXGISwapChain_Present", #code {});
 }
 
+// NOTE(Yasin): You cannot currently create 3d textures or texture arrays for render targets, but to
+// write to them you need geometry shaders, which we don't support anyways.
 create_render_target :: (color_textures: []Texture, depth_stencil_texture: Texture) -> Render_Target {
     render_target: Render_Target;
     if color_textures {
@@ -635,7 +637,16 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
     }
 
     if is_valid(depth_stencil_texture) {
-        hr := ID3D11Device_CreateDepthStencilView(device, depth_stencil_texture.texture2d, null, *render_target.depth_stencil_view);
+        ds_desc: D3D11_DEPTH_STENCIL_VIEW_DESC;
+        ds_desc.Format = DXGI_MAPPING_ARRAY[depth_stencil_texture.format];
+        if depth_stencil_texture.flags & .Multisample {
+            ds_desc.ViewDimension = .D3D11_DSV_DIMENSION_TEXTURE2DMS;
+        }
+        else {
+            ds_desc.ViewDimension = .D3D11_DSV_DIMENSION_TEXTURE2D;
+            ds_desc.Texture2D.MipSlice = 0;
+        }
+        hr := ID3D11Device_CreateDepthStencilView(device, depth_stencil_texture.texture2d, *ds_desc, *render_target.depth_stencil_view);
         check_hr("ID3D11Device.CreateDepthStencilView", #code return .{});
     }
     return render_target;
@@ -664,7 +675,7 @@ resize :: (width: int, height: int) -> window_render_target: Render_Target {
     hr = IDXGISwapChain_GetBuffer(swap_chain, 0, *uid(ID3D11Texture2D_UUID), xx *back_buffer.texture2d);
     check_hr("IDXGISwapChain.GetBuffer", #code `return .{});
 
-    depth_stencil_texture := create_texture(.[], cast(u32)width, cast(u32)height, 1, msaa, .D24S8, .Depth_Stencil | .Multisample);
+    depth_stencil_texture := create_texture(.[], cast(u32)width, cast(u32)height, 1, msaa, .D24S8, .Multisample);
     window_render_target = create_render_target(.[back_buffer], depth_stencil_texture);
 
     destroy_texture(*depth_stencil_texture);
@@ -679,8 +690,9 @@ resize :: (width: int, height: int) -> window_render_target: Render_Target {
 // Data is an array for texture arrays and mipmapping.
 // Index = mip slice + (array slice * mip levels)
 // Image 0 mip data | Image 1 mip data | ...
-create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.None) -> Texture {
+create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.Sampled) -> Texture {
     generate_mips := (flags & .Generate_Mips) && mip_levels_or_msaa != 1;
+    depth_stencil := format >= .D16 && format <= .D32FS8;
 
     bind_flags: D3D11_BIND_FLAG;
     misc_flags: D3D11_RESOURCE_MISC_FLAG;
@@ -688,32 +700,42 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     usage := D3D11_USAGE.DEFAULT;
     access_flags: D3D11_CPU_ACCESS_FLAG;
 
-    // Pick the flags
-    if flags & .Compute_RW
-        bind_flags = .UNORDERED_ACCESS;
-    else if flags & .Render_Target
-        bind_flags = .RENDER_TARGET;
-    else if flags & .Depth_Stencil
-        bind_flags = .DEPTH_STENCIL;
-    else if flags & .Copy {
+    // Pick the format
+    d3d11_format := DXGI_MAPPING_ARRAY[format];
+    srv_format := d3d11_format;
+
+    if flags & .Copy {
+        // Staging textures in D3D11 generally cannot be bound to the pipeline at all
         usage = .STAGING;
         access_flags |= .READ;
+        // Do not set any bind_flags for staging
+    } else {
+        if flags & .Compute_RW {
+            bind_flags |= .UNORDERED_ACCESS;
+        }
+        if flags & .Render_Target {
+            bind_flags |= .RENDER_TARGET;
+        }
+        if depth_stencil {
+            bind_flags |= .DEPTH_STENCIL;
+        }
+        if flags & .Sampled {
+            bind_flags |= .SHADER_RESOURCE;
+            if depth_stencil {
+                d3d11_format, srv_format = get_depth_format_variants(format);
+            }
+        }
+        if generate_mips {
+            // @Speed: We would probably want to create a seperate render target texture
+            // and copy it to our newly generated texture.
+            bind_flags |= .RENDER_TARGET;
+            misc_flags |= .GENERATE_MIPS;
+        }
     }
-    else
-        bind_flags = .SHADER_RESOURCE;
-
-    if generate_mips {
-        // @Speed: We would probably want to create a seperate render target texture
-        // and copy it to our newly generated texture.
-        bind_flags |= .RENDER_TARGET;
-        misc_flags |= .GENERATE_MIPS;
-    }
-
     if flags & .Cubemap
         misc_flags |= .TEXTURECUBE;
 
-    // Pick the format
-    d3d11_format := DXGI_MAPPING_ARRAY[format];
+
     if d3d11_format == .DXGI_FORMAT_UNKNOWN {
         log_error("[Gaco] Error while creating texture: Format % is Unknown or unsupported.", format);
         return .{};
@@ -836,8 +858,42 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
 
     // Create the view
     if bind_flags & .SHADER_RESOURCE {
+        srv_desc: D3D11_SHADER_RESOURCE_VIEW_DESC;
+        srv_desc.Format = srv_format;
+
+        if flags & .Is_3D {
+            srv_desc.ViewDimension = .D3D11_SRV_DIMENSION_TEXTURE3D;
+            srv_desc.Texture3D.MipLevels = 0xFFFF_FFFF; // All mips
+            srv_desc.Texture3D.MostDetailedMip = 0;
+        } else if flags & .Cubemap {
+            if array_count_or_depth > 6 {
+                srv_desc.ViewDimension = .D3D11_SRV_DIMENSION_TEXTURECUBEARRAY;
+                srv_desc.TextureCubeArray.MipLevels = 0xFFFF_FFFF;
+                srv_desc.TextureCubeArray.NumCubes = array_count_or_depth / 6;
+            } else {
+                srv_desc.ViewDimension = .D3D11_SRV_DIMENSION_TEXTURECUBE;
+                srv_desc.TextureCube.MipLevels = 0xFFFF_FFFF;
+            }
+        } else if flags & .Multisample {
+            if array_count_or_depth > 1 {
+                srv_desc.ViewDimension = .D3D11_SRV_DIMENSION_TEXTURE2DMSARRAY;
+                srv_desc.Texture2DMSArray.ArraySize = array_count_or_depth;
+            } else {
+                srv_desc.ViewDimension = .D3D11_SRV_DIMENSION_TEXTURE2DMS;
+            }
+        } else {
+            if array_count_or_depth > 1 {
+                srv_desc.ViewDimension = .D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+                srv_desc.Texture2DArray.ArraySize = array_count_or_depth;
+                srv_desc.Texture2DArray.MipLevels = 0xFFFF_FFFF;
+            } else {
+                srv_desc.ViewDimension = .D3D11_SRV_DIMENSION_TEXTURE2D;
+                srv_desc.Texture2D.MipLevels = 0xFFFF_FFFF;
+            }
+        }
+
         // Passing null here should be fine in our case since we want to map the entire resource
-        hr := ID3D11Device_CreateShaderResourceView(device, resource, null, *texture.resource_view);
+        hr := ID3D11Device_CreateShaderResourceView(device, resource, *srv_desc, *texture.resource_view);
         check_hr("ID3D11Device.CreateShaderResourceView", #code return .{});
 
         if generate_mips {
@@ -857,6 +913,7 @@ bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
         ID3D11DeviceContext_CSSetUnorderedAccessViews(device_context, slot, 1, *texture.unordered_access_view, null);
     }
     else {
+        assert(texture.flags & .Sampled != 0, "[Gaco] Texture must have the .Sampled flag to be bound to a shader.");
         if bind_to & .Vertex
             ID3D11DeviceContext_VSSetShaderResources(device_context, slot, 1, *texture.resource_view);
         if bind_to & .Fragment
@@ -1115,6 +1172,21 @@ init_preloaded_modes :: () {
 
         // blend_modes[None] = null;
     }
+}
+
+get_depth_format_variants :: (format: Texture_Format) -> texture_format: DXGI_FORMAT, srv_format: DXGI_FORMAT {
+   if format == {
+    case .D16;
+        return .DXGI_FORMAT_R16_TYPELESS, .DXGI_FORMAT_R16_UNORM;
+    case .D24S8;
+        return .DXGI_FORMAT_R24G8_TYPELESS, .DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    case .D32F;
+        return .DXGI_FORMAT_R32_TYPELESS, .DXGI_FORMAT_R32_FLOAT;
+    case .D32FS8;
+        return .DXGI_FORMAT_R32G8X24_TYPELESS, .DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+    }
+    assert(false);
+    return .UNKNOWN, .UNKNOWN; // Unreachable but to shut the compiler
 }
 
 get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
