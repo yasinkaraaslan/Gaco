@@ -64,6 +64,10 @@ is_valid :: (texture: Texture) -> bool {
     return texture.texture2d != null; // and texture3d
 }
 
+is_valid :: (buffer: Buffer) -> bool {
+    return buffer.buffer != null;
+}
+
 is_valid :: (using shader: Shader) -> bool {
     empty_vs := type & .Vertex   && (!vertex_shader || !input_layout);
     empty_fs := type & .Fragment && !fragment_shader;
@@ -552,6 +556,8 @@ set_depth_stencil_state :: (mode: Depth_Stencil_Mode, stencil_ref: u8 = 0xFF) {
 set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
     found, state := table_find(*depth_stencil_table, desc);
     if !found {
+        front := desc.front_face;
+        back := desc.back_face;
         d3d11_desc := D3D11_DEPTH_STENCIL_DESC.{
             DepthEnable = xx desc.depth_enable,
             DepthWriteMask = xx desc.depth_write,
@@ -559,20 +565,21 @@ set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
             StencilEnable = xx desc.stencil_enable,
 
             // TODO(Yasin): Fill the rest
-            StencilReadMask = D3D11_DEFAULT_STENCIL_READ_MASK,
-            StencilWriteMask = D3D11_DEFAULT_STENCIL_WRITE_MASK,
+            StencilReadMask = desc.stencil_read_mask,
+            StencilWriteMask = desc.stencil_write_mask,
 
-            FrontFace.StencilFunc = .ALWAYS,
-            FrontFace.StencilFailOp = .KEEP,
-            FrontFace.StencilDepthFailOp = .KEEP,
-            FrontFace.StencilPassOp = .KEEP,
+            FrontFace.StencilFunc = xx front.func,
+            FrontFace.StencilFailOp = xx front.fail_op,
+            FrontFace.StencilDepthFailOp = xx front.depth_fail_op,
+            FrontFace.StencilPassOp = xx front.pass_op,
 
-            BackFace.StencilFunc = .ALWAYS,
-            BackFace.StencilFailOp = .KEEP,
-            BackFace.StencilDepthFailOp = .KEEP,
-            BackFace.StencilPassOp = .KEEP,
+            BackFace.StencilFunc = xx back.func,
+            BackFace.StencilFailOp = xx back.fail_op,
+            BackFace.StencilDepthFailOp = xx back.depth_fail_op,
+            BackFace.StencilPassOp = xx back.pass_op,
         };
         ID3D11Device_CreateDepthStencilState(device, *d3d11_desc, *state);
+        table_add(*depth_stencil_table, desc, state);
     }
     ID3D11DeviceContext_OMSetDepthStencilState(device_context, state, stencil_ref);
 }

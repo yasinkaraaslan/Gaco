@@ -167,12 +167,32 @@ Draw_Indirect_Args :: struct(indexed: bool) {
 
 
 Depth_Stencil_Desc :: struct {
-    depth_enable: bool;
-    depth_write: bool;
-    depth_func: Compare_Op;
+    depth_enable := true;
+    depth_write := true;
+    depth_func := Compare_Op.Less_Equal;
 
-    stencil_enable: bool;
-    // TODO(Yasin): Fill the rest.
+    stencil_enable := true;
+    stencil_read_mask : u8 = 0xFF;
+    stencil_write_mask: u8 = 0xFF;
+
+    front_face := Stencil_Face_Desc.{};
+    back_face := Stencil_Face_Desc.{};
+}
+
+Stencil_Face_Desc :: struct {
+    fail_op, depth_fail_op, pass_op := Stencil_Op.Keep;
+    func := Compare_Op.Always;
+}
+
+Stencil_Op :: enum u8 {
+    Keep :: 1;
+    Zero;
+    Replace;
+    Incr_Wrap;
+    Decr_Wrap;
+    Invert;
+    Incr;
+    Decr;
 }
 
 // If you want to add a mode, remember to do it on init_preloaded_modes as well.
@@ -387,7 +407,7 @@ write_buffer :: inline (buffer: *Buffer, data: $T) {
 read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *void {
     buffer_to_map: *Buffer(.Copy) = ---;
     temp_copy_buffer: Buffer(.Copy) = ---;
-    defer if temp_copy_buffer destroy_buffer(temp_copy_buffer);
+    defer if is_valid(temp_copy_buffer) destroy_buffer(*temp_copy_buffer);
 
     if copy_buffer_to_use {
         buffer_to_map = copy_buffer_to_use;
@@ -517,9 +537,20 @@ get_semantic_info :: (semantic: string) -> is_instance: bool, step_rate: u32 {
     return false, 0;
 }
 
-#assert size_of(Depth_Stencil_Desc) == size_of(u32);
+// FNV-1a
 get_ds_hash :: (desc: Depth_Stencil_Desc) -> u32 {
-    return (*desc).(*u32).*;
+    data: []u8;
+    data.data = cast(*u8)*desc;
+    data.count = size_of(Depth_Stencil_Desc);
+
+    hash: u32 = 0x811c9dc5;
+    prime :: 0x01000193;
+
+    for data {
+        hash ^= cast(u32)it;
+        hash *= prime;
+    }
+    return hash;
 }
 
 compare_ds :: (d0: Depth_Stencil_Desc, d1: Depth_Stencil_Desc) -> bool{

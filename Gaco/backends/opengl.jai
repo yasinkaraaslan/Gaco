@@ -70,6 +70,10 @@ is_valid :: (texture: Texture) -> bool {
     return glIsTexture(texture.object);
 }
 
+is_valid :: (buffer: Buffer) -> bool {
+    return glIsBuffer(buffer.object);
+}
+
 is_valid :: (using shader: Shader) -> bool {
     empty_vao := !glIsVertexArray(input_vao) && type & .Vertex;
 
@@ -703,8 +707,16 @@ set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
 
     if desc.stencil_enable {
         glEnable(GL_STENCIL_TEST);
-        // TODO(Yasin): Complete everything
-        glStencilFunc(GL_ALWAYS, stencil_ref, 0xFFFFFFFF);
+        glStencilMask(desc.stencil_write_mask);
+
+        func_and_op :: (using face_desc: Stencil_Face_Desc, front: bool) #expand {
+            face := ifx front GL_FRONT.(u32) else GL_BACK;
+            glStencilFuncSeparate(face, GL_COMPARISON_ARRAY[func], stencil_ref, desc.stencil_read_mask);
+            glStencilOpSeparate(face, GL_STENCIL_OP_ARRAY[fail_op], GL_STENCIL_OP_ARRAY[depth_fail_op], GL_STENCIL_OP_ARRAY[pass_op]);
+        }
+
+        func_and_op(desc.front_face, true);
+        func_and_op(desc.back_face, false);
     }
     else {
         glDisable(GL_STENCIL_TEST);
@@ -1590,6 +1602,8 @@ GL_TEXTURE_MAP_ARRAY :: GL_Format_Info.[
 ];
 
 GL_COMPARISON_ARRAY :: GLenum.[GL_NEVER, GL_LESS, GL_EQUAL, GL_LEQUAL, GL_GREATER, GL_NOTEQUAL, GL_GEQUAL, GL_ALWAYS];
+
+GL_STENCIL_OP_ARRAY :: GLenum.[GL_NONE, GL_KEEP, GL_ZERO, GL_REPLACE, GL_INCR_WRAP, GL_DECR_WRAP, GL_INVERT, GL_INCR, GL_DECR];
 
 #if DEBUG {
 gl_debug_callback :: (source: GLenum, type: GLenum, id: GLuint, severity: GLenum, length: GLsizei, message: *u8, userParam: *void) #c_call {

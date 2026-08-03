@@ -1,5 +1,8 @@
 StructuredBuffer<float> input : register(t0);
-RWStructuredBuffer<float> output : register(u0);
+
+// Since OpenGL uses the same slots for both, you have to
+// use different slots.
+RWStructuredBuffer<float> output : register(u1);
 
 static const uint NumX = 69;
 static const uint NumY = 105;
