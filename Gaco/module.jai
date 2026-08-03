@@ -143,7 +143,7 @@ Sampler_Edge_Handling :: enum u32 {
 }
 
 Compare_Op :: enum u8 {
-    Never;
+    Never :: 1;
     Less;
     Equal;
     Less_Equal;
@@ -181,7 +181,7 @@ Depth_Stencil_Desc :: struct {
 
 Stencil_Face_Desc :: struct {
     fail_op, depth_fail_op, pass_op := Stencil_Op.Keep;
-    func := Compare_Op.Always;
+    compare_op := Compare_Op.Always;
 }
 
 Stencil_Op :: enum u8 {

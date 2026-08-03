@@ -160,5 +160,4 @@ draw_cube :: (position: Vector3, buffer: *Gaco.Buffer, proj: Matrix4, indices_co
 
 // You should, again, put Gaco into your local modules folder
 // instead of importing it as a directory. This is just an example.
-Gaco :: #import,dir "../../Gaco"(DEBUG=true);
-#if Gaco.BACKEND == .D3D11 #import "d3d11"()(INCLUDE_DEBUG_BINDINGS=true);
+Gaco :: #import,dir "../../Gaco";

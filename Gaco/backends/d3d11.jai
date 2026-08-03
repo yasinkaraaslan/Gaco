@@ -81,7 +81,7 @@ is_valid :: (using render_target: Render_Target) -> bool {
     return color_views[0] || depth_stencil_view;
 }
 
-init :: (window: HWND, wanted_msaa: u32 = 4) {
+init :: (window: HWND) {
     flags: D3D11_CREATE_DEVICE_FLAG;
     #if DEBUG flags |= .DEBUG;
     feature_levels := D3D_FEATURE_LEVEL.[._11_1];
@@ -105,7 +105,7 @@ init :: (window: HWND, wanted_msaa: u32 = 4) {
         Format = .R8G8B8A8_UNORM,
         BufferCount = 1,
         BufferUsage = .RENDER_TARGET_OUTPUT,
-        SampleDesc = .{Count = wanted_msaa, Quality = 0},
+        SampleDesc = .{Count = 1, Quality = 0},
     };
 
     dxgi_factory: *IDXGIFactory2;
@@ -129,9 +129,6 @@ init :: (window: HWND, wanted_msaa: u32 = 4) {
     hr = IDXGIFactory_MakeWindowAssociation(dxgi_factory, window, xx DXGI_MWA.NO_ALT_ENTER);
     check_hr("IDXGIFactory.MakeWindowAssociation");
     safe_release(dxgi_factory);
-
-
-    msaa = wanted_msaa;
 
     init_preloaded_modes();
     set_primitive_type(.Triangle_List);
@@ -484,7 +481,7 @@ clear :: (render_target: Render_Target, r: float, g: float, b: float, a: float, 
 }
 
 clear :: inline (r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
-    clear(window_render_target, r, g, b, a, depth, stencil, flags);
+    clear(custom_render_target, r, g, b, a, depth, stencil, flags);
 }
 
 set_shader :: (shader: Shader) {
@@ -558,22 +555,23 @@ set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
     if !found {
         front := desc.front_face;
         back := desc.back_face;
+
+        // Same enum values for all
         d3d11_desc := D3D11_DEPTH_STENCIL_DESC.{
             DepthEnable = xx desc.depth_enable,
             DepthWriteMask = xx desc.depth_write,
-            DepthFunc = xx desc.depth_func, // Same enum
+            DepthFunc = xx desc.depth_func,
             StencilEnable = xx desc.stencil_enable,
 
-            // TODO(Yasin): Fill the rest
             StencilReadMask = desc.stencil_read_mask,
             StencilWriteMask = desc.stencil_write_mask,
 
-            FrontFace.StencilFunc = xx front.func,
+            FrontFace.StencilFunc = xx front.compare_op,
             FrontFace.StencilFailOp = xx front.fail_op,
             FrontFace.StencilDepthFailOp = xx front.depth_fail_op,
             FrontFace.StencilPassOp = xx front.pass_op,
 
-            BackFace.StencilFunc = xx back.func,
+            BackFace.StencilFunc = xx back.compare_op,
             BackFace.StencilFailOp = xx back.fail_op,
             BackFace.StencilDepthFailOp = xx back.depth_fail_op,
             BackFace.StencilPassOp = xx back.pass_op,
@@ -621,6 +619,16 @@ dispatch_compute_indirect :: (buffer: Buffer(.Indirect), byte_offset: u32 = 0) {
 }
 
 present :: (interval: u32 = 1) {
+    back_buffer: *ID3D11Texture2D;
+    ID3D11View_GetResource(window_render_target.color_views[0], xx *back_buffer);
+    ID3D11DeviceContext_ResolveSubresource(
+        device_context,
+        back_buffer, 0,
+        custom_color_texture.texture2d, 0,  // Source (multisampled offscreen target)
+        .R8G8B8A8_UNORM
+    );
+
+    IUnknown_Release(back_buffer);
     hr := IDXGISwapChain_Present(swap_chain, interval, 0);
     check_hr("IDXGISwapChain_Present", #code {});
 }
@@ -653,7 +661,7 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
 }
 
 set_render_target :: (using render_target: Render_Target) {
-    ID3D11DeviceContext_OMSetRenderTargets(device_context, cast(u32)color_views.count, color_views.data, depth_stencil_view);
+    ID3D11DeviceContext_OMSetRenderTargets(device_context, xx color_views.count, color_views.data, depth_stencil_view);
 }
 
 destroy_render_target :: (render_target: *Render_Target) {
@@ -663,10 +671,11 @@ destroy_render_target :: (render_target: *Render_Target) {
     safe_release_and_reset(*render_target.depth_stencil_view);
 }
 
-resize :: (width: int, height: int) -> window_render_target: Render_Target {
-    // This doesn't seem to be necessary, but just to be safe...
-    set_render_target(.{});
+resize :: (width: int, height: int, msaa: u32 = 4) -> render_target: Render_Target {
     destroy_render_target(*window_render_target);
+    destroy_render_target(*custom_render_target);
+    destroy_texture(*custom_color_texture);
+    destroy_texture(*custom_depth_texture);
 
     hr := IDXGISwapChain_ResizeBuffers(swap_chain, 0, cast(u32)width, cast(u32)height, .UNKNOWN, 0);
     check_hr("IDXGISwapChain.ResizeBuffers", #code `return .{});
@@ -674,17 +683,18 @@ resize :: (width: int, height: int) -> window_render_target: Render_Target {
     back_buffer: Texture;
     hr = IDXGISwapChain_GetBuffer(swap_chain, 0, *uid(ID3D11Texture2D_UUID), xx *back_buffer.texture2d);
     check_hr("IDXGISwapChain.GetBuffer", #code `return .{});
+    defer destroy_texture(*back_buffer);
 
-    depth_stencil_texture := create_texture(.[], cast(u32)width, cast(u32)height, 1, msaa, .D24S8, .Multisample);
-    window_render_target = create_render_target(.[back_buffer], depth_stencil_texture);
+    window_render_target = create_render_target(.[back_buffer], .{});
 
-    destroy_texture(*depth_stencil_texture);
-    destroy_texture(*back_buffer);
+    custom_color_texture = create_texture(.[], cast(u32)width, cast(u32)height, 1, msaa, .RGBA8, .Render_Target | .Multisample);
+    custom_depth_texture = create_texture(.[], cast(u32)width, cast(u32)height, 1, msaa, .D24S8, .Multisample);
+    custom_render_target = create_render_target(.[custom_color_texture], custom_depth_texture);
 
-    set_render_target(window_render_target);
+    set_render_target(custom_render_target);
     set_viewport(0, 0, cast(float)width, cast(float)height);
 
-    return window_render_target;
+    return custom_render_target;
 }
 
 // Data is an array for texture arrays and mipmapping.
@@ -700,15 +710,13 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     usage := D3D11_USAGE.DEFAULT;
     access_flags: D3D11_CPU_ACCESS_FLAG;
 
-    // Pick the format
     d3d11_format := DXGI_MAPPING_ARRAY[format];
     srv_format := d3d11_format;
 
     if flags & .Copy {
-        // Staging textures in D3D11 generally cannot be bound to the pipeline at all
+        // Do not set any bind_flags for staging
         usage = .STAGING;
         access_flags |= .READ;
-        // Do not set any bind_flags for staging
     } else {
         if flags & .Compute_RW {
             bind_flags |= .UNORDERED_ACCESS;
@@ -761,7 +769,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
 
         expected_count := array_count * mip_levels_or_msaa;
         if data.count < expected_count {
-            log_error("[Gaco] Incomplete data array. Expected count %, got %.", expected_count, data.count);
+            log_error("[Gaco] Error while creating texture: Incomplete data array. Expected count %, got %.", expected_count, data.count);
             return .{};
         }
 
@@ -892,7 +900,6 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
             }
         }
 
-        // Passing null here should be fine in our case since we want to map the entire resource
         hr := ID3D11Device_CreateShaderResourceView(device, resource, *srv_desc, *texture.resource_view);
         check_hr("ID3D11Device.CreateShaderResourceView", #code return .{});
 
@@ -913,7 +920,7 @@ bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
         ID3D11DeviceContext_CSSetUnorderedAccessViews(device_context, slot, 1, *texture.unordered_access_view, null);
     }
     else {
-        assert(texture.flags & .Sampled != 0, "[Gaco] Texture must have the .Sampled flag to be bound to a shader.");
+        assert(texture.flags & .Sampled != 0, "[Gaco] Texture must have Sampled flag to be bound to a shader.");
         if bind_to & .Vertex
             ID3D11DeviceContext_VSSetShaderResources(device_context, slot, 1, *texture.resource_view);
         if bind_to & .Fragment
@@ -1059,6 +1066,9 @@ using D3D11_State: struct {
     swap_chain: *IDXGISwapChain1;
 
     window_render_target: Render_Target;
+    custom_render_target: Render_Target;
+    custom_color_texture: Texture;
+    custom_depth_texture: Texture;
     // bound_render_target: *Render_Target;
 
     depth_stencil_table: Table(Depth_Stencil_Desc, *ID3D11DepthStencilState, get_ds_hash, compare_ds);
@@ -1068,7 +1078,6 @@ using D3D11_State: struct {
 
     // TODO(Yasin): Experiment more with stencil buffers to figure out the best options here.
     depth_stencil_modes: [#run enum_count(Depth_Stencil_Mode)]*ID3D11DepthStencilState;
-    msaa: u32;
 }
 
 box_from_rect :: inline (rect: Rect) -> D3D11_BOX {
@@ -1177,13 +1186,13 @@ init_preloaded_modes :: () {
 get_depth_format_variants :: (format: Texture_Format) -> texture_format: DXGI_FORMAT, srv_format: DXGI_FORMAT {
    if format == {
     case .D16;
-        return .DXGI_FORMAT_R16_TYPELESS, .DXGI_FORMAT_R16_UNORM;
+        return .R16_TYPELESS, .R16_UNORM;
     case .D24S8;
-        return .DXGI_FORMAT_R24G8_TYPELESS, .DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+        return .R24G8_TYPELESS, .R24_UNORM_X8_TYPELESS;
     case .D32F;
-        return .DXGI_FORMAT_R32_TYPELESS, .DXGI_FORMAT_R32_FLOAT;
+        return .R32_TYPELESS, .R32_FLOAT;
     case .D32FS8;
-        return .DXGI_FORMAT_R32G8X24_TYPELESS, .DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+        return .R32G8X24_TYPELESS, .R32_FLOAT_X8X24_TYPELESS;
     }
     assert(false);
     return .UNKNOWN, .UNKNOWN; // Unreachable but to shut the compiler

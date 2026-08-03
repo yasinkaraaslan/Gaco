@@ -40,4 +40,5 @@ main :: () {
 #import "Random";
 Gaco :: #import,dir "../../Gaco"(DEBUG=true);
 
-#if OS == .WINDOWS #import "d3d11"()(INCLUDE_DEBUG_BINDINGS=true);
+// For debug you need to set this
+#if OS == .WINDOWS __d3d11 :: #import "d3d11"()(INCLUDE_DEBUG_BINDINGS=true);

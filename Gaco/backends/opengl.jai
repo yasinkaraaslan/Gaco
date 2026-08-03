@@ -1,5 +1,3 @@
-// TODO(Yasin): Use a seperate framebuffer from the back buffer.
-
 Shader :: struct {
     type: Shader_Type;
     input_vao: GLuint;
@@ -11,7 +9,6 @@ Buffer :: struct (type: Buffer_Type) {
     object: GLuint;
     size: u32;
     stride: u32;
-    // ...
 }
 
 Sampler :: struct {
@@ -85,9 +82,10 @@ is_valid :: (render_target: Render_Target) -> bool {
     return status == GL_FRAMEBUFFER_COMPLETE;
 }
 
-init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
-    // TODO(Yasin): Replace this with our own procedure so we can use stencil buffers.
-    gl_create_context(window, 4, 5, false, DEBUG, cast(s32)wanted_msaa);
+init :: (window: Window_Type) {
+    // TODO(Yasin): Allow null window for compute-only programs
+
+    gl_create_context(window, 4, 5, false, DEBUG, 0);
     gl_load(*gl);
 
     major, minor := gl_get_version();
@@ -99,7 +97,7 @@ init :: (window: WT.Window_Type, wanted_msaa: u32 = 4) {
 
     #if DEBUG {
         // D3D11 crashes on errors (because there is no way to register a callback...)
-        // so we do the same thing here to be compatible, is this a good idea?
+        // so we do the same thing here to be compatible.
         glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
         glDebugMessageCallback(gl_debug_callback, null);
     }
@@ -161,7 +159,7 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
     buffer.size = count * stride;
     buffer.stride = stride;
 
-    assert(count > 0 && stride > 0, "Creating a buffer with 0 size is not permitted");
+    assert(count > 0 && stride > 0, "[Gaco] Creating a buffer with 0 size is not permitted");
 
     glCreateBuffers(1, *buffer.object);
 
@@ -256,7 +254,7 @@ unmap_buffer :: (buffer: *Buffer) {
 // Note that this gives a different data than the D3D11 one because the lower-left is 0,0 as opposed to upper-left.
 // You have to check the backend before using it.
 map_texture :: (texture: *Texture, flags: Map_Flags) -> *void {
-    assert(texture.flags & .Copy != 0, "Only copy buffers can be mapped to read.");
+    assert(texture.flags & .Copy != 0, "[Gaco] Only copy textures can be mapped to read.");
     access: GLbitfield;
     if flags & .Read  access |= GL_MAP_READ_BIT;
     if flags & .Write access |= GL_MAP_WRITE_BIT;
@@ -368,7 +366,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, file_name: str
     args.shader_model_version = "6_0";
     args.shader_source = source;
     args.add_debug_info = DEBUG;
-    args.spirv_target_env = "vulkan1.0";
+    args.spirv_target_env = "vulkan1.1";
     args.defines = defines;
 
     sampler_mappings := [..]Sampler_Mapping.{allocator=temp};
@@ -521,7 +519,8 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> S
 }
 
 clear :: (r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
-    window_render_target := Render_Target.{0, 1};
+    window_render_target := Render_Target.{custom_fbo, 1};
+
     clear(window_render_target, r, g, b, a, depth, stencil, flags);
 
     // Commented code clears the currently bound framebuffer.
@@ -711,7 +710,7 @@ set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
 
         func_and_op :: (using face_desc: Stencil_Face_Desc, front: bool) #expand {
             face := ifx front GL_FRONT.(u32) else GL_BACK;
-            glStencilFuncSeparate(face, GL_COMPARISON_ARRAY[func], stencil_ref, desc.stencil_read_mask);
+            glStencilFuncSeparate(face, GL_COMPARISON_ARRAY[compare_op], stencil_ref, desc.stencil_read_mask);
             glStencilOpSeparate(face, GL_STENCIL_OP_ARRAY[fail_op], GL_STENCIL_OP_ARRAY[depth_fail_op], GL_STENCIL_OP_ARRAY[pass_op]);
         }
 
@@ -770,6 +769,25 @@ present :: (interval: u32 = 1) {
     if xx interval != current_swap_interval {
         set_swap_interval(xx interval);
     }
+
+    glBlitNamedFramebuffer(
+        custom_fbo, resolve_fbo,
+        0, 0, internal_width, internal_height,
+        0, 0, internal_width, internal_height,
+        GL_COLOR_BUFFER_BIT,
+        GL_NEAREST // msaa resolve must use nearest
+    );
+
+    x, y, window_width, window_height := get_dimensions(main_window, false);
+
+    glBlitNamedFramebuffer(
+        resolve_fbo, 0,
+        0, 0, internal_width, internal_height,
+        0, 0, window_width, window_height,
+        GL_COLOR_BUFFER_BIT,
+        GL_LINEAR
+    );
+
     #if OS == .WINDOWS {
         dc := wglGetCurrentDC();
         SwapBuffers(dc);
@@ -814,9 +832,43 @@ destroy_render_target :: (render_target: *Render_Target) {
     glDeleteFramebuffers(1, *render_target.framebuffer);
 }
 
-resize :: (width: int, height: int) -> window_render_target: Render_Target {
+resize :: (width: int, height: int, msaa: u32 = 4) -> render_target: Render_Target {
+    if custom_fbo != 0 {
+        glDeleteFramebuffers(1, *custom_fbo);
+        glDeleteTextures(1, *custom_color_texture);
+        glDeleteRenderbuffers(1, *custom_rbo);
+
+        glDeleteFramebuffers(1, *resolve_fbo);
+        glDeleteTextures(1, *resolve_color_texture);
+    }
+
+    glCreateFramebuffers(1, *custom_fbo);
+    glCreateTextures(GL_TEXTURE_2D_MULTISAMPLE, 1, *custom_color_texture);
+    glTextureStorage2DMultisample(custom_color_texture, msaa, GL_RGBA8, xx width, xx height, GL_TRUE);
+
+    glNamedFramebufferTexture(custom_fbo, GL_COLOR_ATTACHMENT0, custom_color_texture, 0);
+
+    glCreateRenderbuffers(1, *custom_rbo);
+    glNamedRenderbufferStorageMultisample(custom_rbo, msaa, GL_DEPTH24_STENCIL8, xx width, xx height);
+    glNamedFramebufferRenderbuffer(custom_fbo, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, custom_rbo);
+
+    glCreateFramebuffers(1, *resolve_fbo);
+    glCreateTextures(GL_TEXTURE_2D, 1, *resolve_color_texture);
+    glTextureStorage2D(resolve_color_texture, 1, GL_RGBA8, xx width, xx height);
+    glNamedFramebufferTexture(resolve_fbo, GL_COLOR_ATTACHMENT0, resolve_color_texture, 0);
+
+    status := glCheckNamedFramebufferStatus(custom_fbo, GL_FRAMEBUFFER);
+    if status != GL_FRAMEBUFFER_COMPLETE {
+        log_error("[Gaco] FBO is incomplete! Status: %", status);
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, custom_fbo);
+
+    internal_width = xx width;
+    internal_height = xx height;
+
     glViewport(0, 0, cast(GLuint)width, cast(GLuint)height);
-    return .{}; // @Incomplete: Use our own framebuffer instead of the default one
+    return .{custom_fbo, 1};
 }
 
 create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.Sampled) -> Texture {
@@ -858,7 +910,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     is_msaa  := (flags & .Multisample) != 0;
 
     if is_3d {
-        if is_msaa log("[Gaco] MSAA 3D textures are not standard in OpenGL.", flags=.WARNING);
+        assert(!is_msaa, "[Gaco] MSAA 3D textures are not supported.");
         target = GL_TEXTURE_3D;
     }
     else if is_cube {
@@ -972,7 +1024,7 @@ bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
         return;
     }
 
-    assert(texture.flags & .Sampled != 0, "[Gaco] Texture must have the .Sampled flag to be bound to a shader.");
+    assert(texture.flags & .Sampled != 0, "[Gaco] Texture must have Sampled flag to be bound to a shader.");
 
     search_and_bind :: (mappings: []Sampler_Mapping, $stage: Shader_Type) #expand {
         index := `slot;
@@ -1527,7 +1579,17 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> (new_
 }
 
 using GL_State: struct {
-    main_window: WT.Window_Type;
+    main_window: Window_Type;
+
+    custom_fbo: GLuint;
+    custom_color_texture: GLuint;
+    custom_rbo: GLuint;
+
+    // Sigh...
+    resolve_fbo: GLuint;
+    resolve_color_texture: GLuint;
+    internal_width, internal_height: s32;
+
     global_pipeline: GLuint;
     empty_stupid_vao: GLuint; // Because we cannot bind a vertex buffer without a vao
 
@@ -1607,7 +1669,7 @@ GL_TEXTURE_MAP_ARRAY :: GL_Format_Info.[
     .{ GL_DEPTH32F_STENCIL8, GL_DEPTH_STENCIL,   GL_FLOAT_32_UNSIGNED_INT_24_8_REV } // D32FS8
 ];
 
-GL_COMPARISON_ARRAY :: GLenum.[GL_NEVER, GL_LESS, GL_EQUAL, GL_LEQUAL, GL_GREATER, GL_NOTEQUAL, GL_GEQUAL, GL_ALWAYS];
+GL_COMPARISON_ARRAY :: GLenum.[GL_NONE, GL_NEVER, GL_LESS, GL_EQUAL, GL_LEQUAL, GL_GREATER, GL_NOTEQUAL, GL_GEQUAL, GL_ALWAYS];
 
 GL_STENCIL_OP_ARRAY :: GLenum.[GL_NONE, GL_KEEP, GL_ZERO, GL_REPLACE, GL_INCR_WRAP, GL_DECR_WRAP, GL_INVERT, GL_INCR, GL_DECR];
 
@@ -1637,4 +1699,4 @@ else #if OS == .LINUX {
     #import "X11";
 }
 
-WT :: #import "Window_Type";
+#import "Window_Creation";
