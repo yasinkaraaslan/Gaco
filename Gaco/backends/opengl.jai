@@ -11,10 +11,6 @@ Buffer :: struct (type: Buffer_Type) {
     stride: u32;
 }
 
-Sampler :: struct {
-    object: GLuint;
-}
-
 Texture :: struct {
     object: GLuint;
     width, height, stride: u32;
@@ -24,6 +20,10 @@ Texture :: struct {
     pixel_format: GLuint;
     pixel_type: GLuint;
     pbo_size: u32;
+}
+
+Sampler :: struct {
+    object: GLuint;
 }
 
 Render_Target :: struct {
@@ -154,7 +154,7 @@ deinit :: () {
     destroy_sampler(*default_sampler);
 }
 
-create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {
+create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usage := Buffer_Usage.Default, debug_name := "") -> Buffer(type) {
     buffer: Buffer(type);
     buffer.size = count * stride;
     buffer.stride = stride;
@@ -177,6 +177,7 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
 
         glNamedBufferStorage(buffer.object, buffer.size, data, storage_flags);
     }
+    if debug_name  gl_set_debug_name(buffer.object, GL_BUFFER, debug_name);
 
     return buffer;
 }
@@ -437,7 +438,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, file_name: str
     return bytecode, true;
 }
 
-load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> Shader {
+load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type, debug_name := "") -> Shader {
     shader: Shader;
     load :: (shader_type: GLenum, binary: string, entry_point: string) -> GLuint #expand {
         s := glCreateShader(shader_type);
@@ -510,10 +511,12 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> S
         glDeleteProgram(program);
         return .{};
     }
+    if debug_name  gl_set_debug_name(program, GL_PROGRAM, debug_name);
 
     shader.program = program;
     shader.type = type;
     shader.mappings = array_copy(bytecode.mappings);
+
 
     return shader;
 }
@@ -797,7 +800,7 @@ present :: (interval: u32 = 1) {
     }
 }
 
-create_render_target :: (color_textures: []Texture, depth_stencil_texture: Texture) -> Render_Target {
+create_render_target :: (color_textures: []Texture, depth_stencil_texture: Texture, debug_name := "") -> Render_Target {
     render_target: Render_Target;
     draw_buffers := NewArray(color_textures.count, GLenum,, temp);
     glCreateFramebuffers(1, *render_target.framebuffer);
@@ -821,6 +824,8 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
         return .{};
     }
     render_target.color_view_count = cast(u32)draw_buffers.count;
+    if debug_name  gl_set_debug_name(render_target.framebuffer, GL_FRAMEBUFFER, debug_name);
+
     return render_target;
 }
 
@@ -871,7 +876,7 @@ resize :: (width: int, height: int, msaa: u32 = 4) -> render_target: Render_Targ
     return .{custom_fbo, 1};
 }
 
-create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.Sampled) -> Texture {
+create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.Sampled, debug_name := "") -> Texture {
     generate_mips := (flags & .Generate_Mips) && mip_levels_or_msaa != 1;
 
     gl_info := GL_TEXTURE_MAP_ARRAY[format];
@@ -1014,6 +1019,8 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
         glGenerateTextureMipmap(texture.object);
     }
 
+    if debug_name  gl_set_debug_name(texture.object, GL_TEXTURE, debug_name);
+
     return texture;
 }
 
@@ -1091,7 +1098,7 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
     }
 }
 
-create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, max_anisotropy: u32 = 1, compare_op := Compare_Op.Never) -> Sampler {
+create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, max_anisotropy: u32 = 1, compare_op := Compare_Op.Never, debug_name := "") -> Sampler {
     sampler: Sampler;
     glCreateSamplers(1, *sampler.object);
     FILTER_TABLE :: GLint.[GL_LINEAR, GL_NEAREST];
@@ -1111,6 +1118,9 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
     glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_S, gl_edge);
     glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_T, gl_edge);
     glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_R, gl_edge);
+
+    if debug_name  gl_set_debug_name(sampler.object, GL_SAMPLER, debug_name);
+
     return sampler;
 }
 
@@ -1139,9 +1149,13 @@ destroy_sampler :: (sampler: *Sampler) {
     sampler.object = 0;
 }
 
-create_timer :: () -> Timer {
+create_timer :: (debug_name := "") -> Timer {
     timer: Timer;
     glCreateQueries(GL_TIMESTAMP, timer.queries.count, timer.queries.data);
+    if debug_name {
+        gl_set_debug_name(timer.start_query, GL_QUERY, tprint("%_Start", debug_name));
+        gl_set_debug_name(timer.end_query, GL_QUERY, tprint("%_End", debug_name));
+    }
     return timer;
 }
 
@@ -1688,7 +1702,17 @@ gl_debug_callback :: (source: GLenum, type: GLenum, id: GLuint, severity: GLenum
         }
     }
 }
+
+gl_set_debug_name :: (id: GLuint, type: GLenum, name: string) {
+    if id == 0 return;
+    glObjectLabel(type, id, cast(GLsizei) name.count, name.data);
 }
+
+}
+else {
+gl_set_debug_name :: (id: GLuint, type: GLenum, name: string) {}
+}
+
 #import "GL";
 DXC :: #import "dxc_compiler";
 

@@ -18,10 +18,6 @@ Buffer :: struct (type: Buffer_Type) {
     }
 };
 
-Sampler :: struct {
-    state: *ID3D11SamplerState;
-}
-
 Texture :: struct {
     union {
         texture2d: *ID3D11Texture2D;
@@ -36,6 +32,10 @@ Texture :: struct {
     format: Texture_Format;
     flags: Texture_Flags;
 };
+
+Sampler :: struct {
+    state: *ID3D11SamplerState;
+}
 
 Render_Target :: struct {
     color_views: [8]*ID3D11RenderTargetView;
@@ -158,7 +158,7 @@ deinit :: () {
     safe_release_and_reset(*device);
 }
 
-create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {
+create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usage := Buffer_Usage.Default, debug_name := "") -> Buffer(type) {
     buffer: Buffer(type);
     buffer.size = count * stride;
     buffer.stride = stride;
@@ -208,6 +208,7 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
 
     hr := ID3D11Device_CreateBuffer(device, *bd, init_data, *buffer.buffer);
     check_hr("ID3D11Device.CreateBuffer", #code `return .{});
+    if debug_name  d3d11_set_debug_name(buffer.buffer, debug_name);
 
     #if type == .Structured {
         srv_desc := D3D11_SHADER_RESOURCE_VIEW_DESC.{
@@ -216,6 +217,8 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
         };
         hr = ID3D11Device_CreateShaderResourceView(device, buffer.buffer, *srv_desc, *buffer.srv);
         check_hr("ID3D11Device.CreateShaderResourceView", #code `return .{});
+
+        if debug_name  d3d11_set_debug_name(buffer.srv, debug_name);
     }
     else #if type == .Structured_RW || type == .Indirect {
         uav_desc := D3D11_UNORDERED_ACCESS_VIEW_DESC.{
@@ -230,6 +233,7 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
 
         hr = ID3D11Device_CreateUnorderedAccessView(device, buffer.buffer, *uav_desc, *buffer.uav);
         check_hr("ID3D11Device.CreateUnorderedAccessView", #code `return .{});
+        if debug_name  d3d11_set_debug_name(buffer.uav, debug_name);
     }
 
     return buffer;
@@ -425,35 +429,31 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, file_name: str
     return bytecode, true;
 }
 
-load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type) -> Shader {
+load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type, debug_name := "") -> Shader {
     shader: Shader;
     if type & .Vertex {
         hr := ID3D11Device_CreateVertexShader(device, bytecode.vs.data, xx bytecode.vs.count, null, *shader.vertex_shader);
         check_hr("ID3D11Device.CreateVertexShader", #code `return .{});
 
         shader.input_layout = get_input_layout_from_bytecode(bytecode.vs);
-
-        #if DEBUG {
-            ID3D11DeviceChild_SetPrivateData(shader.vertex_shader, *uid(WKPDID_D3DDebugObjectName), VS_ENTRY_POINT.count, VS_ENTRY_POINT.data);
+        if debug_name {
+            d3d11_set_debug_name(shader.input_layout, debug_name);
+            d3d11_set_debug_name(shader.vertex_shader, debug_name);
         }
     }
 
     if type & .Fragment {
         hr := ID3D11Device_CreatePixelShader(device, bytecode.fs.data, xx bytecode.fs.count, null, *shader.fragment_shader);
         check_hr("ID3D11Device.CreatePixelShader", #code `return .{});
-
-        #if DEBUG {
-            ID3D11DeviceChild_SetPrivateData(shader.fragment_shader,*uid(WKPDID_D3DDebugObjectName), FS_ENTRY_POINT.count, FS_ENTRY_POINT.data);
-        }
+        if debug_name
+            d3d11_set_debug_name(shader.fragment_shader, debug_name);
     }
 
     if type & .Compute {
         hr := ID3D11Device_CreateComputeShader(device, bytecode.cs.data, xx bytecode.cs.count, null, *shader.compute_shader);
         check_hr("ID3D11Device.CreateComputeShader", #code `return .{});
-
-        #if DEBUG {
-            ID3D11DeviceChild_SetPrivateData(shader.compute_shader, *uid(WKPDID_D3DDebugObjectName), CS_ENTRY_POINT.count, CS_ENTRY_POINT.data);
-        }
+        if debug_name
+            d3d11_set_debug_name(shader.compute_shader, debug_name);
     }
 
 
@@ -635,12 +635,13 @@ present :: (interval: u32 = 1) {
 
 // NOTE(Yasin): You cannot currently create 3d textures or texture arrays for render targets, but to
 // write to them you need geometry shaders, which we don't support anyways.
-create_render_target :: (color_textures: []Texture, depth_stencil_texture: Texture) -> Render_Target {
+create_render_target :: (color_textures: []Texture, depth_stencil_texture: Texture, debug_name := "") -> Render_Target {
     render_target: Render_Target;
     if color_textures {
         for color_textures {
             hr := ID3D11Device_CreateRenderTargetView(device, it.texture2d, null, *render_target.color_views[it_index]);
             check_hr("ID3D11Device.CreateRenderTargetView", #code return .{});
+            if debug_name  d3d11_set_debug_name(render_target.color_views[it_index], debug_name);
         }
     }
 
@@ -656,6 +657,8 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
         }
         hr := ID3D11Device_CreateDepthStencilView(device, depth_stencil_texture.texture2d, *ds_desc, *render_target.depth_stencil_view);
         check_hr("ID3D11Device.CreateDepthStencilView", #code return .{});
+        if debug_name  d3d11_set_debug_name(depth_stencil_texture.texture2d, debug_name);
+
     }
     return render_target;
 }
@@ -700,7 +703,7 @@ resize :: (width: int, height: int, msaa: u32 = 4) -> render_target: Render_Targ
 // Data is an array for texture arrays and mipmapping.
 // Index = mip slice + (array slice * mip levels)
 // Image 0 mip data | Image 1 mip data | ...
-create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.Sampled) -> Texture {
+create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.Sampled, debug_name := "") -> Texture {
     generate_mips := (flags & .Generate_Mips) && mip_levels_or_msaa != 1;
     depth_stencil := format >= .D16 && format <= .D32FS8;
 
@@ -912,6 +915,11 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
         check_hr("ID3D11Device.CreateUnorderedAccessView", #code return .{});
     }
 
+    if debug_name {
+        d3d11_set_debug_name(texture.texture2d, debug_name);
+        d3d11_set_debug_name(texture.resource_view, debug_name);
+    }
+
     return texture;
 }
 
@@ -976,7 +984,7 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
 }
 
 // @Incomplete: give more options
-create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, max_anisotropy: u32 = 1, compare_op := Compare_Op.Never) -> Sampler {
+create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, max_anisotropy: u32 = 1, compare_op := Compare_Op.Never, debug_name := "") -> Sampler {
     d3d11_filter: D3D11_FILTER;
     if max_anisotropy > 1 {
         // We override the filter, there is no such requirement in OpenGL.
@@ -1006,6 +1014,9 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
     sampler: Sampler;
     hr := ID3D11Device_CreateSamplerState(device, *sampler_desc,*sampler.state);
     check_hr("ID3D11Device.CreateSamplerState", #code `return .{});
+
+    if debug_name  d3d11_set_debug_name(sampler.state, debug_name);
+
     return sampler;
 }
 
@@ -1022,7 +1033,7 @@ destroy_sampler :: (sampler: *Sampler) {
     safe_release_and_reset(*sampler.state);
 }
 
-create_timer :: () -> Timer {
+create_timer :: (debug_name := "") -> Timer {
     desc_disjoint := D3D11_QUERY_DESC.{ Query = .TIMESTAMP_DISJOINT };
     desc_ts       := D3D11_QUERY_DESC.{ Query = .TIMESTAMP };
 
@@ -1030,6 +1041,12 @@ create_timer :: () -> Timer {
     ID3D11Device_CreateQuery(device, *desc_disjoint, *timer.disjoint_query);
     ID3D11Device_CreateQuery(device, *desc_ts, *timer.start_query);
     ID3D11Device_CreateQuery(device, *desc_ts, *timer.end_query);
+
+    if debug_name {
+        d3d11_set_debug_name(timer.disjoint_query, tprint("%_Disjoint", debug_name));
+        d3d11_set_debug_name(timer.start_query, tprint("%_Start", debug_name));
+        d3d11_set_debug_name(timer.end_query, tprint("%_End", debug_name));
+    }
     return timer;
 }
 
@@ -1412,6 +1429,18 @@ log_messages_and_get_last :: () -> string, bool {
     return message_str, error;
 }
 
+d3d11_set_debug_name :: (resource: *ID3D11DeviceChild, name: string) {
+    if !resource return;
+    ID3D11DeviceChild_SetPrivateData(
+        resource,
+        *uid(WKPDID_D3DDebugObjectName),
+        cast(u32) name.count,
+        name.data
+    );
+}
+}
+else {
+d3d11_set_debug_name :: (resource: *ID3D11DeviceChild, name: string) {}
 }
 
 #import "d3d11";

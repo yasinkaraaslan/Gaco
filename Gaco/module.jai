@@ -266,10 +266,10 @@ compile_shader :: (file_name: string, output_file_name: string, type: Shader_Typ
 load_shader :: (file_name: string) -> Shader {
     data, ok := read_entire_file(file_name,, temp);
     if !ok  return .{};
-    return load_shader_from_memory(data);
+    return load_shader_from_memory(data, file_name);
 }
 
-load_shader_from_memory :: (data: string) -> Shader {
+load_shader_from_memory :: (data: string, debug_name := "") -> Shader {
     cursor := data.data;
     header := (cast(*Shader_Header)cursor).*;
 
@@ -296,7 +296,7 @@ load_shader_from_memory :: (data: string) -> Shader {
     bytecode.cs.data = cursor;
     bytecode.cs.count = header.cs_size;
 
-    return load_shader_from_bytecode(bytecode, header.type);
+    return load_shader_from_bytecode(bytecode, header.type, debug_name);
 }
 
 create_buffer :: (data: $T, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {
