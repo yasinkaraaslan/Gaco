@@ -1742,8 +1742,7 @@ gl_create_compute_context :: (major: s32, minor: s32, debug: bool) {
         wgl_create_compute_context(major, minor, debug);
     }
     else {
-        // TODO(Yasin): Implement this.
-        egl_create_compute_context(major, minor, debug);
+        glx_create_compute_context(major, minor, debug);
     }
 }
 
@@ -1803,8 +1802,59 @@ wgl_create_compute_context :: (major: s32, minor: s32, debug: bool) {
     wglMakeCurrent(hdc, compute_ctx);
     wglDeleteContext(dummy_ctx);
 }
+
 }
 else {
+
+glx_create_compute_context :: (major: s32, minor: s32, debug: bool) {
+    config_attribs := s32.[
+        0
+    ];
+
+    num_configs: s32;
+
+    if !x_global_display
+        x_global_display = XOpenDisplay(null);
+
+    fbconfigs := glXChooseFBConfig(x_global_display, DefaultScreen(x_global_display), config_attribs.data, *num_configs);
+    if !fbconfigs || num_configs == 0 {
+        print("No suitable GLX config found.\n");
+        return;
+    }
+
+    config := fbconfigs[0];
+    XFree(fbconfigs);
+
+    glXCreateContextAttribsARB := cast(
+        #type (dpy: *Display, config: GLXFBConfig, share_context: GLXContext, direct: s32, attrib_list: *s32) -> GLXContext #c_call
+    ) glXGetProcAddress("glXCreateContextAttribsARB".data);
+
+    if !glXCreateContextAttribsARB {
+        print("glXCreateContextAttribsARB not supported.\n");
+        return;
+    }
+    context_attribs := s32.[
+        GLX_CONTEXT_MAJOR_VERSION_ARB, major,
+        GLX_CONTEXT_MINOR_VERSION_ARB, minor,
+        GLX_CONTEXT_PROFILE_MASK_ARB,  GLX_CONTEXT_CORE_PROFILE_BIT_ARB,
+        0
+    ];
+
+    glx_context := glXCreateContextAttribsARB(x_global_display, config, null, 1, context_attribs.data);
+    if !glx_context {
+        print("Failed to create GLX context.\n");
+        return;
+    }
+
+    // NOTE(Yasin): Passing 0 as the drawable technically violates the GLX spec,
+    // but works on Mesa / Xwayland for pure compute.
+    // If this ever crashes with an X11 BadMatch error on older native machines
+    // or proprietary Nvidia drivers, a 1x1 GLXPbuffer must be created and passed here.
+    if !glXMakeCurrent(x_global_display, 0, glx_context) {
+        print("Failed to make GLX context current.\n");
+        return;
+    }
+}
 
 }
 
