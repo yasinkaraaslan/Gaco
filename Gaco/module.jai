@@ -538,7 +538,7 @@ get_semantic_info :: (semantic: string) -> is_instance: bool, step_rate: u32 {
 }
 
 // FNV-1a
-get_ds_hash :: (desc: Depth_Stencil_Desc) -> u32 {
+get_plain_old_data_hash :: (desc: Depth_Stencil_Desc) -> u32 {
     data: []u8;
     data.data = cast(*u8)*desc;
     data.count = size_of(Depth_Stencil_Desc);
@@ -615,6 +615,8 @@ TEXTURE_BYTES_PER_BLOCK :: u32.[
 #import "String";
 #import "File";
 #import "Basic";
+#import "Hash_Table";
+#import "Math";
 
 #scope_file
 #import "stb_image";

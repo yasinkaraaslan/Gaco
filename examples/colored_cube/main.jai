@@ -70,7 +70,7 @@ main :: () {
         Gaco.bind_buffer(index_buffer);
         Gaco.bind_buffer(fragment_cb, 0, .Fragment);
 
-        Gaco.clear(0.3, 0.5, 0.3, 1.0);
+        Gaco.clear(.{0.3, 0.5, 0.3, 1.0});
         draw_the_cube(vertex_cb, indices.count);
         Gaco.present();
     }

@@ -107,7 +107,7 @@ main :: () {
          proj = make_projection_matrix(70 * PI / 180.0, cast(float)it.width / cast(float)it.height, 0.001, 1000.0, depth_range_01 = true);
       }
       for events_this_frame if it.type == .QUIT quit = true;
-      Gaco.clear(1.0, 0.5, 0.3, 1.0);
+      Gaco.clear(.{1.0, 0.5, 0.3, 1.0});
 
       Gaco.bind_buffer(vertex_buffer);
       Gaco.bind_buffer(index_buffer);

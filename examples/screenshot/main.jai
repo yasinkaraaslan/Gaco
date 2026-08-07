@@ -136,7 +136,7 @@ main :: () {
         update_camera();
 
 
-        Gaco.clear(1.0, 0.5, 0.3, 1.0);
+        Gaco.clear(.{1.0, 0.5, 0.3, 1.0});
         draw_cube(.{0, 0, -3}, vs_cb, xx indices.count);
         draw_cube(.{0, 0, -10}, vs_cb, xx indices.count);
 

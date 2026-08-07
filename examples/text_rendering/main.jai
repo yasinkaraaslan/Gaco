@@ -62,7 +62,7 @@ main :: () {
             }
         }
 
-        Gaco.clear(50.0 / 0xFF, 15.0 / 0xFF, 22.0 / 0xFF, 1.0);
+        Gaco.clear(.{50.0 / 0xFF, 15.0 / 0xFF, 22.0 / 0xFF, 1.0});
 
         draw_shadowed_text(*font, tprint("Latency: % ms", FrameInfo.latency*1000), .{0, xx (WindowHeight - font.size)});
         draw_shadowed_text(*font, tprint("FPS: %", fps), .{0, 0});

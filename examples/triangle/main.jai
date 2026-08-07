@@ -30,7 +30,7 @@ main :: () {
             if it.type == .QUIT quit = true;
         }
 
-        Gaco.clear(1.0, 0.5, 0.3, 1.0);
+        Gaco.clear(.{1.0, 0.5, 0.3, 1.0});
         Gaco.draw(false, 3);
         Gaco.present();
     }

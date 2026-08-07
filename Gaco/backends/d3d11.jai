@@ -461,11 +461,10 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type, debu
     return shader;
 }
 
-clear :: (render_target: Render_Target, r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
+clear :: (render_target: Render_Target, color: Vector4, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
     #if flags & .Color {
-        color := float.[r, g, b, a];
         for render_target.color_views {
-            if it  ID3D11DeviceContext_ClearRenderTargetView(device_context, it, *color);
+            if it  ID3D11DeviceContext_ClearRenderTargetView(device_context, it, *color.component);
         }
     }
 
@@ -480,8 +479,8 @@ clear :: (render_target: Render_Target, r: float, g: float, b: float, a: float, 
     }
 }
 
-clear :: inline (r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
-    clear(custom_render_target, r, g, b, a, depth, stencil, flags);
+clear :: inline (color: Vector4, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
+    clear(custom_render_target, color, depth, stencil, flags);
 }
 
 set_shader :: (shader: Shader) {
@@ -983,7 +982,6 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
     }
 }
 
-// @Incomplete: give more options
 create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, max_anisotropy: u32 = 1, compare_op := Compare_Op.Never, debug_name := "") -> Sampler {
     d3d11_filter: D3D11_FILTER;
     if max_anisotropy > 1 {
@@ -1076,6 +1074,16 @@ timer_get_ms :: (timer: Timer) -> float {
     return cast(float)((end_timestamp - start_timestamp).(float64) * 1000.0 / disjoint_data.Frequency.(float64));
 }
 
+
+// You might need these for initializing ImGui etc.
+get_d3d_device :: () -> *ID3D11Device {
+    return device;
+}
+
+get_d3d_device_context :: () -> *ID3D11DeviceContext {
+    return device_context;
+}
+
 #scope_file
 using D3D11_State: struct {
     device: *ID3D11Device;
@@ -1088,7 +1096,7 @@ using D3D11_State: struct {
     custom_depth_texture: Texture;
     // bound_render_target: *Render_Target;
 
-    depth_stencil_table: Table(Depth_Stencil_Desc, *ID3D11DepthStencilState, get_ds_hash, compare_ds);
+    depth_stencil_table: Table(Depth_Stencil_Desc, *ID3D11DepthStencilState, get_plain_old_data_hash, compare_ds);
 
     rasterizer_modes: [#run enum_count(Rasterizer_Mode)]*ID3D11RasterizerState;
     blend_modes: [#run enum_count(Blend_Mode)]*ID3D11BlendState;
@@ -1447,4 +1455,3 @@ d3d11_set_debug_name :: (resource: *ID3D11DeviceChild, name: string) {}
 #import "d3d_compiler";
 #import "dxgi";
 #import "Windows";
-#import "Hash_Table";

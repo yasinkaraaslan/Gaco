@@ -1,7 +1,9 @@
 Shader :: struct {
     type: Shader_Type;
     input_vao: GLuint;
-    program: GLuint; // This is a 'seperable' program that contains the shaders specified with type.
+    vs_program: GLuint;
+    fs_program: GLuint;
+    cs_program: GLuint;
     mappings: []Sampler_Mapping;
 }
 
@@ -72,9 +74,11 @@ is_valid :: (buffer: Buffer) -> bool {
 }
 
 is_valid :: (using shader: Shader) -> bool {
-    empty_vao := !glIsVertexArray(input_vao) && type & .Vertex;
+    empty_vs := type & .Vertex   && (!glIsProgram(vs_program) || !glIsVertexArray(input_vao));
+    empty_fs := type & .Fragment && !glIsProgram(fs_program);
+    empty_cs := type & .Compute  && !glIsProgram(cs_program);
 
-    return type != .Unspecified && glIsProgram(program) && !empty_vao;
+    return type != .Unspecified && !empty_vs && !empty_fs && !empty_cs;
 }
 
 is_valid :: (render_target: Render_Target) -> bool {
@@ -350,12 +354,21 @@ destroy_texture :: (texture: *Texture) {
 }
 
 destroy_shader :: (shader: *Shader) {
-    glDeleteProgram(shader.program);
-    shader.program = 0;
     if shader.type & .Vertex {
         glDeleteVertexArrays(1, *shader.input_vao);
         shader.input_vao = 0;
+        glDeleteProgram(shader.vs_program);
+        shader.vs_program = 0;
     }
+    if shader.type & .Fragment {
+        glDeleteProgram(shader.fs_program);
+        shader.fs_program = 0;
+    }
+    if shader.type & .Compute {
+        glDeleteProgram(shader.cs_program);
+        shader.cs_program = 0;
+    }
+
     array_free(shader.mappings);
 }
 
@@ -441,18 +454,23 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, file_name: str
 load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type, debug_name := "") -> Shader {
     shader: Shader;
     load :: (shader_type: GLenum, binary: string, entry_point: string) -> GLuint #expand {
-        s := glCreateShader(shader_type);
+        program := glCreateProgram();
+        glProgramParameteri(program, GL_PROGRAM_SEPARABLE, 1);
+        if `debug_name  gl_set_debug_name(program, GL_PROGRAM, `debug_name);
 
-        glShaderBinary(1, *s, GL_SHADER_BINARY_FORMAT_SPIR_V, binary.data, cast(u32)binary.count);
-        glSpecializeShader(s, entry_point, 0, null, null);
+        shader := glCreateShader(shader_type);
+        defer if shader glDeleteShader(shader);
+
+        glShaderBinary(1, *shader, GL_SHADER_BINARY_FORMAT_SPIR_V, binary.data, cast(u32)binary.count);
+        glSpecializeShader(shader, entry_point, 0, null, null);
         is_compiled: GLint;
-        glGetShaderiv(s, GL_COMPILE_STATUS, *is_compiled);
+        glGetShaderiv(shader, GL_COMPILE_STATUS, *is_compiled);
         if is_compiled == 0 {
             info_len: GLint;
-            glGetShaderiv(s, GL_INFO_LOG_LENGTH, *info_len);
+            glGetShaderiv(shader, GL_INFO_LOG_LENGTH, *info_len);
             if info_len > 0 {
                 info_log := alloc(info_len,, temp);
-                glGetShaderInfoLog(s, cast(GLsizei)info_len, null, info_log);
+                glGetShaderInfoLog(shader, cast(GLsizei)info_len, null, info_log);
                 log_error("[Gaco] Shader compilation failed: %", to_string(info_log));
             }
             else {
@@ -461,70 +479,50 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type, debu
             log_error("[Gaco] Shader loading failed.");
             `return .{};
         }
-        return s;
-    }
 
-    delete :: inline (s: GLuint) {
-        if s != 0  glDeleteShader(s);
-    }
-    vertex_shader: GLuint;
-    fragment_shader: GLuint;
-    compute_shader: GLuint;
-    defer {
-        delete(vertex_shader);
-        delete(fragment_shader);
-        delete(compute_shader);
-    }
+        glAttachShader(program, shader);
+        glLinkProgram(program);
+        is_linked: GLint;
+        glGetProgramiv(program, GL_LINK_STATUS, *is_linked);
+        if is_linked == 0 {
+            info_len: GLint;
+            glGetProgramiv(program, GL_INFO_LOG_LENGTH, *info_len);
 
-    program := glCreateProgram();
-    glProgramParameteri(program, GL_PROGRAM_SEPARABLE, 1);
+            if info_len > 0 {
+                info_log := alloc(info_len,, temp);
+                glGetProgramInfoLog(program, cast(GLsizei)info_len, null, info_log);
+                log_error("[Gaco] Shader linking failed: %",to_string(info_log));
+            } else {
+                log_error("[Gaco] Shader linking failed with no info log.");
+            }
+            glDeleteProgram(program);
+            `return .{};
+        }
+
+        return program;
+    }
 
     if type & .Vertex {
         shader.input_vao = get_input_vao_from_spv(bytecode.vs);
-        vertex_shader = load(GL_VERTEX_SHADER, bytecode.vs, VS_ENTRY_POINT);
-        glAttachShader(program, vertex_shader);
+        shader.vs_program = load(GL_VERTEX_SHADER, bytecode.vs, VS_ENTRY_POINT);
     }
     if type & .Fragment {
-        fragment_shader = load(GL_FRAGMENT_SHADER, bytecode.fs, FS_ENTRY_POINT);
-        glAttachShader(program, fragment_shader);
+        shader.fs_program = load(GL_FRAGMENT_SHADER, bytecode.fs, FS_ENTRY_POINT);
     }
     if type & .Compute {
-        compute_shader = load(GL_COMPUTE_SHADER, bytecode.cs, CS_ENTRY_POINT);
-        glAttachShader(program, compute_shader);
+        shader.cs_program = load(GL_COMPUTE_SHADER, bytecode.cs, CS_ENTRY_POINT);
     }
 
-    glLinkProgram(program);
-
-    is_linked: GLint;
-    glGetProgramiv(program, GL_LINK_STATUS, *is_linked);
-    if is_linked == 0 {
-        info_len: GLint;
-        glGetProgramiv(program, GL_INFO_LOG_LENGTH, *info_len);
-
-        if info_len > 0 {
-            info_log := alloc(info_len,, temp);
-            glGetProgramInfoLog(program, cast(GLsizei)info_len, null, info_log);
-            log_error("[Gaco] Shader linking failed: %", to_string(info_log));
-        } else {
-            log_error("[Gaco] Shader linking failed with no info log.");
-        }
-        glDeleteProgram(program);
-        return .{};
-    }
-    if debug_name  gl_set_debug_name(program, GL_PROGRAM, debug_name);
-
-    shader.program = program;
     shader.type = type;
     shader.mappings = array_copy(bytecode.mappings);
-
 
     return shader;
 }
 
-clear :: (r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
+clear :: inline (color: Vector4, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
     window_render_target := Render_Target.{custom_fbo, 1};
 
-    clear(window_render_target, r, g, b, a, depth, stencil, flags);
+    clear(window_render_target, color, depth, stencil, flags);
 
     // Commented code clears the currently bound framebuffer.
 
@@ -542,9 +540,9 @@ clear :: (r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0,
     // glClear(mask);
 }
 
-clear :: (render_target: Render_Target, r: float, g: float, b: float, a: float, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
+clear :: (render_target: Render_Target, color: Vector4, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
     if render_target.framebuffer == 0 {
-        glClearColor(r, g, b, a);
+        glClearColor(color.x, color.y, color.z, color.w);
         glClearDepth(depth);
         glClearStencil(cast(GLint)stencil);
 
@@ -558,9 +556,8 @@ clear :: (render_target: Render_Target, r: float, g: float, b: float, a: float, 
         glClear(mask);
     } else {
         #if flags & .Color {
-            color := float.[r,g,b,a];
             for 0..render_target.color_view_count - 1 {
-                glClearNamedFramebufferfv(render_target.framebuffer, GL_COLOR, cast(s32)it, color.data);
+                glClearNamedFramebufferfv(render_target.framebuffer, GL_COLOR, cast(s32)it, color.component.data);
             }
         }
         #if flags & .Depth {
@@ -611,22 +608,24 @@ set_shader :: (shader: Shader) {
         bind(vertex_buffer, 0);
         bind(instance_buffer, 1);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_buffer);
+
         vs_mappings = shader.mappings;
+        glUseProgramStages(global_pipeline, GL_VERTEX_SHADER_BIT, shader.vs_program);
     }
     if shader.type & .Fragment {
-        stages |= GL_FRAGMENT_SHADER_BIT;
         fs_mappings = shader.mappings;
+        glUseProgramStages(global_pipeline, GL_FRAGMENT_SHADER_BIT, shader.fs_program);
     }
     if shader.type & .Compute {
-        stages |= GL_COMPUTE_SHADER_BIT;
         cs_mappings = shader.mappings;
+        glUseProgramStages(global_pipeline, GL_COMPUTE_SHADER_BIT, shader.cs_program);
     }
 
-    glUseProgramStages(global_pipeline, stages, shader.program);
     glValidateProgramPipeline(global_pipeline);
-    isValid: GLint;
-    glGetProgramPipelineiv(global_pipeline, GL_VALIDATE_STATUS, *isValid);
-    if isValid == 0 {
+
+    is_valid: GLint;
+    glGetProgramPipelineiv(global_pipeline, GL_VALIDATE_STATUS, *is_valid);
+    if is_valid == 0 {
         info_len: GLint;
         glGetProgramPipelineiv(global_pipeline, GL_INFO_LOG_LENGTH, *info_len);
         if info_len > 0 {
@@ -636,6 +635,7 @@ set_shader :: (shader: Shader) {
         }
     }
 }
+
 set_primitive_type :: (primitive_type: Primitive_Type) {
     if #complete primitive_type == {
     case .Line_List;
@@ -804,12 +804,14 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
     render_target: Render_Target;
     draw_buffers := NewArray(color_textures.count, GLenum,, temp);
     glCreateFramebuffers(1, *render_target.framebuffer);
+
     for color_textures {
         assert(it.flags & .Render_Target != 0, "[Gaco] Color texture used for creating a render target must have Render_Target flag.");
         attachment := GL_COLOR_ATTACHMENT0 + cast(u32)it_index;
         glNamedFramebufferTexture(render_target.framebuffer, attachment, it.object, 0);
         draw_buffers[it_index] = attachment;
     }
+
     if is_valid(depth_stencil_texture) {
         attachment : GLenum = GL_DEPTH_ATTACHMENT;
         if depth_stencil_texture.pixel_format == GL_DEPTH_STENCIL {
@@ -817,12 +819,15 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
         }
         glNamedFramebufferTexture(render_target.framebuffer, attachment, depth_stencil_texture.object, 0);
     }
+
     glNamedFramebufferDrawBuffers(render_target.framebuffer, cast(u32)draw_buffers.count, draw_buffers.data);
+
     status := glCheckNamedFramebufferStatus(render_target.framebuffer, GL_FRAMEBUFFER);
     if status != GL_FRAMEBUFFER_COMPLETE {
         log_error("Unable to create render target! Status: 0x%", formatInt(status, 16));
         return .{};
     }
+
     render_target.color_view_count = cast(u32)draw_buffers.count;
     if debug_name  gl_set_debug_name(render_target.framebuffer, GL_FRAMEBUFFER, debug_name);
 

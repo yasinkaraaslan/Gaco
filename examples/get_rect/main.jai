@@ -38,7 +38,7 @@ main :: () {
         }
         ui_per_frame_update(window, xx WindowWidth, xx WindowHeight, current_time);
 
-        Gaco.clear(0.3, 0.4, 0.4, 1.0);
+        Gaco.clear(.{0.3, 0.4, 0.4, 1.0});
 
 
         k := WindowHeight * .1;
@@ -92,7 +92,6 @@ main :: () {
 #import "File";
 #import "Input";
 #import "Window_Creation";
-Gaco :: #import,dir "../../Gaco"(DEBUG=true);
 #if OS == .WINDOWS {
     __d3d11 :: #import "d3d11"()(INCLUDE_DEBUG_BINDINGS=true);
 }
