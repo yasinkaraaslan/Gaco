@@ -92,6 +92,8 @@ main :: () {
 #import "File";
 #import "Input";
 #import "Window_Creation";
+
+Gaco :: #import,dir "../../Gaco"(DEBUG=true);
 #if OS == .WINDOWS {
     __d3d11 :: #import "d3d11"()(INCLUDE_DEBUG_BINDINGS=true);
 }

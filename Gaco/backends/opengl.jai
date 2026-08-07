@@ -64,7 +64,6 @@ Rasterizer_State :: struct {
 
 Depth_Stencil_State :: Depth_Stencil_Desc;
 
-
 is_valid :: (texture: Texture) -> bool {
     if texture.flags & .Copy return glIsBuffer(texture.object);
     return glIsTexture(texture.object);
@@ -88,17 +87,20 @@ is_valid :: (render_target: Render_Target) -> bool {
 }
 
 init :: (window: Window_Type) {
-    // TODO(Yasin): Allow null window for compute-only programs
+    if window == INVALID_WINDOW {
+        gl_create_compute_context(4,5, DEBUG);
+    }
+    else {
+        gl_create_context(window, 4, 5, false, DEBUG, 0);
+    }
 
-    gl_create_context(window, 4, 5, false, DEBUG, 0);
     gl_load(*gl);
+
 
     major, minor := gl_get_version();
     if major < 4 || minor < 5 { // We support 4.5 and require SPIR-V extension.
         log_error("[Gaco] Unsupported GL version: %.%, need at least 4.5", major, minor);
     }
-
-    main_window = window;
 
     #if DEBUG {
         // D3D11 crashes on errors (because there is no way to register a callback...)
@@ -107,16 +109,20 @@ init :: (window: Window_Type) {
         glDebugMessageCallback(gl_debug_callback, null);
     }
 
+    glCreateProgramPipelines(1, *global_pipeline);
+    glBindProgramPipeline(global_pipeline);
+
+    if window == INVALID_WINDOW return;
+
+    main_window = window;
+
     glFrontFace(GL_CW); // We use clockwise for both OpenGL and D3D11
     glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
-
 
     // So we can bind vertex buffers without setting a shader.
     glCreateVertexArrays(1, *empty_stupid_vao);
     glBindVertexArray(empty_stupid_vao);
 
-    glCreateProgramPipelines(1, *global_pipeline);
-    glBindProgramPipeline(global_pipeline);
     init_preloaded_modes();
 
     set_depth_stencil_state(.Depth_Stencil);
@@ -1263,13 +1269,13 @@ init_preloaded_modes :: () {
 }
 
 set_swap_interval :: (interval: s32) {
-        #if OS == .WINDOWS {
-            wglSwapIntervalEXT(interval);
-        }
-        else #if OS == .LINUX {
-            glXSwapIntervalEXT(x_global_display, main_window, interval);
-        }
-        current_swap_interval = interval;
+    #if OS == .WINDOWS {
+        wglSwapIntervalEXT(interval);
+    }
+    else #if OS == .LINUX {
+        glXSwapIntervalEXT(x_global_display, main_window, interval);
+    }
+    current_swap_interval = interval;
 }
 
 get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
@@ -1390,17 +1396,17 @@ get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
 }
 
 // I had to reimplement this function from spv-opt because OpenGL...
-build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> (new_bytecode: string, mappings: []Sampler_Mapping) {
+build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_bytecode: string, mappings: []Sampler_Mapping {
     if bytecode.count < 20 return "", .[];
 
     words := cast(*u32) bytecode.data;
     num_words := bytecode.count / 4;
 
-    id_bound := words[3];
-
     // Word 3 in the header is the "ID Bound".
     // All SPIR-V IDs are guaranteed to be strictly less than this number.
     // This lets us use simple arrays for lookups.
+
+    id_bound := words[3];
 
     bindings      := NewArray(id_bound, u32,, temp);       // Result ID -> Binding value
     loads         := NewArray(id_bound, u32,, temp);       // Result ID -> Variable ID it loaded from
@@ -1600,6 +1606,11 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> (new_
 using GL_State: struct {
     main_window: Window_Type;
 
+    internal_width, internal_height: s32;
+    window_width, window_height: s32;
+    current_msaa: u32;
+    current_swap_interval: s32;
+
     custom_fbo: GLuint;
     custom_color_texture: GLuint;
     custom_rbo: GLuint;
@@ -1607,11 +1618,6 @@ using GL_State: struct {
     // Sigh...
     resolve_fbo: GLuint;
     resolve_color_texture: GLuint;
-
-    internal_width, internal_height: s32;
-    window_width, window_height: s32;
-    current_msaa: u32;
-
 
     global_pipeline: GLuint;
     empty_stupid_vao: GLuint; // Because we cannot bind a vertex buffer without a vao
@@ -1628,7 +1634,6 @@ using GL_State: struct {
 
     current_primitive_mode: GLuint = GL_TRIANGLES;
     current_index_stride: u32;
-    current_swap_interval: s32;
 
     vs_mappings: []Sampler_Mapping;
     fs_mappings: []Sampler_Mapping;
@@ -1732,6 +1737,77 @@ else {
 gl_set_debug_name :: (id: GLuint, type: GLenum, name: string) {}
 }
 
+gl_create_compute_context :: (major: s32, minor: s32, debug: bool) {
+    #if OS == .WINDOWS {
+        wgl_create_compute_context(major, minor, debug);
+    }
+    else {
+        // TODO(Yasin): Implement this.
+        egl_create_compute_context(major, minor, debug);
+    }
+}
+
+#if OS == .WINDOWS {
+
+wgl_create_compute_context :: (major: s32, minor: s32, debug: bool) {
+    #import "Windows_Utf8";
+    hInstance := GetModuleHandleW(null);
+
+    wc: WNDCLASSEXW;
+    wc.lpfnWndProc   = DefWindowProcA;
+    wc.hInstance     = hInstance;
+    wc.lpszClassName = utf8_to_wide("DummyGLCompute",, temp);
+    wc.style         = CS_OWNDC;
+    wc.cbSize        = size_of(WNDCLASSEXW);
+    RegisterClassExW(*wc);
+
+    hwnd := CreateWindowExW(
+        0, wc.lpszClassName, utf8_to_wide("GL Compute",, temp),
+        0, 0, 0, 1, 1,
+        null, null, hInstance, null
+    );
+    hdc := GetDC(hwnd);
+
+    pfd: PIXELFORMATDESCRIPTOR;
+    pfd.nSize      = size_of(PIXELFORMATDESCRIPTOR);
+    pfd.nVersion   = 1;
+    pfd.dwFlags    = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL;
+    pfd.iPixelType = PFD_TYPE_RGBA;
+    pfd.cColorBits = 32;
+
+    pf := ChoosePixelFormat(hdc, *pfd);
+    SetPixelFormat(hdc, pf, *pfd);
+
+    dummy_ctx := wglCreateContext(hdc);
+    wglMakeCurrent(hdc, dummy_ctx);
+
+    wglCreateContextAttribsARB: (hdc: HDC, hShareContext : HGLRC, attribList : *s32)->HGLRC #c_call;
+    wglCreateContextAttribsARB = xx wglGetProcAddress("wglCreateContextAttribsARB");
+
+    attribs: [9] s32;
+    idx := 0;
+    attribs[idx] = WGL_CONTEXT_MAJOR_VERSION_ARB; idx += 1;
+    attribs[idx] = major;                         idx += 1;
+    attribs[idx] = WGL_CONTEXT_MINOR_VERSION_ARB; idx += 1;
+    attribs[idx] = minor;                         idx += 1;
+    attribs[idx] = WGL_CONTEXT_PROFILE_MASK_ARB;  idx += 1;
+    attribs[idx] = WGL_CONTEXT_CORE_PROFILE_BIT_ARB; idx += 1;
+
+    if debug {
+        attribs[idx] = WGL_CONTEXT_FLAGS_ARB;       idx += 1;
+        attribs[idx] = WGL_CONTEXT_DEBUG_BIT_ARB;   idx += 1;
+    }
+    attribs[idx] = 0; // Null terminator
+
+    compute_ctx := wglCreateContextAttribsARB(hdc, null, attribs.data);
+    wglMakeCurrent(hdc, compute_ctx);
+    wglDeleteContext(dummy_ctx);
+}
+}
+else {
+
+}
+
 #import "GL";
 DXC :: #import "dxc_compiler";
 
@@ -1742,4 +1818,4 @@ else #if OS == .LINUX {
     #import "X11";
 }
 
-#import "Window_Creation";
+#import "Window_Type";

@@ -3,7 +3,7 @@ SIZE :: 69 * 105;
 main :: () {
     random_seed(420);
 
-    Gaco.init(null); // We can pass null here if we do not plan to render anything.
+    Gaco.init(INVALID_WINDOW); // We can pass this here if we do not plan to render anything.
 
     shader := Gaco.load_shader("compute.gaco");
     Gaco.set_shader(shader);
@@ -36,6 +36,7 @@ main :: () {
     Gaco.compile_shader("compute.hlsl", "compute.gaco", .Compute);
 }
 
+#import "Window_Type";
 #import "Basic";
 #import "Random";
 Gaco :: #import,dir "../../Gaco"(DEBUG=true);
