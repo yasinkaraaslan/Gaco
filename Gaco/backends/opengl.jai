@@ -87,7 +87,7 @@ is_valid :: (render_target: Render_Target) -> bool {
 }
 
 init :: (window: Window_Type) {
-    if window == INVALID_WINDOW {
+    if window == WT.INVALID_WINDOW {
         gl_create_compute_context(4,5, DEBUG);
     }
     else {
@@ -112,7 +112,7 @@ init :: (window: Window_Type) {
     glCreateProgramPipelines(1, *global_pipeline);
     glBindProgramPipeline(global_pipeline);
 
-    if window == INVALID_WINDOW return;
+    if window == WT.INVALID_WINDOW return;
 
     main_window = window;
 
@@ -180,7 +180,7 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
         storage_flags: GLbitfield;
 
         #if type == .Copy {
-            storage_flags |= GL_MAP_READ_BIT;
+            storage_flags |= GL_MAP_READ_BIT | GL_CLIENT_STORAGE_BIT;
         }
         else #if type != .Structured_RW if usage == .Default {
             storage_flags |= GL_DYNAMIC_STORAGE_BIT;
@@ -911,7 +911,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     if flags & .Copy {
         size := width * height * bytes_per_block * array_count_or_depth;
         glCreateBuffers(1, *texture.object);
-        glNamedBufferStorage(texture.object, size, null, GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT | GL_MAP_WRITE_BIT);
+        glNamedBufferStorage(texture.object, size, null, GL_MAP_READ_BIT | GL_CLIENT_STORAGE_BIT);
         texture.pbo_size = size;
         return texture;
     }
@@ -1818,4 +1818,4 @@ else #if OS == .LINUX {
     #import "X11";
 }
 
-#import "Window_Type";
+#import "Window_Creation";

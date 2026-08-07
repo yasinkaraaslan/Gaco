@@ -406,7 +406,7 @@ write_buffer :: inline (buffer: *Buffer, data: $T) {
 // So it's advised to use this only when debugging.
 read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *void {
     buffer_to_map: *Buffer(.Copy) = ---;
-    temp_copy_buffer: Buffer(.Copy) = ---;
+    temp_copy_buffer: Buffer(.Copy);
     defer if is_valid(temp_copy_buffer) destroy_buffer(*temp_copy_buffer);
 
     if copy_buffer_to_use {
