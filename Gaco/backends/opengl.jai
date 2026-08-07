@@ -1184,6 +1184,24 @@ timer_get_ms :: (timer: Timer) -> float {
     return cast(float)((end_timestamp - start_timestamp).(float64) / 1000000.0);
 }
 
+begin_debug_region :: (name: string) {
+    #if DEBUG {
+        glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, cast(GLsizei)name.count, name.data);
+    }
+}
+
+end_debug_region :: () {
+    #if DEBUG {
+        glPopDebugGroup();
+    }
+}
+
+insert_debug_marker :: (name: string) {
+    #if DEBUG {
+        glDebugMessageInsert(GL_DEBUG_SOURCE_APPLICATION, GL_DEBUG_TYPE_MARKER, 0, GL_DEBUG_SEVERITY_NOTIFICATION, cast(GLsizei)name.count, name.data);
+    }
+}
+
 #scope_file
 init_preloaded_modes :: () {
     // Depth Stencil Modes
@@ -1716,14 +1734,13 @@ gl_debug_callback :: (source: GLenum, type: GLenum, id: GLuint, severity: GLenum
     }
 }
 
-gl_set_debug_name :: (id: GLuint, type: GLenum, name: string) {
-    if id == 0 return;
-    glObjectLabel(type, id, cast(GLsizei) name.count, name.data);
 }
 
-}
-else {
-gl_set_debug_name :: (id: GLuint, type: GLenum, name: string) {}
+gl_set_debug_name :: (id: GLuint, type: GLenum, name: string) {
+    #if DEBUG {
+        if id == 0 return;
+        glObjectLabel(type, id, cast(GLsizei) name.count, name.data);
+    }
 }
 
 gl_create_compute_context :: (major: s32, minor: s32, debug: bool) {

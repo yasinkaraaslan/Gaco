@@ -136,6 +136,9 @@ init :: (window: HWND) {
     // There are very few cases where one wouldn't want depth testing.
     // So we enable it by default.
     set_depth_stencil_state(.Depth_Stencil);
+
+    // NOTE(Yasin): It's safe if this fails on older systems,
+    hr = IUnknown_QueryInterface(device_context, *uid(ID3DUserDefinedAnnotation_UUID), xx *annotation);
 }
 
 deinit :: () {
@@ -156,6 +159,7 @@ deinit :: () {
     safe_release_and_reset(*swap_chain);
     safe_release_and_reset(*device_context);
     safe_release_and_reset(*device);
+    safe_release_and_reset(*annotation);
 }
 
 create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usage := Buffer_Usage.Default, debug_name := "") -> Buffer(type) {
@@ -1074,6 +1078,28 @@ timer_get_ms :: (timer: Timer) -> float {
     return cast(float)((end_timestamp - start_timestamp).(float64) * 1000.0 / disjoint_data.Frequency.(float64));
 }
 
+begin_debug_region :: (name: string) {
+    #if DEBUG {
+        if !annotation return;
+        wide_name := utf8_to_wide(name,, temp);
+        annotation.BeginEvent(annotation, wide_name);
+    }
+}
+
+end_debug_region :: () {
+    #if DEBUG {
+        if !annotation return;
+        annotation.EndEvent(annotation);
+    }
+}
+
+insert_debug_marker :: (name: string) {
+    #if DEBUG {
+        if !annotation return;
+        wide_name := utf8_to_wide(name,, temp);
+        annotation.SetMarker(annotation, wide_name);
+    }
+}
 
 // You might need these for initializing ImGui etc.
 get_d3d_device :: () -> *ID3D11Device {
@@ -1103,6 +1129,8 @@ using D3D11_State: struct {
 
     // TODO(Yasin): Experiment more with stencil buffers to figure out the best options here.
     depth_stencil_modes: [#run enum_count(Depth_Stencil_Mode)]*ID3D11DepthStencilState;
+
+    annotation: *ID3DUserDefinedAnnotation;
 }
 
 box_from_rect :: inline (rect: Rect) -> D3D11_BOX {
@@ -1437,21 +1465,35 @@ log_messages_and_get_last :: () -> string, bool {
     return message_str, error;
 }
 
+}
+
 d3d11_set_debug_name :: (resource: *ID3D11DeviceChild, name: string) {
-    if !resource return;
-    ID3D11DeviceChild_SetPrivateData(
-        resource,
-        *uid(WKPDID_D3DDebugObjectName),
-        cast(u32) name.count,
-        name.data
-    );
+    #if DEBUG {
+        if !resource return;
+        ID3D11DeviceChild_SetPrivateData(
+            resource,
+            *uid(WKPDID_D3DDebugObjectName),
+            cast(u32) name.count,
+            name.data
+        );
+    }
 }
+
+ID3DUserDefinedAnnotation_UUID :: "b2daad8b-03d4-4dbf-95eb-32ab4b63d0ab";
+ID3DUserDefinedAnnotation :: struct {
+    #as using vtable: *ID3DUserDefinedAnnotation_VTable;
 }
-else {
-d3d11_set_debug_name :: (resource: *ID3D11DeviceChild, name: string) {}
+
+ID3DUserDefinedAnnotation_VTable :: struct {
+    using unknown_vtable: IUnknown_VTable;
+    BeginEvent:      #type (self: *ID3DUserDefinedAnnotation, name: *u16) -> s32 #c_call;
+    EndEvent:        #type (self: *ID3DUserDefinedAnnotation) -> s32 #c_call;
+    SetMarker:       #type (self: *ID3DUserDefinedAnnotation, name: *u16) -> void #c_call;
+    GetStatus:       #type (self: *ID3DUserDefinedAnnotation) -> BOOL #c_call;
 }
 
 #import "d3d11";
 #import "d3d_compiler";
 #import "dxgi";
 #import "Windows";
+#import "Windows_Utf8";

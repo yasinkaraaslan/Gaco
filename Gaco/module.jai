@@ -434,6 +434,11 @@ free :: (bytecode: Shader_Bytecode) {
     if bytecode.cs  free(bytecode.cs);
 }
 
+debug_region :: (name: string) #expand {
+    begin_debug_region(name);
+    `defer end_debug_region();
+}
+
 #if BACKEND == {
 case .D3D11;
 #load "backends/d3d11.jai";
