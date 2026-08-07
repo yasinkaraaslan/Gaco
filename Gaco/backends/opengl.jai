@@ -4,6 +4,7 @@ Shader :: struct {
     vs_program: GLuint;
     fs_program: GLuint;
     cs_program: GLuint;
+
     mappings: []Sampler_Mapping;
 }
 
@@ -187,12 +188,23 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
 }
 
 bind_buffer :: (buffer: Buffer(.Vertex), slot: u32 = 0, offset: u32 = 0) {
+    if slot == 0 {
+        bound_vertex_buffer.object = buffer.object;
+        bound_vertex_buffer.stride = buffer.stride;
+        bound_vertex_buffer.offset = offset;
+    }
+    else if slot == 1 {
+        bound_instance_buffer.object = buffer.object;
+        bound_instance_buffer.stride = buffer.stride;
+        bound_instance_buffer.offset = offset;
+    }
     glBindVertexBuffer(slot, buffer.object, offset, buffer.stride);
 }
 
 bind_buffer :: (buffer: Buffer(.Index)) {
     assert(buffer.stride == 2 || buffer.stride == 4);
     current_index_stride = buffer.stride;
+    bound_index_buffer = buffer.object;
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer.object);
 }
 
@@ -237,9 +249,6 @@ map_buffer :: (buffer: *Buffer, flags: Map_Flags) -> *void {
         access |= GL_MAP_WRITE_BIT;
 
         #if buffer.type != .Copy {
-            // Orphan the buffer
-            // This forces the driver to allocate a fresh chunk of memory.
-            glNamedBufferData(buffer.object, buffer.size, null, GL_DYNAMIC_DRAW);
             access |= GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_UNSYNCHRONIZED_BIT;
         }
     }
@@ -577,37 +586,16 @@ set_shader :: (shader: Shader) {
 
         // We have to rebind the vertex, index and instance buffer because we can't just change
         // the input vao and be done with it!!
-        Bound_Buffer :: struct {
-            object: GLuint;
-            stride: u32;
-            offset: u32;
-        }
 
-        // TODO(Yasin): Save the bound buffer ourselves so we don't have to call gl
-        get_bound :: (slot: u32) -> Bound_Buffer {
-            buffer: Bound_Buffer;
-            glGetIntegeri_v(GL_VERTEX_BINDING_BUFFER, slot, cast(*GLint)*buffer.object);
-            glGetIntegeri_v(GL_VERTEX_BINDING_OFFSET, slot, cast(*GLint)*buffer.offset);
-            glGetIntegeri_v(GL_VERTEX_BINDING_STRIDE, slot, cast(*GLint)*buffer.stride);
-            return buffer;
+        bind :: (buffer: GL_State.Bound_Buffer, slot: u32) {
+            glBindVertexBuffer(slot, buffer.object, buffer.offset, buffer.stride);
         }
-
-        bind :: (buffer: Bound_Buffer, slot: u32) {
-            if buffer.object {
-                glBindVertexBuffer(slot, buffer.object, buffer.offset, buffer.stride);
-            }
-        }
-
-        vertex_buffer := get_bound(0);
-        instance_buffer := get_bound(1);
-        index_buffer: GLuint;
-        glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, cast(*GLint)*index_buffer);
 
         glBindVertexArray(shader.input_vao);
 
-        bind(vertex_buffer, 0);
-        bind(instance_buffer, 1);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_buffer);
+        bind(bound_vertex_buffer, 0);
+        bind(bound_instance_buffer, 1);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bound_index_buffer);
 
         vs_mappings = shader.mappings;
         glUseProgramStages(global_pipeline, GL_VERTEX_SHADER_BIT, shader.vs_program);
@@ -621,19 +609,21 @@ set_shader :: (shader: Shader) {
         glUseProgramStages(global_pipeline, GL_COMPUTE_SHADER_BIT, shader.cs_program);
     }
 
-    glValidateProgramPipeline(global_pipeline);
-
-    is_valid: GLint;
-    glGetProgramPipelineiv(global_pipeline, GL_VALIDATE_STATUS, *is_valid);
-    if is_valid == 0 {
-        info_len: GLint;
-        glGetProgramPipelineiv(global_pipeline, GL_INFO_LOG_LENGTH, *info_len);
-        if info_len > 0 {
-            info_log := alloc(info_len,, temp);
-            glGetProgramPipelineInfoLog(global_pipeline, cast(GLsizei)info_len, null, info_log);
-            log_error("[Gaco] Pipeline validation failed: %", to_string(info_log));
+    #if DEBUG {
+        glValidateProgramPipeline(global_pipeline);
+        is_valid: GLint;
+        glGetProgramPipelineiv(global_pipeline, GL_VALIDATE_STATUS, *is_valid);
+        if is_valid == 0 {
+            info_len: GLint;
+            glGetProgramPipelineiv(global_pipeline, GL_INFO_LOG_LENGTH, *info_len);
+            if info_len > 0 {
+                info_log := alloc(info_len,, temp);
+                glGetProgramPipelineInfoLog(global_pipeline, cast(GLsizei)info_len, null, info_log);
+                log_error("[Gaco] Pipeline validation failed: %", to_string(info_log));
+            }
         }
     }
+
 }
 
 set_primitive_type :: (primitive_type: Primitive_Type) {
@@ -772,24 +762,32 @@ present :: (interval: u32 = 1) {
     if xx interval != current_swap_interval {
         set_swap_interval(xx interval);
     }
+    if current_msaa == 1 || (internal_width == window_width && internal_height == window_height) {
+        glBlitNamedFramebuffer(
+            custom_fbo, 0,
+            0, 0, window_width, window_height,
+            0, 0, window_width, window_height,
+            GL_COLOR_BUFFER_BIT,
+            GL_NEAREST // msaa resolve must use nearest
+        );
+    }
+    else { // Slow path if you are rendering at a different resolution with msaa
+        glBlitNamedFramebuffer(
+            custom_fbo, resolve_fbo,
+            0, 0, internal_width, internal_height,
+            0, 0, internal_width, internal_height,
+            GL_COLOR_BUFFER_BIT,
+            GL_NEAREST
+        );
 
-    glBlitNamedFramebuffer(
-        custom_fbo, resolve_fbo,
-        0, 0, internal_width, internal_height,
-        0, 0, internal_width, internal_height,
-        GL_COLOR_BUFFER_BIT,
-        GL_NEAREST // msaa resolve must use nearest
-    );
-
-    x, y, window_width, window_height := get_dimensions(main_window, false);
-
-    glBlitNamedFramebuffer(
-        resolve_fbo, 0,
-        0, 0, internal_width, internal_height,
-        0, 0, window_width, window_height,
-        GL_COLOR_BUFFER_BIT,
-        GL_LINEAR
-    );
+        glBlitNamedFramebuffer(
+            resolve_fbo, 0,
+            0, 0, internal_width, internal_height,
+            0, 0, window_width, window_height,
+            GL_COLOR_BUFFER_BIT,
+            GL_LINEAR
+        );
+    }
 
     #if OS == .WINDOWS {
         dc := wglGetCurrentDC();
@@ -873,11 +871,13 @@ resize :: (width: int, height: int, msaa: u32 = 4) -> render_target: Render_Targ
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, custom_fbo);
+    glViewport(0, 0, cast(GLuint)width, cast(GLuint)height);
 
     internal_width = xx width;
     internal_height = xx height;
+    _, _, window_width, window_height = get_dimensions(main_window, false);
+    current_msaa = msaa;
 
-    glViewport(0, 0, cast(GLuint)width, cast(GLuint)height);
     return .{custom_fbo, 1};
 }
 
@@ -1227,7 +1227,7 @@ init_preloaded_modes :: () {
         state := Rasterizer_State.{
             polygon_mode = GL_FILL,
             cull_mode = GL_BACK,
-            scissor_enabled = true,
+            scissor_enabled = false,
         };
         rasterizer_modes[Scissor] = state;
 
@@ -1607,10 +1607,24 @@ using GL_State: struct {
     // Sigh...
     resolve_fbo: GLuint;
     resolve_color_texture: GLuint;
+
     internal_width, internal_height: s32;
+    window_width, window_height: s32;
+    current_msaa: u32;
+
 
     global_pipeline: GLuint;
     empty_stupid_vao: GLuint; // Because we cannot bind a vertex buffer without a vao
+
+    Bound_Buffer :: struct {
+        object: GLuint;
+        stride: u32;
+        offset: u32;
+    }
+
+    bound_vertex_buffer: Bound_Buffer;
+    bound_instance_buffer: Bound_Buffer;
+    bound_index_buffer: GLuint;
 
     current_primitive_mode: GLuint = GL_TRIANGLES;
     current_index_stride: u32;
