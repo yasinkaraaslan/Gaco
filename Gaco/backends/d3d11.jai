@@ -141,8 +141,12 @@ deinit :: () {
     #if DEBUG
         log_messages_and_get_last();
 
-
-    // TODO(Yasin): Go through tables and destory them
+    for * state, desc: rasterizer_table
+        safe_release_and_reset(state);
+    for * state, desc: blend_table
+        safe_release_and_reset(state);
+    for * state, desc: depth_stencil_table
+        safe_release_and_reset(state);
 
     destroy_render_target(*window_render_target);
     safe_release_and_reset(*swap_chain);

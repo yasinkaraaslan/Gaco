@@ -1695,9 +1695,6 @@ using GL_State: struct {
 
 
     default_sampler: Sampler;
-    rasterizer_modes: [#run enum_count(Rasterizer_Mode)]Rasterizer_State;
-    blend_modes: [#run enum_count(Blend_Mode)]Blend_State;
-    depth_stencil_modes: [#run enum_count(Depth_Stencil_Mode)]Depth_Stencil_State;
 }
 
 GL_Format_Info :: struct {
