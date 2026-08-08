@@ -495,6 +495,10 @@ case .OpenGL;
 #load "backends/opengl.jai";
 #import,dir "modules/spirv_reflect";
 DXC :: #import,dir "modules/dxc_compiler";
+#if OS == .LINUX {
+    #import,dir "modules/EGL";
+}
+
 case .Metal;
 #load "backends/metal.jai";
 }

@@ -87,18 +87,26 @@ is_valid :: (render_target: Render_Target) -> bool {
 }
 
 init :: (window: Window_Type) {
-    if window == WT.INVALID_WINDOW {
-        gl_create_compute_context(4,5, DEBUG);
+    MAJOR :: 4;
+    MINOR :: 5;
+    #if OS == .WINDOWS {
+        if window == WT.INVALID_WINDOW {
+            wgl_create_compute_context(MAJOR, MINOR, DEBUG);
+        }
+        else {
+            wgl_create_context(window, major_version=MAJOR, minor_version=MINOR, debug=DEBUG);
+        }
     }
     else {
         debug := DEBUG;
 
         // Mesa has a bug. We can't enable it until it's fixed.
         // https://gitlab.freedesktop.org/mesa/mesa/-/work_items/16043
+        // NOTE(Yasin): Check if it still happens with egl
         #if OS == .LINUX
             debug = false;
 
-        gl_create_context(window, 4, 5, false, debug, 0);
+        egl_create_context(window, MAJOR, MINOR, debug);
     }
 
     gl_load(*gl);
@@ -170,10 +178,9 @@ deinit :: () {
         }
     }
     else #if OS == .LINUX {
-        gl_context := glXGetCurrentContext();
+        gl_context := eglGetCurrentContext();
         if gl_context {
-            glXMakeCurrent(x_global_display, 0, null);
-            glXDestroyContext(x_global_display, gl_context);
+            eglDestroyContext(egl_display, gl_context);
         }
     }
 
@@ -891,7 +898,7 @@ present :: (interval: u32 = 1) {
         SwapBuffers(dc);
     }
     else #if OS == .LINUX {
-        glXSwapBuffers(x_global_display, main_window);
+        eglSwapBuffers(egl_display, egl_surface);
     }
 }
 
@@ -1351,7 +1358,7 @@ set_swap_interval :: (interval: s32) {
         wglSwapIntervalEXT(interval);
     }
     else #if OS == .LINUX {
-        glXSwapIntervalEXT(x_global_display, main_window, interval);
+        eglSwapInterval(egl_display, interval);
     }
     current_swap_interval = interval;
 }
@@ -1700,6 +1707,9 @@ using GL_State: struct {
     global_pipeline: GLuint;
     empty_stupid_vao: GLuint; // Because we cannot bind a vertex buffer without a vao
 
+    egl_display: EGLDisplay;
+    egl_surface: EGLSurface;
+
     Bound_Buffer :: struct {
         object: GLuint;
         stride: u32;
@@ -1853,15 +1863,6 @@ gl_set_debug_name :: (id: GLuint, type: GLenum, name: string) {
     }
 }
 
-gl_create_compute_context :: (major: s32, minor: s32, debug: bool) {
-    #if OS == .WINDOWS {
-        wgl_create_compute_context(major, minor, debug);
-    }
-    else #if OS == .LINUX {
-        glx_create_compute_context(major, minor, debug);
-    }
-}
-
 #if OS == .WINDOWS {
 
 wgl_create_compute_context :: (major: s32, minor: s32, debug: bool) {
@@ -1922,52 +1923,84 @@ wgl_create_compute_context :: (major: s32, minor: s32, debug: bool) {
 }
 else #if OS == .LINUX {
 
-glx_create_compute_context :: (major: s32, minor: s32, debug: bool) {
-    config_attribs := s32.[
-        0
-    ];
+egl_create_context :: (window: Window_Type, major: s32, minor: s32, debug: bool) {
+    egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
 
-    num_configs: s32;
-
-    if !x_global_display
-        x_global_display = XOpenDisplay(null);
-
-    fbconfigs := glXChooseFBConfig(x_global_display, DefaultScreen(x_global_display), config_attribs.data, *num_configs);
-    if !fbconfigs || num_configs == 0 {
-        print("No suitable GLX config found.\n");
+    if !eglInitialize(egl_display, null, null) {
+        log_error("[Gaco] Failed to initialize EGL.");
         return;
     }
 
-    config := fbconfigs[0];
-    XFree(fbconfigs);
-
-    glXCreateContextAttribsARB := cast(
-        #type (dpy: *Display, config: GLXFBConfig, share_context: GLXContext, direct: s32, attrib_list: *s32) -> GLXContext #c_call
-    ) glXGetProcAddress("glXCreateContextAttribsARB".data);
-
-    if !glXCreateContextAttribsARB {
-        print("glXCreateContextAttribsARB not supported.\n");
-        return;
-    }
-    context_attribs := s32.[
-        GLX_CONTEXT_MAJOR_VERSION_ARB, major,
-        GLX_CONTEXT_MINOR_VERSION_ARB, minor,
-        GLX_CONTEXT_PROFILE_MASK_ARB,  GLX_CONTEXT_CORE_PROFILE_BIT_ARB,
-        0
-    ];
-
-    glx_context := glXCreateContextAttribsARB(x_global_display, config, null, 1, context_attribs.data);
-    if !glx_context {
-        print("Failed to create GLX context.\n");
+    if !eglBindAPI(EGL_OPENGL_API) {
+        log_error("[Gaco] Failed to bind OpenGL API.");
         return;
     }
 
-    // NOTE(Yasin): Passing 0 as the drawable technically violates the GLX spec,
-    // but works on Mesa / Xwayland for pure compute.
-    // If this ever crashes with an X11 BadMatch error on older native machines
-    // or proprietary Nvidia drivers, a 1x1 GLXPbuffer must be created and passed here.
-    if !glXMakeCurrent(x_global_display, 0, glx_context) {
-        print("Failed to make GLX context current.\n");
+    config: EGLConfig;
+    num_configs: EGLint;
+
+    if window == WT.INVALID_WINDOW {
+        compute_attribs := EGLint.[
+            EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+            EGL_NONE
+        ];
+        eglChooseConfig(egl_display, compute_attribs.data, *config, 1, *num_configs);
+    } else {
+        window_attribs := EGLint.[
+            EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+            EGL_RED_SIZE,   8,
+            EGL_GREEN_SIZE, 8,
+            EGL_BLUE_SIZE,  8,
+            EGL_ALPHA_SIZE, 8,
+            EGL_DEPTH_SIZE, 24,
+            EGL_NONE
+        ];
+        eglChooseConfig(egl_display, window_attribs.data, *config, 1, *num_configs);
+    }
+
+    if num_configs == 0 {
+        log_error("[Gaco] Failed to find a suitable EGL configuration.");
+        return;
+    }
+
+    context_attribs: [9] EGLint;
+    idx := 0;
+
+    context_attribs[idx] = EGL_CONTEXT_MAJOR_VERSION;           idx += 1;
+    context_attribs[idx] = major;                               idx += 1;
+    context_attribs[idx] = EGL_CONTEXT_MINOR_VERSION;           idx += 1;
+    context_attribs[idx] = minor;                               idx += 1;
+    context_attribs[idx] = EGL_CONTEXT_OPENGL_PROFILE_MASK;     idx += 1;
+    context_attribs[idx] = EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT; idx += 1;
+
+    if debug {
+        context_attribs[idx] = EGL_CONTEXT_FLAGS_KHR;            idx += 1;
+        context_attribs[idx] = EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR; idx += 1;
+    }
+
+    context_attribs[idx] = EGL_NONE;
+
+    egl_context := eglCreateContext(egl_display, config, EGL_NO_CONTEXT, context_attribs.data);
+    if !egl_context {
+        log_error("[Gaco] Failed to create EGL context.");
+        return;
+    }
+
+    egl_surface = EGL_NO_SURFACE;
+    if window != WT.INVALID_WINDOW {
+        egl_surface = eglCreateWindowSurface(egl_display, config, cast(EGLNativeWindowType) window, null);
+        if !egl_surface {
+            log_error("[Gaco] Failed to create window egl_surface.");
+            return;
+        }
+    }
+
+    if !eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context) {
+        if window == WT.INVALID_WINDOW {
+            log_error("[Gaco] Failed to make EGL context current. Does your driver support EGL_KHR_surfaceless_context?");
+        } else {
+            log_error("[Gaco] Failed to make EGL context current.");
+        }
         return;
     }
 }
