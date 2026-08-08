@@ -153,6 +153,53 @@ Compare_Op :: enum u8 {
     Always;
 }
 
+Stencil_Op :: enum u8 {
+    Keep :: 1;
+    Zero;
+    Replace;
+    Incr_Wrap;
+    Decr_Wrap;
+    Invert;
+    Incr;
+    Decr;
+}
+
+Blend :: enum u8 {
+    Zero;
+    One;
+    Src_Color;
+    Inv_Src_Color;
+    Src_Alpha;
+    Inv_Src_Alpha;
+    Dest_Alpha;
+    Inv_Dest_Alpha;
+    Dest_Color;
+    Inv_Dest_Color;
+    Src_Alpha_Sat;
+    Blend_Factor; // You pass it to the procedure
+    Inv_Blend_Factor;
+    Src1_Color;
+    Inv_Src1_Color;
+    Src1_Alpha;
+    Inv_Src1_Alpha;
+}
+
+Blend_Op :: enum u8 {
+    Add :: 1;
+    Subtract;
+    Rev_Subtract;
+    Min;
+    Max;
+}
+
+Blend_Write_Mask :: enum_flags u8 {
+    Red    :: 1;
+    Green  :: 2;
+    Blue   :: 4;
+    Alpha  :: 8;
+    All    :: 15;
+}
+
 // Helper struct for creating Draw_Indirect buffers.
 // This is same for all the rendering APIs out there.
 Draw_Indirect_Args :: struct(indexed: bool) {
@@ -184,18 +231,19 @@ Stencil_Face_Desc :: struct {
     compare_op := Compare_Op.Always;
 }
 
-Stencil_Op :: enum u8 {
-    Keep :: 1;
-    Zero;
-    Replace;
-    Incr_Wrap;
-    Decr_Wrap;
-    Invert;
-    Incr;
-    Decr;
+Blend_Desc :: struct {
+    blend_enable     := false;
+    src_blend        := Blend.One;
+    dest_blend       := Blend.Zero;
+    blend_op         := Blend_Op.Add;
+    src_blend_alpha  := Blend.One;
+    dest_blend_alpha := Blend.Zero;
+    blend_op_alpha   := Blend_Op.Add;
+    write_mask       := Blend_Write_Mask.All;
+    alpha_to_coverage_enable := false;
 }
 
-// If you want to add a mode, remember to do it on init_preloaded_modes as well.
+// These are handy prespecified modes if you need them
 Blend_Mode :: enum u32 {
     None;
     Alpha;
@@ -543,10 +591,10 @@ get_semantic_info :: (semantic: string) -> is_instance: bool, step_rate: u32 {
 }
 
 // FNV-1a
-get_plain_old_data_hash :: (desc: Depth_Stencil_Desc) -> u32 {
+get_plain_old_data_hash :: (my_struct_with_no_pointers: $T) -> u32 {
     data: []u8;
-    data.data = cast(*u8)*desc;
-    data.count = size_of(Depth_Stencil_Desc);
+    data.data = cast(*u8)*my_struct_with_no_pointers;
+    data.count = size_of(T);
 
     hash: u32 = 0x811c9dc5;
     prime :: 0x01000193;
@@ -558,8 +606,8 @@ get_plain_old_data_hash :: (desc: Depth_Stencil_Desc) -> u32 {
     return hash;
 }
 
-compare_ds :: (d0: Depth_Stencil_Desc, d1: Depth_Stencil_Desc) -> bool{
-    return memcmp(*d0, *d1, size_of(Depth_Stencil_Desc)) == 0;
+compare_plain_old_data :: (d0: $T, d1: T) -> bool{
+    return memcmp(*d0, *d1, size_of(T)) == 0;
 }
 
 TEXTURE_BYTES_PER_BLOCK :: u32.[

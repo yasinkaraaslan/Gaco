@@ -552,6 +552,17 @@ set_depth_stencil_state :: (mode: Depth_Stencil_Mode, stencil_ref: u8 = 0xFF) {
     ID3D11DeviceContext_OMSetDepthStencilState(device_context, depth_stencil_modes[mode], StencilRef=stencil_ref);
 }
 
+// More info about alpha to coverage
+// https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-blend-state#alpha-to-coverage
+
+set_blend_state :: (desc: Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
+    d3d11_set_blend(.[desc], alpha_to_coverage_enable, blend_factor, sample_mask, false);
+}
+
+// If you want to set them independently
+set_blend_state :: (descs: []Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
+    d3d11_set_blend(descs, alpha_to_coverage_enable, blend_factor, sample_mask, true);
+}
 
 set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
     found, state := table_find(*depth_stencil_table, desc);
@@ -1122,7 +1133,10 @@ using D3D11_State: struct {
     custom_depth_texture: Texture;
     // bound_render_target: *Render_Target;
 
-    depth_stencil_table: Table(Depth_Stencil_Desc, *ID3D11DepthStencilState, get_plain_old_data_hash, compare_ds);
+    depth_stencil_table: Table(Depth_Stencil_Desc, *ID3D11DepthStencilState, get_plain_old_data_hash, compare_plain_old_data);
+
+    // We can't use our own description because it doesn't map clearly
+    blend_table: Table(D3D11_BLEND_DESC, *ID3D11BlendState, get_plain_old_data_hash, compare_plain_old_data);
 
     rasterizer_modes: [#run enum_count(Rasterizer_Mode)]*ID3D11RasterizerState;
     blend_modes: [#run enum_count(Blend_Mode)]*ID3D11BlendState;
@@ -1350,60 +1364,109 @@ check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
         #insert code_to_insert_after_fail;
     }
 }
+d3d11_set_blend :: (descs: []Blend_Desc, alpha_to_coverage_enable: bool, blend_factor: Vector4, sample_mask: u32, independent_blend: bool) {
+
+    blend_desc := D3D11_BLEND_DESC.{
+        IndependentBlendEnable = xx independent_blend,
+        AlphaToCoverageEnable = xx alpha_to_coverage_enable,
+    };
+    blend_map := D3D11_BLEND_ARRAY;
+    for descs {
+        blend_desc.RenderTarget[it_index] = .{
+            BlendEnable = xx it.blend_enable,
+            SrcBlend = blend_map[it.src_blend],
+            DestBlend = blend_map[it.dest_blend],
+            BlendOp = xx it.blend_op,
+            SrcBlendAlpha = blend_map[it.src_blend_alpha],
+            DestBlendAlpha = blend_map[it.dest_blend_alpha],
+            BlendOpAlpha = xx it.blend_op_alpha,
+            RenderTargetWriteMask = xx it.write_mask,
+        };
+    }
+
+    found, state := table_find(*blend_table, blend_desc);
+    if !found {
+        ID3D11Device_CreateBlendState(device, *blend_desc, *state);
+        table_add(*blend_table, blend_desc, state);
+    }
+
+    ID3D11DeviceContext_OMSetBlendState(device_context, state, *blend_factor.component, sample_mask);
+
+}
 
 DXGI_MAPPING_ARRAY :: DXGI_FORMAT.[
-    .DXGI_FORMAT_UNKNOWN,               // Unknown
+    .UNKNOWN,               // Unknown
 
     // Fixed point formats
-    .DXGI_FORMAT_R8_UNORM,              // R8
-    .DXGI_FORMAT_R8G8_UNORM,            // RG8
-    .DXGI_FORMAT_R8G8B8A8_UNORM,        // RGBA8
-    .DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,   // RGBA8_SRGB
-    .DXGI_FORMAT_B8G8R8A8_UNORM,        // BGRA8
-    .DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,   // BGRA8_SRGB
-    .DXGI_FORMAT_B5G6R5_UNORM,          // B5G6R5
-    .DXGI_FORMAT_R10G10B10A2_UNORM,     // RGB10A2
-    .DXGI_FORMAT_R16_UNORM,             // R16
+    .R8_UNORM,              // R8
+    .R8G8_UNORM,            // RG8
+    .R8G8B8A8_UNORM,        // RGBA8
+    .R8G8B8A8_UNORM_SRGB,   // RGBA8_SRGB
+    .B8G8R8A8_UNORM,        // BGRA8
+    .B8G8R8A8_UNORM_SRGB,   // BGRA8_SRGB
+    .B5G6R5_UNORM,          // B5G6R5
+    .R10G10B10A2_UNORM,     // RGB10A2
+    .R16_UNORM,             // R16
 
     // Floating point formats
-    .DXGI_FORMAT_R16_FLOAT,             // R16F
-    .DXGI_FORMAT_R16G16_FLOAT,          // RG16F
-    .DXGI_FORMAT_R16G16B16A16_FLOAT,    // RGBA16F
-    .DXGI_FORMAT_R32_FLOAT,             // R32F
-    .DXGI_FORMAT_R32G32_FLOAT,          // RG32F
-    .DXGI_FORMAT_R32G32B32A32_FLOAT,    // RGBA32F
-    .DXGI_FORMAT_R11G11B10_FLOAT,       // RG11B10F
-    .DXGI_FORMAT_R9G9B9E5_SHAREDEXP,    // RGB9E5F
+    .R16_FLOAT,             // R16F
+    .R16G16_FLOAT,          // RG16F
+    .R16G16B16A16_FLOAT,    // RGBA16F
+    .R32_FLOAT,             // R32F
+    .R32G32_FLOAT,          // RG32F
+    .R32G32B32A32_FLOAT,    // RGBA32F
+    .R11G11B10_FLOAT,       // RG11B10F
+    .R9G9B9E5_SHAREDEXP,    // RGB9E5F
 
     // Integer formats
-    .DXGI_FORMAT_R16_SINT,              // R16I
-    .DXGI_FORMAT_R16G16_SINT,           // RG16I
-    .DXGI_FORMAT_R16G16B16A16_SINT,     // RGBA16I
-    .DXGI_FORMAT_R32_SINT,              // R32I
-    .DXGI_FORMAT_R32G32_SINT,           // RG32I
-    .DXGI_FORMAT_R32G32B32_SINT,        // RGB32I
-    .DXGI_FORMAT_R32G32B32A32_SINT,     // RGBA32I
+    .R16_SINT,              // R16I
+    .R16G16_SINT,           // RG16I
+    .R16G16B16A16_SINT,     // RGBA16I
+    .R32_SINT,              // R32I
+    .R32G32_SINT,           // RG32I
+    .R32G32B32_SINT,        // RGB32I
+    .R32G32B32A32_SINT,     // RGBA32I
 
     // Unsigned integer formats
-    .DXGI_FORMAT_R16_UINT,              // R16U
-    .DXGI_FORMAT_R16G16_UINT,           // RG16U
-    .DXGI_FORMAT_R16G16B16A16_UINT,     // RGBA16U
-    .DXGI_FORMAT_R32_UINT,              // R32U
-    .DXGI_FORMAT_R32G32_UINT,           // RG32U
-    .DXGI_FORMAT_R32G32B32_UINT,        // RGB32U
-    .DXGI_FORMAT_R32G32B32A32_UINT,     // RGBA32U
+    .R16_UINT,              // R16U
+    .R16G16_UINT,           // RG16U
+    .R16G16B16A16_UINT,     // RGBA16U
+    .R32_UINT,              // R32U
+    .R32G32_UINT,           // RG32U
+    .R32G32B32_UINT,        // RGB32U
+    .R32G32B32A32_UINT,     // RGBA32U
 
     // Block compression formats
-    .DXGI_FORMAT_BC6H_UF16,             // BC6U
-    .DXGI_FORMAT_BC6H_SF16,             // BC6S
-    .DXGI_FORMAT_BC7_UNORM,             // BC7
-    .DXGI_FORMAT_BC7_UNORM_SRGB,        // BC7_SRGB
+    .BC6H_UF16,             // BC6U
+    .BC6H_SF16,             // BC6S
+    .BC7_UNORM,             // BC7
+    .BC7_UNORM_SRGB,        // BC7_SRGB
 
     // Depth formats
-    .DXGI_FORMAT_D16_UNORM,             // D16
-    .DXGI_FORMAT_D24_UNORM_S8_UINT,     // D24S8
-    .DXGI_FORMAT_D32_FLOAT,             // D32F
-    .DXGI_FORMAT_D32_FLOAT_S8X24_UINT   // D32FS8
+    .D16_UNORM,             // D16
+    .D24_UNORM_S8_UINT,     // D24S8
+    .D32_FLOAT,             // D32F
+    .D32_FLOAT_S8X24_UINT   // D32FS8
+];
+
+D3D11_BLEND_ARRAY :: D3D11_BLEND.[
+    .ZERO,
+    .ONE,
+    .SRC_COLOR,
+    .INV_SRC_COLOR,
+    .SRC_ALPHA,
+    .INV_SRC_ALPHA,
+    .DEST_ALPHA,
+    .INV_DEST_ALPHA,
+    .DEST_COLOR,
+    .INV_DEST_COLOR,
+    .SRC_ALPHA_SAT,
+    .BLEND_FACTOR,
+    .INV_BLEND_FACTOR,
+    .SRC1_COLOR,
+    .INV_SRC1_COLOR,
+    .SRC1_ALPHA,
+    .INV_SRC1_ALPHA,
 ];
 
 #if DEBUG {
