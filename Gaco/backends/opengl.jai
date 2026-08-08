@@ -117,7 +117,7 @@ init :: (window: Window_Type) {
     main_window = window;
 
     glFrontFace(GL_CW); // We use clockwise for both OpenGL and D3D11
-    glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
+    glClipControl(GL_UPPER_LEFT, GL_ZERO_TO_ONE);
     glEnable(GL_SAMPLE_MASK);
 
     // So we can bind vertex buffers without setting a shader.
@@ -881,7 +881,7 @@ present :: (interval: u32 = 1) {
         glBlitNamedFramebuffer(
             custom_fbo, 0,
             0, 0, window_width, window_height,
-            0, 0, window_width, window_height,
+            0, window_height, window_width, 0,
             GL_COLOR_BUFFER_BIT,
             GL_NEAREST // msaa resolve must use nearest
         );
@@ -898,7 +898,7 @@ present :: (interval: u32 = 1) {
         glBlitNamedFramebuffer(
             resolve_fbo, 0,
             0, 0, internal_width, internal_height,
-            0, 0, window_width, window_height,
+            0, window_height, window_width, 0,
             GL_COLOR_BUFFER_BIT,
             GL_LINEAR
         );
@@ -966,8 +966,14 @@ resize :: (width: int, height: int, msaa: u32 = 4) -> render_target: Render_Targ
     }
 
     glCreateFramebuffers(1, *custom_fbo);
-    glCreateTextures(GL_TEXTURE_2D_MULTISAMPLE, 1, *custom_color_texture);
-    glTextureStorage2DMultisample(custom_color_texture, msaa, GL_RGBA8, xx width, xx height, GL_TRUE);
+    if msaa > 1 {
+        glCreateTextures(GL_TEXTURE_2D_MULTISAMPLE, 1, *custom_color_texture);
+        glTextureStorage2DMultisample(custom_color_texture, msaa, GL_RGBA8, xx width, xx height, GL_TRUE);
+    }
+    else {
+        glCreateTextures(GL_TEXTURE_2D, 1, *custom_color_texture);
+        glTextureStorage2D(custom_color_texture, 1, GL_RGBA8, xx width, xx height);
+    }
 
     glNamedFramebufferTexture(custom_fbo, GL_COLOR_ATTACHMENT0, custom_color_texture, 0);
 
@@ -1187,23 +1193,68 @@ copy_texture :: (from: Texture, to: *Texture, source_box: Box) {
     );
 }
 
-
-// TODO(Yasin): Use a scratch fbo to invert y
 copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u32 = 0) {
-    if render_target.framebuffer == 0 { // Back buffer
-        glNamedFramebufferReadBuffer(0, GL_BACK);
+    src_tex: GLuint = 0;
+    samples: GLint = 1;
+
+    if render_target.framebuffer == custom_fbo {
+        src_tex = custom_color_texture;
+        samples = cast(GLint) current_msaa;
     }
     else {
+        attachment := GL_COLOR_ATTACHMENT0 + index;
+        glGetNamedFramebufferAttachmentParameteriv(render_target.framebuffer, attachment, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, xx *src_tex);
+        glGetTextureLevelParameteriv(src_tex, 0, GL_TEXTURE_SAMPLES, *samples);
+    }
+
+    needs_resolve := samples > 1;
+
+    final_tex := src_tex;
+    temp_fbo: GLuint;
+
+    if needs_resolve {
+        glCreateFramebuffers(1, *temp_fbo);
+        glCreateTextures(GL_TEXTURE_2D, 1, *final_tex);
+
+        gl_info := GL_TEXTURE_MAP_ARRAY[to.format];
+        glTextureStorage2D(final_tex, 1, gl_info.internal_format, to.width, to.height);
+        glNamedFramebufferTexture(temp_fbo, GL_COLOR_ATTACHMENT0, final_tex, 0);
+
         glNamedFramebufferReadBuffer(render_target.framebuffer, GL_COLOR_ATTACHMENT0 + index);
+
+        glBlitNamedFramebuffer(
+            render_target.framebuffer, temp_fbo,
+            0, 0, xx to.width, xx to.height,
+            0, 0, xx to.width, xx to.height,
+            GL_COLOR_BUFFER_BIT,
+            GL_NEAREST
+        );
+    }
+
+    defer if needs_resolve {
+        glDeleteFramebuffers(1, *temp_fbo);
+        glDeleteTextures(1, *final_tex);
     }
 
     if to.flags & .Copy {
         glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
-        glReadPixels(0, 0, to.width, to.height, to.pixel_format, to.pixel_type, null);
+
+        glGetTextureSubImage(
+            final_tex, 0,
+            0, 0, 0,
+            to.width, to.height, 1,
+            to.pixel_format, to.pixel_type,
+            to.pbo_size, null
+        );
+
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     }
     else {
-        glCopyTextureSubImage2D(to.object, 0, 0, 0, 0, 0, to.width, to.height);
+        glCopyImageSubData(
+            final_tex, GL_TEXTURE_2D, 0, 0, 0, 0,
+            to.object, GL_TEXTURE_2D, 0, 0, 0, 0,
+            to.width, to.height, 1
+        );
     }
 }
 
