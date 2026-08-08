@@ -1,21 +1,11 @@
-*.lib
 *.exp
 *.obj
 *.pdb
 *.exe
-*.dxfs
-*.dxvs
-*.glfs
 *.rdi
-*.glvs
-*.spfs
-*.spvs
-/spirv_reflect/.build
-# *.dll
 *.ilk
-*.dxcs
-*.spcs
 examples/screenshot/screenshot.png
 *.gaco
 *.o
 .added_strings_*
+.build*

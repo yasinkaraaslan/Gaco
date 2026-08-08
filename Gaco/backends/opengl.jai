@@ -123,7 +123,18 @@ init :: (window: Window_Type) {
 
     main_window = window;
 
+    // NOTE(Yasin): Setting this on its own just makes the output upside down so
+    // we reinvert it when blitting our custom framebuffer to the backbuffer. (check present())
+    //
+    // So why set this then? Because otherwise, if you draw to a texture and try to read it from
+    // cpu or sample it from gpu, the memory layout would be different between D3D11 and OpenGL, which is annoying.
+    //
+    // Now everything seems to work correctly with our trick, but if a library directly plugs into OpenGL (such as ImGui)
+    // and assumes GL_UPPER_LEFT means the screen is upside down, we might get unwanted effects.
+    // You have to make sure the library doesn't depend on this value or better yet, maybe not plug something directly to
+    // a backend since the purpose of this module is to abstract away all the weird differences and annoyances.
     glClipControl(GL_UPPER_LEFT, GL_ZERO_TO_ONE);
+
     glEnable(GL_SAMPLE_MASK);
 
     // So we can bind vertex buffers without setting a shader.
@@ -1846,7 +1857,7 @@ gl_create_compute_context :: (major: s32, minor: s32, debug: bool) {
     #if OS == .WINDOWS {
         wgl_create_compute_context(major, minor, debug);
     }
-    else {
+    else #if OS == .LINUX {
         glx_create_compute_context(major, minor, debug);
     }
 }
@@ -1909,7 +1920,7 @@ wgl_create_compute_context :: (major: s32, minor: s32, debug: bool) {
 }
 
 }
-else {
+else #if OS == .LINUX {
 
 glx_create_compute_context :: (major: s32, minor: s32, debug: bool) {
     config_attribs := s32.[
