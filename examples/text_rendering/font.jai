@@ -1,5 +1,7 @@
 MAX_CHARACTERS :: 512;
 
+Blend_Alpha :: Gaco.Blend_Desc.{blend_enable=true, src_blend = .Src_Alpha, dest_blend = .Inv_Src_Alpha};
+
 fonts_init :: () {
     error := FT_Init_FreeType(*FtLibrary);
     Shader = Gaco.load_shader("shaders/text.gaco");
@@ -166,8 +168,8 @@ fonts_window_resize :: (width: int, height: int) {
 draw_text :: (using font: *Font, text: string, position: Vector2, color := Vector4.{1,1,1,1}) {
     num_chars := prepare_quads_for_text(font, text, position);
 
-    Gaco.set_blend_state(.Alpha);
-    Gaco.set_rasterizer_state(.No_Cull);
+    Gaco.set_blend_state(Blend_Alpha);
+    Gaco.set_rasterizer_state(.{cull_mode=.None});
 
     Gaco.set_shader(Shader);
     Gaco.bind_buffer(VertexBuffer);
@@ -182,7 +184,7 @@ draw_text :: (using font: *Font, text: string, position: Vector2, color := Vecto
     }
 
     Gaco.draw(true, num_chars * 6);
-    Gaco.set_blend_state(.None);
+    Gaco.set_blend_state(.{blend_enable=false});
 }
 
 // NOTE(Yasin): Can only do ASCII

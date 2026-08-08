@@ -74,9 +74,9 @@ main :: () {
         update_camera(transform_buffer);
         Gaco.clear(.{0.5, 0.3, 0.3, 1.0});
 
-        Gaco.set_rasterizer_state(.Front_Cull);
+        Gaco.set_rasterizer_state(.{cull_mode=.Front});
         Gaco.draw(true, indices.count);
-        Gaco.set_rasterizer_state(.Default);
+        Gaco.set_rasterizer_state(.{});
 
         Gaco.present();
     }

@@ -266,28 +266,6 @@ Blend_Desc :: struct {
     alpha_to_coverage_enable := false;
 }
 
-// These are handy prespecified modes if you need them
-Blend_Mode :: enum u32 {
-    None;
-    Alpha;
-}
-
-Rasterizer_Mode :: enum u32 {
-    Default;
-    Front_Cull;
-    No_Cull;
-    Scissor;
-}
-
-Depth_Stencil_Mode :: enum u32 {
-    Depth_Stencil;
-    No_Depth;
-    No_Depth_Mask;
-    Depth_Reversed;
-    No_Stencil;
-    No_Depth_Stencil;
-}
-
 Clear_Flags :: enum_flags u32 {
     None :: 0;
     Color :: 1;

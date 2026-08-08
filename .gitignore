@@ -18,3 +18,4 @@
 examples/screenshot/screenshot.png
 *.gaco
 *.o
+.added_strings_*

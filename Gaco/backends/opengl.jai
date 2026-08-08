@@ -116,7 +116,6 @@ init :: (window: Window_Type) {
 
     main_window = window;
 
-    glFrontFace(GL_CW); // We use clockwise for both OpenGL and D3D11
     glClipControl(GL_UPPER_LEFT, GL_ZERO_TO_ONE);
     glEnable(GL_SAMPLE_MASK);
 
@@ -124,11 +123,9 @@ init :: (window: Window_Type) {
     glCreateVertexArrays(1, *empty_stupid_vao);
     glBindVertexArray(empty_stupid_vao);
 
-    init_preloaded_modes();
-
-    set_depth_stencil_state(.Depth_Stencil);
-    set_rasterizer_state(.Default);
-    set_blend_state(.None);
+    set_depth_stencil_state(.{});
+    set_rasterizer_state(.{});
+    set_blend_state(.{blend_enable=false});
 
 
     set_swap_interval(0);
@@ -651,46 +648,12 @@ set_primitive_type :: (primitive_type: Primitive_Type) {
 }
 
 set_scissor :: (using rect: Rect) {
-    glScissor(x, window_height - y -  height, cast(u32)width, cast(u32)height);
+    glScissor(x, y, cast(u32)width, cast(u32)height);
 }
 
 set_viewport :: (x: float, y: float, width: float, height: float, near_depth := 0.0, far_depth := 1.0) {
     glViewportIndexedf(0, x, y, width, height);
     glDepthRangef(near_depth, far_depth);
-}
-
-set_rasterizer_state :: (mode: Rasterizer_Mode) {
-    state := rasterizer_modes[mode];
-    glPolygonMode(GL_FRONT_AND_BACK, state.polygon_mode);
-    if state.cull_mode {
-        glEnable(GL_CULL_FACE);
-        glCullFace(state.cull_mode);
-    }
-    else {
-        glDisable(GL_CULL_FACE);
-    }
-    if state.scissor_enabled {
-        glEnable(GL_SCISSOR_TEST);
-    }
-    else {
-        glDisable(GL_SCISSOR_TEST);
-    }
-}
-
-set_blend_state :: (mode: Blend_Mode) {
-    state := blend_modes[mode];
-    if state.enabled {
-        glEnable(GL_BLEND);
-        using state;
-        glBlendFuncSeparate(src_blend, dst_blend, src_blend_alpha, dst_blend_alpha);
-        glBlendEquationSeparate(blend_op, blend_op_alpha);
-
-        glColorMask(red, green, blue, alpha);
-
-    }
-    else {
-        glDisable(GL_BLEND);
-    }
 }
 
 set_rasterizer_state :: (desc: Rasterizer_Desc) {
@@ -733,11 +696,6 @@ set_rasterizer_state :: (desc: Rasterizer_Desc) {
     } else {
         glDisable(GL_LINE_SMOOTH);
     }
-}
-
-set_depth_stencil_state :: (mode: Depth_Stencil_Mode, stencil_ref: u8 = 0xFF) {
-    desc := depth_stencil_modes[mode];
-    set_depth_stencil_state(desc, stencil_ref);
 }
 
 set_blend_state :: (desc: Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
@@ -1363,77 +1321,6 @@ insert_debug_marker :: (name: string) {
 }
 
 #scope_file
-init_preloaded_modes :: () {
-    // Depth Stencil Modes
-    {
-        using Depth_Stencil_Mode;
-        state := Depth_Stencil_State.{
-            depth_enable = true,
-            depth_write = true,
-            depth_func = .Less_Equal,
-            stencil_enable = true
-        };
-        depth_stencil_modes[Depth_Stencil] = state;
-
-        state.depth_func = .Greater_Equal;
-        depth_stencil_modes[Depth_Reversed] = state;
-
-        state.depth_func = .Less_Equal;
-        state.depth_write = false;
-        depth_stencil_modes[No_Depth_Mask] = state;
-
-        state.depth_enable = false;
-        depth_stencil_modes[No_Depth] = state;
-
-        state.stencil_enable = false;
-        depth_stencil_modes[No_Depth_Stencil] = state;
-
-        state.depth_enable = true;
-        state.depth_write = true;
-        state.depth_func = .Less_Equal;
-        depth_stencil_modes[No_Stencil] = state;
-    }
-
-    // Rasterizer Modes
-    {
-        using Rasterizer_Mode;
-        state := Rasterizer_State.{
-            polygon_mode = GL_FILL,
-            cull_mode = GL_BACK,
-            scissor_enabled = false,
-        };
-        rasterizer_modes[Scissor] = state;
-
-        state.scissor_enabled = false;
-        rasterizer_modes[Default] = state;
-
-        state.cull_mode = GL_FRONT;
-        rasterizer_modes[Front_Cull] = state;
-
-        state.cull_mode = 0; // Special
-        rasterizer_modes[No_Cull] = state;
-    }
-
-    // Blend Modes
-    {
-        using Blend_Mode;
-        state := Blend_State.{
-            enabled=true,
-            src_blend = GL_SRC_ALPHA,
-            dst_blend = GL_ONE_MINUS_SRC_ALPHA,
-            src_blend_alpha = GL_ONE,
-            dst_blend_alpha = GL_ZERO,
-            blend_op = GL_FUNC_ADD,
-            blend_op_alpha = GL_FUNC_ADD,
-            red = true, green = true, blue = true, alpha = true
-        };
-
-        blend_modes[Alpha] = state;
-
-        state.enabled = false;
-        blend_modes[None] = state;
-    }
-}
 
 set_swap_interval :: (interval: s32) {
     #if OS == .WINDOWS {
