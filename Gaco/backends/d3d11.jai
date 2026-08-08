@@ -540,21 +540,46 @@ set_viewport :: (x: float, y: float, width: float, height: float, near_depth := 
     ID3D11DeviceContext_RSSetViewports(device_context, 1, *vp);
 }
 
-set_blend_state :: (mode: Blend_Mode) {
-    ID3D11DeviceContext_OMSetBlendState(device_context, blend_modes[mode], null, SampleMask=0xFFFFFFFF);
-}
 
 set_rasterizer_state :: (mode: Rasterizer_Mode) {
     ID3D11DeviceContext_RSSetState(device_context, rasterizer_modes[mode]);
+}
+
+set_blend_state :: (mode: Blend_Mode) {
+    ID3D11DeviceContext_OMSetBlendState(device_context, blend_modes[mode], null, SampleMask=0xFFFFFFFF);
 }
 
 set_depth_stencil_state :: (mode: Depth_Stencil_Mode, stencil_ref: u8 = 0xFF) {
     ID3D11DeviceContext_OMSetDepthStencilState(device_context, depth_stencil_modes[mode], StencilRef=stencil_ref);
 }
 
+set_rasterizer_state :: (desc: Rasterizer_Desc) {
+    found, state := table_find(*rasterizer_table, desc);
+
+    if !found {
+        rasterizer_desc := D3D11_RASTERIZER_DESC.{
+            FillMode              = cast(D3D11_FILL_MODE) desc.fill_mode,
+            CullMode              = cast(D3D11_CULL_MODE) desc.cull_mode,
+            FrontCounterClockwise = xx desc.front_counter_clockwise,
+            DepthBias             = desc.depth_bias,
+            DepthBiasClamp        = desc.depth_bias_clamp,
+            SlopeScaledDepthBias  = desc.slope_scaled_depth_bias,
+            DepthClipEnable       = xx desc.depth_clip_enable,
+            ScissorEnable         = xx desc.scissor_enable,
+            MultisampleEnable     = xx desc.multisample_enable,
+            AntialiasedLineEnable = xx desc.antialiased_line_enable,
+        };
+
+        hr := ID3D11Device_CreateRasterizerState(device, *rasterizer_desc, *state);
+        table_add(*rasterizer_table, desc, state);
+    }
+
+    // 'device_context' is your ID3D11DeviceContext
+    ID3D11DeviceContext_RSSetState(device_context, state);
+}
+
 // More info about alpha to coverage
 // https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-blend-state#alpha-to-coverage
-
 set_blend_state :: (desc: Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
     d3d11_set_blend(.[desc], alpha_to_coverage_enable, blend_factor, sample_mask, false);
 }
@@ -1133,10 +1158,13 @@ using D3D11_State: struct {
     custom_depth_texture: Texture;
     // bound_render_target: *Render_Target;
 
-    depth_stencil_table: Table(Depth_Stencil_Desc, *ID3D11DepthStencilState, get_plain_old_data_hash, compare_plain_old_data);
+    rasterizer_table: Table(Rasterizer_Desc, *ID3D11RasterizerState, get_plain_old_data_hash, compare_plain_old_data);
 
     // We can't use our own description because it doesn't map clearly
     blend_table: Table(D3D11_BLEND_DESC, *ID3D11BlendState, get_plain_old_data_hash, compare_plain_old_data);
+
+    depth_stencil_table: Table(Depth_Stencil_Desc, *ID3D11DepthStencilState, get_plain_old_data_hash, compare_plain_old_data);
+
 
     rasterizer_modes: [#run enum_count(Rasterizer_Mode)]*ID3D11RasterizerState;
     blend_modes: [#run enum_count(Blend_Mode)]*ID3D11BlendState;
@@ -1364,6 +1392,7 @@ check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
         #insert code_to_insert_after_fail;
     }
 }
+
 d3d11_set_blend :: (descs: []Blend_Desc, alpha_to_coverage_enable: bool, blend_factor: Vector4, sample_mask: u32, independent_blend: bool) {
 
     blend_desc := D3D11_BLEND_DESC.{

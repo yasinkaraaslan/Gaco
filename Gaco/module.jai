@@ -192,6 +192,30 @@ Blend_Op :: enum u8 {
     Max;
 }
 
+Fill_Mode :: enum u8 {
+    Wireframe :: 2;
+    Solid     :: 3;
+}
+
+Cull_Mode :: enum u8 {
+    None  :: 1;
+    Front;
+    Back;
+}
+
+Rasterizer_Desc :: struct {
+    fill_mode               := Fill_Mode.Solid;
+    cull_mode               := Cull_Mode.Back;
+    front_counter_clockwise := false;
+    depth_bias              : s32 = 0;
+    depth_bias_clamp        := 0.0;
+    slope_scaled_depth_bias := 0.0;
+    depth_clip_enable       := true;
+    scissor_enable          := false;
+    multisample_enable      := false;
+    antialiased_line_enable := false;
+}
+
 Blend_Write_Mask :: enum_flags u8 {
     Red    :: 1;
     Green  :: 2;
