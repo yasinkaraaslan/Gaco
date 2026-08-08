@@ -661,7 +661,7 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
 
     if is_valid(depth_stencil_texture) {
         ds_desc: D3D11_DEPTH_STENCIL_VIEW_DESC;
-        ds_desc.Format = DXGI_MAPPING_ARRAY[depth_stencil_texture.format];
+        ds_desc.Format = DXGI_FORMAT_MAP[depth_stencil_texture.format];
         if depth_stencil_texture.flags & .Multisample {
             ds_desc.ViewDimension = .D3D11_DSV_DIMENSION_TEXTURE2DMS;
         }
@@ -727,8 +727,8 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     usage := D3D11_USAGE.DEFAULT;
     access_flags: D3D11_CPU_ACCESS_FLAG;
 
-    d3d11_format := DXGI_MAPPING_ARRAY[format];
-    srv_format := d3d11_format;
+    dxgi_format := DXGI_FORMAT_MAP[format];
+    srv_format := dxgi_format;
 
     if flags & .Copy {
         // Do not set any bind_flags for staging
@@ -747,7 +747,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
         if flags & .Sampled {
             bind_flags |= .SHADER_RESOURCE;
             if depth_stencil {
-                d3d11_format, srv_format = get_depth_format_variants(format);
+                dxgi_format, srv_format = get_depth_format_variants(format);
             }
         }
         if generate_mips {
@@ -761,7 +761,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
         misc_flags |= .TEXTURECUBE;
 
 
-    if d3d11_format == .DXGI_FORMAT_UNKNOWN {
+    if dxgi_format == .DXGI_FORMAT_UNKNOWN {
         log_error("[Gaco] Error while creating texture: Format % is Unknown or unsupported.", format);
         return .{};
     }
@@ -823,7 +823,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
             Height = height,
             Depth = array_count_or_depth,
             MipLevels = mip_levels_or_msaa,
-            Format = d3d11_format,
+            Format = dxgi_format,
             BindFlags = bind_flags,
             MiscFlags = misc_flags,
             Usage = usage,
@@ -849,7 +849,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
             SampleDesc.Count = msaa,
             MipLevels = mip_levels,
             ArraySize = array_count_or_depth,
-            Format = d3d11_format,
+            Format = dxgi_format,
             BindFlags = bind_flags,
             MiscFlags = misc_flags,
             Usage = usage,
@@ -1370,7 +1370,7 @@ d3d11_set_blend :: (descs: []Blend_Desc, alpha_to_coverage_enable: bool, blend_f
         IndependentBlendEnable = xx independent_blend,
         AlphaToCoverageEnable = xx alpha_to_coverage_enable,
     };
-    blend_map := D3D11_BLEND_ARRAY;
+    blend_map := D3D11_BLEND_MAP;
     for descs {
         blend_desc.RenderTarget[it_index] = .{
             BlendEnable = xx it.blend_enable,
@@ -1394,7 +1394,7 @@ d3d11_set_blend :: (descs: []Blend_Desc, alpha_to_coverage_enable: bool, blend_f
 
 }
 
-DXGI_MAPPING_ARRAY :: DXGI_FORMAT.[
+DXGI_FORMAT_MAP :: DXGI_FORMAT.[
     .UNKNOWN,               // Unknown
 
     // Fixed point formats
@@ -1449,7 +1449,7 @@ DXGI_MAPPING_ARRAY :: DXGI_FORMAT.[
     .D32_FLOAT_S8X24_UINT   // D32FS8
 ];
 
-D3D11_BLEND_ARRAY :: D3D11_BLEND.[
+D3D11_BLEND_MAP :: D3D11_BLEND.[
     .ZERO,
     .ONE,
     .SRC_COLOR,

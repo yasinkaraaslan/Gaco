@@ -118,6 +118,7 @@ init :: (window: Window_Type) {
 
     glFrontFace(GL_CW); // We use clockwise for both OpenGL and D3D11
     glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
+    glEnable(GL_SAMPLE_MASK);
 
     // So we can bind vertex buffers without setting a shader.
     glCreateVertexArrays(1, *empty_stupid_vao);
@@ -693,11 +694,73 @@ set_depth_stencil_state :: (mode: Depth_Stencil_Mode, stencil_ref: u8 = 0xFF) {
     set_depth_stencil_state(desc, stencil_ref);
 }
 
+set_blend_state :: (desc: Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
+    if desc.blend_enable {
+        glEnable(GL_BLEND);
+
+        glBlendFuncSeparate(
+            GL_BLEND_MAP[desc.src_blend], GL_BLEND_MAP[desc.dest_blend],
+            GL_BLEND_MAP[desc.src_blend_alpha], GL_BLEND_MAP[desc.dest_blend_alpha]
+        );
+
+        glBlendEquationSeparate(
+            GL_BLEND_OP_MAP[desc.blend_op], GL_BLEND_OP_MAP[desc.blend_op_alpha]
+        );
+    } else {
+        glDisable(GL_BLEND);
+    }
+
+    glBlendColor(blend_factor.x, blend_factor.y, blend_factor.z, blend_factor.w);
+
+    r := cast(GLboolean) ((desc.write_mask & .Red)   != 0);
+    g := cast(GLboolean) ((desc.write_mask & .Green) != 0);
+    b := cast(GLboolean) ((desc.write_mask & .Blue)  != 0);
+    a := cast(GLboolean) ((desc.write_mask & .Alpha) != 0);
+    glColorMask(r, g, b, a);
+
+    glSampleMaski(0, sample_mask);
+    if alpha_to_coverage_enable glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    else glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+}
+
+set_blend_state :: (descs: []Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
+    for descs {
+        i := cast(GLuint) it_index;
+
+        if it.blend_enable {
+            glEnablei(GL_BLEND, i);
+
+            glBlendFuncSeparatei(i,
+                GL_BLEND_MAP[it.src_blend], GL_BLEND_MAP[it.dest_blend],
+                GL_BLEND_MAP[it.src_blend_alpha], GL_BLEND_MAP[it.dest_blend_alpha]
+            );
+
+            glBlendEquationSeparatei(i,
+                GL_BLEND_OP_MAP[it.blend_op], GL_BLEND_OP_MAP[it.blend_op_alpha]
+            );
+        } else {
+            glDisablei(GL_BLEND, i);
+        }
+
+        r := cast(GLboolean) ((it.write_mask & .Red)   != 0);
+        g := cast(GLboolean) ((it.write_mask & .Green) != 0);
+        b := cast(GLboolean) ((it.write_mask & .Blue)  != 0);
+        a := cast(GLboolean) ((it.write_mask & .Alpha) != 0);
+        glColorMaski(i, r, g, b, a);
+    }
+
+    glBlendColor(blend_factor.x, blend_factor.y, blend_factor.z, blend_factor.w);
+    glSampleMaski(0, sample_mask);
+
+    if alpha_to_coverage_enable glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    else glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+}
+
 set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
     if desc.depth_enable {
         glEnable(GL_DEPTH_TEST);
         glDepthMask(desc.depth_write);
-        glDepthFunc(GL_COMPARISON_ARRAY[desc.depth_func]);
+        glDepthFunc(GL_COMPARISON_MAP[desc.depth_func]);
     }
     else {
         glDisable(GL_DEPTH_TEST);
@@ -709,8 +772,8 @@ set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
 
         func_and_op :: (using face_desc: Stencil_Face_Desc, front: bool) #expand {
             face := ifx front GL_FRONT.(u32) else GL_BACK;
-            glStencilFuncSeparate(face, GL_COMPARISON_ARRAY[compare_op], stencil_ref, desc.stencil_read_mask);
-            glStencilOpSeparate(face, GL_STENCIL_OP_ARRAY[fail_op], GL_STENCIL_OP_ARRAY[depth_fail_op], GL_STENCIL_OP_ARRAY[pass_op]);
+            glStencilFuncSeparate(face, GL_COMPARISON_MAP[compare_op], stencil_ref, desc.stencil_read_mask);
+            glStencilOpSeparate(face, GL_STENCIL_OP_MAP[fail_op], GL_STENCIL_OP_MAP[depth_fail_op], GL_STENCIL_OP_MAP[pass_op]);
         }
 
         func_and_op(desc.front_face, true);
@@ -1109,7 +1172,7 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
 
     if compare_op != .Never {
         glSamplerParameteri(sampler.object, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
-        glSamplerParameteri(sampler.object, GL_TEXTURE_COMPARE_FUNC, xx GL_COMPARISON_ARRAY[compare_op]);
+        glSamplerParameteri(sampler.object, GL_TEXTURE_COMPARE_FUNC, xx GL_COMPARISON_MAP[compare_op]);
     }
 
     glSamplerParameteri(sampler.object, GL_TEXTURE_MIN_FILTER, gl_filtering);
@@ -1714,9 +1777,39 @@ GL_TEXTURE_MAP_ARRAY :: GL_Format_Info.[
     .{ GL_DEPTH32F_STENCIL8, GL_DEPTH_STENCIL,   GL_FLOAT_32_UNSIGNED_INT_24_8_REV } // D32FS8
 ];
 
-GL_COMPARISON_ARRAY :: GLenum.[GL_NONE, GL_NEVER, GL_LESS, GL_EQUAL, GL_LEQUAL, GL_GREATER, GL_NOTEQUAL, GL_GEQUAL, GL_ALWAYS];
+GL_COMPARISON_MAP :: GLenum.[GL_NONE, GL_NEVER, GL_LESS, GL_EQUAL, GL_LEQUAL, GL_GREATER, GL_NOTEQUAL, GL_GEQUAL, GL_ALWAYS];
 
-GL_STENCIL_OP_ARRAY :: GLenum.[GL_NONE, GL_KEEP, GL_ZERO, GL_REPLACE, GL_INCR_WRAP, GL_DECR_WRAP, GL_INVERT, GL_INCR, GL_DECR];
+GL_STENCIL_OP_MAP :: GLenum.[GL_NONE, GL_KEEP, GL_ZERO, GL_REPLACE, GL_INCR_WRAP, GL_DECR_WRAP, GL_INVERT, GL_INCR, GL_DECR];
+
+GL_BLEND_MAP :: GLenum.[
+    GL_ZERO,
+    GL_ONE,
+    GL_SRC_COLOR,
+    GL_ONE_MINUS_SRC_COLOR,
+    GL_SRC_ALPHA,
+    GL_ONE_MINUS_SRC_ALPHA,
+    GL_DST_ALPHA,
+    GL_ONE_MINUS_DST_ALPHA,
+    GL_DST_COLOR,
+    GL_ONE_MINUS_DST_COLOR,
+    GL_SRC_ALPHA_SATURATE,
+    GL_CONSTANT_COLOR,
+    GL_ONE_MINUS_CONSTANT_COLOR,
+    GL_SRC1_COLOR,
+    GL_ONE_MINUS_SRC1_COLOR,
+    GL_SRC1_ALPHA,
+    GL_ONE_MINUS_SRC1_ALPHA,
+];
+
+GL_BLEND_OP_MAP :: GLenum.[
+    GL_NONE,
+    GL_FUNC_ADD,
+    GL_FUNC_SUBTRACT,
+    GL_FUNC_REVERSE_SUBTRACT,
+    GL_MIN,
+    GL_MAX,
+];
+
 
 #if DEBUG {
 gl_debug_callback :: (source: GLenum, type: GLenum, id: GLuint, severity: GLenum, length: GLsizei, message: *u8, userParam: *void) #c_call {
