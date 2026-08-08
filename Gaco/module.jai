@@ -212,7 +212,6 @@ Rasterizer_Desc :: struct {
     slope_scaled_depth_bias := 0.0;
     depth_clip_enable       := true;
     scissor_enable          := false;
-    multisample_enable      := false;
     antialiased_line_enable := false;
 }
 

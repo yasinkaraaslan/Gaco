@@ -566,7 +566,7 @@ set_rasterizer_state :: (desc: Rasterizer_Desc) {
             SlopeScaledDepthBias  = desc.slope_scaled_depth_bias,
             DepthClipEnable       = xx desc.depth_clip_enable,
             ScissorEnable         = xx desc.scissor_enable,
-            MultisampleEnable     = xx desc.multisample_enable,
+            MultisampleEnable     = .TRUE, // https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ns-d3d11-d3d11_rasterizer_desc
             AntialiasedLineEnable = xx desc.antialiased_line_enable,
         };
 
@@ -597,23 +597,23 @@ set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
 
         // Same enum values for all
         d3d11_desc := D3D11_DEPTH_STENCIL_DESC.{
-            DepthEnable = xx desc.depth_enable,
-            DepthWriteMask = xx desc.depth_write,
-            DepthFunc = xx desc.depth_func,
-            StencilEnable = xx desc.stencil_enable,
+            DepthEnable                  = xx desc.depth_enable,
+            DepthWriteMask               = xx desc.depth_write,
+            DepthFunc                    = xx desc.depth_func,
+            StencilEnable                = xx desc.stencil_enable,
 
-            StencilReadMask = desc.stencil_read_mask,
-            StencilWriteMask = desc.stencil_write_mask,
+            StencilReadMask              = desc.stencil_read_mask,
+            StencilWriteMask             = desc.stencil_write_mask,
 
-            FrontFace.StencilFunc = xx front.compare_op,
-            FrontFace.StencilFailOp = xx front.fail_op,
+            FrontFace.StencilFunc        = xx front.compare_op,
+            FrontFace.StencilFailOp      = xx front.fail_op,
             FrontFace.StencilDepthFailOp = xx front.depth_fail_op,
-            FrontFace.StencilPassOp = xx front.pass_op,
+            FrontFace.StencilPassOp      = xx front.pass_op,
 
-            BackFace.StencilFunc = xx back.compare_op,
-            BackFace.StencilFailOp = xx back.fail_op,
-            BackFace.StencilDepthFailOp = xx back.depth_fail_op,
-            BackFace.StencilPassOp = xx back.pass_op,
+            BackFace.StencilFunc         = xx back.compare_op,
+            BackFace.StencilFailOp       = xx back.fail_op,
+            BackFace.StencilDepthFailOp  = xx back.depth_fail_op,
+            BackFace.StencilPassOp       = xx back.pass_op,
         };
         ID3D11Device_CreateDepthStencilState(device, *d3d11_desc, *state);
         table_add(*depth_stencil_table, desc, state);
@@ -1402,13 +1402,13 @@ d3d11_set_blend :: (descs: []Blend_Desc, alpha_to_coverage_enable: bool, blend_f
     blend_map := D3D11_BLEND_MAP;
     for descs {
         blend_desc.RenderTarget[it_index] = .{
-            BlendEnable = xx it.blend_enable,
-            SrcBlend = blend_map[it.src_blend],
-            DestBlend = blend_map[it.dest_blend],
-            BlendOp = xx it.blend_op,
-            SrcBlendAlpha = blend_map[it.src_blend_alpha],
-            DestBlendAlpha = blend_map[it.dest_blend_alpha],
-            BlendOpAlpha = xx it.blend_op_alpha,
+            BlendEnable           = xx it.blend_enable,
+            SrcBlend              = blend_map[it.src_blend],
+            DestBlend             = blend_map[it.dest_blend],
+            BlendOp               = xx it.blend_op,
+            SrcBlendAlpha         = blend_map[it.src_blend_alpha],
+            DestBlendAlpha        = blend_map[it.dest_blend_alpha],
+            BlendOpAlpha          = xx it.blend_op_alpha,
             RenderTargetWriteMask = xx it.write_mask,
         };
     }

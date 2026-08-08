@@ -655,6 +655,24 @@ set_viewport :: (x: float, y: float, width: float, height: float, near_depth := 
     glDepthRangef(near_depth, far_depth);
 }
 
+set_rasterizer_state :: (mode: Rasterizer_Mode) {
+    state := rasterizer_modes[mode];
+    glPolygonMode(GL_FRONT_AND_BACK, state.polygon_mode);
+    if state.cull_mode {
+        glEnable(GL_CULL_FACE);
+        glCullFace(state.cull_mode);
+    }
+    else {
+        glDisable(GL_CULL_FACE);
+    }
+    if state.scissor_enabled {
+        glEnable(GL_SCISSOR_TEST);
+    }
+    else {
+        glDisable(GL_SCISSOR_TEST);
+    }
+}
+
 set_blend_state :: (mode: Blend_Mode) {
     state := blend_modes[mode];
     if state.enabled {
@@ -671,21 +689,45 @@ set_blend_state :: (mode: Blend_Mode) {
     }
 }
 
-set_rasterizer_state :: (mode: Rasterizer_Mode) {
-    state := rasterizer_modes[mode];
-    glPolygonMode(GL_FRONT_AND_BACK, state.polygon_mode);
-    if state.cull_mode {
-        glEnable(GL_CULL_FACE);
-        glCullFace(state.cull_mode);
-    }
-    else {
+set_rasterizer_state :: (desc: Rasterizer_Desc) {
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL_MODE_MAP[desc.fill_mode]);
+
+    if desc.cull_mode == .None {
         glDisable(GL_CULL_FACE);
+    } else {
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_CULL_MODE_MAP[desc.cull_mode]);
     }
-    if state.scissor_enabled {
+
+    front_face := ifx desc.front_counter_clockwise then cast(u32)GL_CCW else GL_CW;
+    glFrontFace(front_face);
+
+    if desc.depth_bias != 0 || desc.slope_scaled_depth_bias != 0.0 {
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glEnable(GL_POLYGON_OFFSET_LINE);
+
+        glPolygonOffsetClamp(desc.slope_scaled_depth_bias, cast(float) desc.depth_bias, desc.depth_bias_clamp);
+    } else {
+        glDisable(GL_POLYGON_OFFSET_FILL);
+        glDisable(GL_POLYGON_OFFSET_LINE);
+    }
+
+    if desc.depth_clip_enable {
+        glDisable(GL_DEPTH_CLAMP);
+    } else {
+        glEnable(GL_DEPTH_CLAMP);
+    }
+
+    if desc.scissor_enable {
         glEnable(GL_SCISSOR_TEST);
-    }
-    else {
+    } else {
         glDisable(GL_SCISSOR_TEST);
+    }
+
+    if desc.antialiased_line_enable {
+        glEnable(GL_LINE_SMOOTH);
+    } else {
+        glDisable(GL_LINE_SMOOTH);
     }
 }
 
@@ -1737,43 +1779,43 @@ GL_TEXTURE_MAP_ARRAY :: GL_Format_Info.[
     .{ GL_R16,            GL_RED,  GL_UNSIGNED_SHORT },                 // R16
 
     // Floating point formats
-    .{ GL_R16F,     GL_RED,  GL_HALF_FLOAT },                     // R16F
-    .{ GL_RG16F,    GL_RG,   GL_HALF_FLOAT },                     // RG16F
-    .{ GL_RGBA16F,  GL_RGBA, GL_HALF_FLOAT },                     // RGBA16F
-    .{ GL_R32F,     GL_RED,  GL_FLOAT },                          // R32F
-    .{ GL_RG32F,    GL_RG,   GL_FLOAT },                          // RG32F
-    .{ GL_RGBA32F,  GL_RGBA, GL_FLOAT },                          // RGBA32F
-    .{ GL_R11F_G11F_B10F, GL_RGB, GL_UNSIGNED_INT_10F_11F_11F_REV},// RG11B10F
-    .{ GL_RGB9_E5,  GL_RGB,  GL_UNSIGNED_INT_5_9_9_9_REV },       // RGB9E5F
+    .{ GL_R16F,     GL_RED,  GL_HALF_FLOAT },                           // R16F
+    .{ GL_RG16F,    GL_RG,   GL_HALF_FLOAT },                           // RG16F
+    .{ GL_RGBA16F,  GL_RGBA, GL_HALF_FLOAT },                           // RGBA16F
+    .{ GL_R32F,     GL_RED,  GL_FLOAT },                                // R32F
+    .{ GL_RG32F,    GL_RG,   GL_FLOAT },                                // RG32F
+    .{ GL_RGBA32F,  GL_RGBA, GL_FLOAT },                                // RGBA32F
+    .{ GL_R11F_G11F_B10F, GL_RGB, GL_UNSIGNED_INT_10F_11F_11F_REV},     // RG11B10F
+    .{ GL_RGB9_E5,  GL_RGB,  GL_UNSIGNED_INT_5_9_9_9_REV },             // RGB9E5F
 
     // Integer formats
-    .{ GL_R16I,     GL_RED_INTEGER,  GL_SHORT },                  // R16I
-    .{ GL_RG16I,    GL_RG_INTEGER,   GL_SHORT },                  // RG16I
-    .{ GL_RGBA16I,  GL_RGBA_INTEGER, GL_SHORT },                  // RGBA16I
-    .{ GL_R32I,     GL_RED_INTEGER,  GL_INT },                    // R32I
-    .{ GL_RG32I,    GL_RG_INTEGER,   GL_INT },                    // RG32I
-    .{ GL_RGB32I,   GL_RGB_INTEGER,  GL_INT },                    // RGB32I
-    .{ GL_RGBA32I,  GL_RGBA_INTEGER, GL_INT },                    // RGBA32I
+    .{ GL_R16I,     GL_RED_INTEGER,  GL_SHORT },                        // R16I
+    .{ GL_RG16I,    GL_RG_INTEGER,   GL_SHORT },                        // RG16I
+    .{ GL_RGBA16I,  GL_RGBA_INTEGER, GL_SHORT },                        // RGBA16I
+    .{ GL_R32I,     GL_RED_INTEGER,  GL_INT },                          // R32I
+    .{ GL_RG32I,    GL_RG_INTEGER,   GL_INT },                          // RG32I
+    .{ GL_RGB32I,   GL_RGB_INTEGER,  GL_INT },                          // RGB32I
+    .{ GL_RGBA32I,  GL_RGBA_INTEGER, GL_INT },                          // RGBA32I
 
     // Unsigned integer formats
-    .{ GL_R16UI,    GL_RED_INTEGER,  GL_UNSIGNED_SHORT },         // R16U
-    .{ GL_RG16UI,   GL_RG_INTEGER,   GL_UNSIGNED_SHORT },         // RG16U
-    .{ GL_RGBA16UI, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT },         // RGBA16U
-    .{ GL_R32UI,    GL_RED_INTEGER,  GL_UNSIGNED_INT },           // R32U
-    .{ GL_RG32UI,   GL_RG_INTEGER,   GL_UNSIGNED_INT },           // RG32U
-    .{ GL_RGB32UI,  GL_RGB_INTEGER,  GL_UNSIGNED_INT },           // RGB32U
-    .{ GL_RGBA32UI, GL_RGBA_INTEGER, GL_UNSIGNED_INT },           // RGBA32U
+    .{ GL_R16UI,    GL_RED_INTEGER,  GL_UNSIGNED_SHORT },               // R16U
+    .{ GL_RG16UI,   GL_RG_INTEGER,   GL_UNSIGNED_SHORT },               // RG16U
+    .{ GL_RGBA16UI, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT },               // RGBA16U
+    .{ GL_R32UI,    GL_RED_INTEGER,  GL_UNSIGNED_INT },                 // R32U
+    .{ GL_RG32UI,   GL_RG_INTEGER,   GL_UNSIGNED_INT },                 // RG32U
+    .{ GL_RGB32UI,  GL_RGB_INTEGER,  GL_UNSIGNED_INT },                 // RGB32U
+    .{ GL_RGBA32UI, GL_RGBA_INTEGER, GL_UNSIGNED_INT },                 // RGBA32U
 
     // Block compression formats
-    .{ GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT, 0, 0 },             // BC6U
-    .{ GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT,   0, 0 },             // BC6S
-    .{ GL_COMPRESSED_RGBA_BPTC_UNORM,         0, 0 },             // BC7
-    .{ GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM,   0, 0 },             // BC7_SRGB
+    .{ GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT, 0, 0 },                   // BC6U
+    .{ GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT,   0, 0 },                   // BC6S
+    .{ GL_COMPRESSED_RGBA_BPTC_UNORM,         0, 0 },                   // BC7
+    .{ GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM,   0, 0 },                   // BC7_SRGB
 
     // Depth formats
-    .{ GL_DEPTH_COMPONENT16, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT },             // D16
-    .{ GL_DEPTH24_STENCIL8,  GL_DEPTH_STENCIL,   GL_UNSIGNED_INT_24_8 },          // D24S8
-    .{ GL_DEPTH_COMPONENT32F,GL_DEPTH_COMPONENT, GL_FLOAT },                      // D32F
+    .{ GL_DEPTH_COMPONENT16, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT },                // D16
+    .{ GL_DEPTH24_STENCIL8,  GL_DEPTH_STENCIL,   GL_UNSIGNED_INT_24_8 },             // D24S8
+    .{ GL_DEPTH_COMPONENT32F,GL_DEPTH_COMPONENT, GL_FLOAT },                         // D32F
     .{ GL_DEPTH32F_STENCIL8, GL_DEPTH_STENCIL,   GL_FLOAT_32_UNSIGNED_INT_24_8_REV } // D32FS8
 ];
 
@@ -1810,6 +1852,18 @@ GL_BLEND_OP_MAP :: GLenum.[
     GL_MAX,
 ];
 
+GL_FILL_MODE_MAP :: GLenum.[
+    0,0,
+    GL_LINE,
+    GL_FILL,
+];
+
+GL_CULL_MODE_MAP :: GLenum.[
+    0,
+    GL_NONE,
+    GL_FRONT,
+    GL_BACK,
+];
 
 #if DEBUG {
 gl_debug_callback :: (source: GLenum, type: GLenum, id: GLuint, severity: GLenum, length: GLsizei, message: *u8, userParam: *void) #c_call {
