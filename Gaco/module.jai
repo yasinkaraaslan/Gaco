@@ -18,7 +18,7 @@
 }
 
 Shader_Bytecode :: struct {
-    mappings: []Sampler_Mapping;
+    mappings: []Texture_Sampler_Mapping;
     vs: string;
     fs: string;
     cs: string;
@@ -327,7 +327,7 @@ compile_shader :: (file_name: string, output_file_name: string, type: Shader_Typ
 
     sb: String_Builder;
     append(*sb, cast(*u8)*header, size_of(Shader_Header));
-    append(*sb, cast(*u8)bytecode.mappings.data, bytecode.mappings.count * size_of(Sampler_Mapping));
+    append(*sb, cast(*u8)bytecode.mappings.data, bytecode.mappings.count * size_of(Texture_Sampler_Mapping));
     append(*sb, bytecode.vs);
     append(*sb, bytecode.fs);
     append(*sb, bytecode.cs);
@@ -352,10 +352,10 @@ load_shader_from_memory :: (data: string, debug_name := "") -> Shader {
     bytecode: Shader_Bytecode;
 
     cursor += size_of(Shader_Header);
-    bytecode.mappings.data = cast(*Sampler_Mapping)cursor;
+    bytecode.mappings.data = cast(*Texture_Sampler_Mapping)cursor;
     bytecode.mappings.count = header.sampler_mapping_count;
 
-    cursor += header.sampler_mapping_count * size_of(Sampler_Mapping);
+    cursor += header.sampler_mapping_count * size_of(Texture_Sampler_Mapping);
     bytecode.vs.data = cursor;
     bytecode.vs.count = header.vs_size;
 
@@ -520,6 +520,16 @@ case .Metal;
 #load "backends/metal.jai";
 }
 
+// This is used for SPIR-V files because the sampler and texture indices
+// are the same in OpenGL so we have to have a system to map our seperate
+// sampler and texture indices.
+Texture_Sampler_Mapping :: struct {
+    mapped_index: u8;
+    texture_index: u8;
+    sampler_index: u8;
+    stage: Shader_Type;
+}
+
 #scope_module
 
 #program_export
@@ -542,16 +552,6 @@ Shader_Header :: struct {
     vs_size: u32;
     fs_size: u32;
     cs_size: u32;
-}
-
-// This is used for SPIR-V files because the sampler and texture indices
-// are the same in OpenGL so we have to have a system to map our seperate
-// sampler and texture indices.
-Sampler_Mapping :: struct {
-    mapped_index: u8;
-    texture_index: u8;
-    sampler_index: u8;
-    stage: Shader_Type;
 }
 
 GACO_MAGIC :: 0x4F434147; // "GACO"

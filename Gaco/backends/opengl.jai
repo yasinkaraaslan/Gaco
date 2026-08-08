@@ -5,7 +5,7 @@ Shader :: struct {
     fs_program: GLuint;
     cs_program: GLuint;
 
-    mappings: []Sampler_Mapping;
+    mappings: []Texture_Sampler_Mapping;
 }
 
 Buffer :: struct (type: Buffer_Type) {
@@ -132,6 +132,7 @@ init :: (window: Window_Type) {
 
 
     set_swap_interval(0);
+    _, _, window_width, window_height = get_dimensions(main_window, false);
 
     default_sampler = create_sampler(); // To be the same with d3d11
     max_units: GLint;
@@ -399,7 +400,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, file_name: str
     args.spirv_target_env = "vulkan1.1";
     args.defines = defines;
 
-    sampler_mappings := [..]Sampler_Mapping.{allocator=temp};
+    sampler_mappings := [..]Texture_Sampler_Mapping.{allocator=temp};
 
     compile :: (entry_point: string, shader_type: Shader_Type) -> string #expand {
         `args.entry_point = entry_point;
@@ -416,6 +417,10 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, file_name: str
 
 
         array_add(*extra_args, "-fspv-flatten-resource-arrays");
+        if shader_type == .Vertex {
+            // array_add(*extra_args, "-fvk-invert-y");
+        }
+
         t_shift := "0";
         b_shift := "0";
         s_shift := "0";
@@ -441,7 +446,6 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, file_name: str
             "-fvk-s-shift", s_shift, "all",
         ];
         array_add(*extra_args, ..shift_args);
-
         `args.extra_args = extra_args;
 
         result := DXC.DXC_Compile(`args,, temp);
@@ -647,7 +651,7 @@ set_primitive_type :: (primitive_type: Primitive_Type) {
 }
 
 set_scissor :: (using rect: Rect) {
-    glScissor(x, y, cast(u32)width, cast(u32)height);
+    glScissor(x, window_height - y -  height, cast(u32)width, cast(u32)height);
 }
 
 set_viewport :: (x: float, y: float, width: float, height: float, near_depth := 0.0, far_depth := 1.0) {
@@ -1138,7 +1142,7 @@ bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
 
     assert(texture.flags & .Sampled != 0, "[Gaco] Texture must have Sampled flag to be bound to a shader.");
 
-    search_and_bind :: (mappings: []Sampler_Mapping, $stage: Shader_Type) #expand {
+    search_and_bind :: (mappings: []Texture_Sampler_Mapping, $stage: Shader_Type) #expand {
         index := `slot;
         #if stage == .Fragment index += 16;
         else #if stage == .Compute index += 32;
@@ -1230,7 +1234,7 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
 }
 
 bind_sampler :: (sampler: Sampler, slot: u32, bind_to := Shader_Type.Fragment) {
-    search_and_bind :: (mappings: []Sampler_Mapping, $stage: Shader_Type) #expand {
+    search_and_bind :: (mappings: []Texture_Sampler_Mapping, $stage: Shader_Type) #expand {
         index := `slot;
         #if stage == .Fragment index += 16;
         else #if stage == .Compute index += 32;
@@ -1508,7 +1512,7 @@ get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
 }
 
 // I had to reimplement this function from spv-opt because OpenGL...
-build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_bytecode: string, mappings: []Sampler_Mapping {
+build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_bytecode: string, mappings: []Texture_Sampler_Mapping {
     if bytecode.count < 20 return "", .[];
 
     words := cast(*u32) bytecode.data;
@@ -1564,7 +1568,7 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_b
         i += count;
     }
 
-    mappings: [..]Sampler_Mapping;
+    mappings: [..]Texture_Sampler_Mapping;
 
     // Helper: Find an existing Pointer type for our combined SampledImage, or inject a new one.
     get_or_create_ptr_type :: (type_id: u32, insts: *[..] *[..]u32, bound: *u32) -> u32 {
@@ -1629,7 +1633,7 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_b
 
                 if !found {
                     mapped_idx = cast(u8) mappings.count;
-                    mapping: Sampler_Mapping;
+                    mapping: Texture_Sampler_Mapping;
                     mapping.mapped_index  = mapped_idx;
                     mapping.texture_index = cast(u8) img_binding;
                     mapping.sampler_index = cast(u8) samp_binding;
@@ -1747,9 +1751,9 @@ using GL_State: struct {
     current_primitive_mode: GLuint = GL_TRIANGLES;
     current_index_stride: u32;
 
-    vs_mappings: []Sampler_Mapping;
-    fs_mappings: []Sampler_Mapping;
-    cs_mappings: []Sampler_Mapping;
+    vs_mappings: []Texture_Sampler_Mapping;
+    fs_mappings: []Texture_Sampler_Mapping;
+    cs_mappings: []Texture_Sampler_Mapping;
 
 
     default_sampler: Sampler;
