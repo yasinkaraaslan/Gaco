@@ -1,4 +1,4 @@
-#module_parameters (BACKEND := DEFAULT_BACKEND, DEBUG:=false) {
+#module_parameters (BACKEND := DEFAULT_BACKEND, DEBUG := false, REQUEST_HIGH_PERFORMANCE_GPU := true) {
     Backend_Type :: enum u32 {
         OpenGL :: 0;
         D3D11  :: 1;
@@ -515,7 +515,7 @@ Texture_Sampler_Mapping :: struct {
 
 #scope_module
 
-#if OS == .WINDOWS {
+#if REQUEST_HIGH_PERFORMANCE_GPU && OS == .WINDOWS {
     #program_export
     NvOptimusEnablement: u32 = 1;
     #program_export

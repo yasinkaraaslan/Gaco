@@ -89,6 +89,22 @@ is_valid :: (render_target: Render_Target) -> bool {
 init :: (window: Window_Type) {
     MAJOR :: 4;
     MINOR :: 5;
+
+    #if REQUEST_HIGH_PERFORMANCE_GPU && OS == .LINUX {
+        #import "POSIX";
+        #import "File_Utilities";
+        
+        // Request dGPU from Mesa
+        setenv("DRI_PRIME", "1", 1);
+
+        // Request dGPU from Nvidia proprietary drivers
+
+        if file_exists("/sys/module/nvidia") {
+            setenv("__NV_PRIME_RENDER_OFFLOAD", "1", 1);
+            setenv("__GLX_VENDOR_LIBRARY_NAME", "nvidia", 1);
+        }
+    }
+
     #if OS == .WINDOWS {
         if window == WT.INVALID_WINDOW {
             wgl_create_compute_context(MAJOR, MINOR, DEBUG);
@@ -102,7 +118,6 @@ init :: (window: Window_Type) {
 
         // Mesa has a bug. We can't enable it until it's fixed.
         // https://gitlab.freedesktop.org/mesa/mesa/-/work_items/16043
-        // NOTE(Yasin): Check if it still happens with egl
         #if OS == .LINUX
             debug = false;
 
@@ -424,9 +439,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, file_name: str
     args.defines = defines;
 
     // If we don't set this, it fails with nvidia gpus on linux for some reason
-    #if DEBUG {
-        args.spirv_generate_non_semanantic_debug_info = false;
-    }
+    args.spirv_generate_non_semanantic_debug_info = false;
 
     sampler_mappings := [..]Texture_Sampler_Mapping.{allocator=temp};
 
