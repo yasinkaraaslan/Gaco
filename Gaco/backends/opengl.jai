@@ -91,7 +91,14 @@ init :: (window: Window_Type) {
         gl_create_compute_context(4,5, DEBUG);
     }
     else {
-        gl_create_context(window, 4, 5, false, DEBUG, 0);
+        debug := DEBUG;
+
+        // Mesa has a bug. We can't enable it until it's fixed.
+        // https://gitlab.freedesktop.org/mesa/mesa/-/work_items/16043
+        #if OS == .LINUX
+            debug = false;
+
+        gl_create_context(window, 4, 5, false, debug, 0);
     }
 
     gl_load(*gl);
@@ -393,9 +400,15 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, file_name: str
     args.shader_name = file_name;
     args.shader_model_version = "6_0";
     args.shader_source = source;
+
     args.add_debug_info = DEBUG;
     args.spirv_target_env = "vulkan1.1";
     args.defines = defines;
+
+    // If we don't set this, it fails with nvidia gpus on linux for some reason
+    #if DEBUG {
+        args.spirv_generate_non_semanantic_debug_info = false;
+    }
 
     sampler_mappings := [..]Texture_Sampler_Mapping.{allocator=temp};
 
@@ -1951,7 +1964,6 @@ glx_create_compute_context :: (major: s32, minor: s32, debug: bool) {
 }
 
 #import "GL";
-DXC :: #import "dxc_compiler";
 
 #if OS == .WINDOWS {
     #import "Windows";

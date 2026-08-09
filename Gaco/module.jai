@@ -494,6 +494,7 @@ case .D3D11;
 case .OpenGL;
 #load "backends/opengl.jai";
 #import,dir "modules/spirv_reflect";
+DXC :: #import,dir "modules/dxc_compiler";
 case .Metal;
 #load "backends/metal.jai";
 }
@@ -510,10 +511,12 @@ Texture_Sampler_Mapping :: struct {
 
 #scope_module
 
-#program_export
-NvOptimusEnablement: u32 = 1;
-#program_export
-AmdPowerXpressRequestHighPerformance: s32 = 1;
+#if OS == .WINDOWS {
+    #program_export
+    NvOptimusEnablement: u32 = 1;
+    #program_export
+    AmdPowerXpressRequestHighPerformance: s32 = 1;
+}
 
 Shader_Backend :: enum u8 {
     Unspecified :: 0;
