@@ -93,7 +93,7 @@ init :: (window: Window_Type) {
     #if REQUEST_HIGH_PERFORMANCE_GPU && OS == .LINUX {
         #import "POSIX";
         #import "File_Utilities";
-        
+
         // Request dGPU from Mesa
         setenv("DRI_PRIME", "1", 1);
 
@@ -996,6 +996,13 @@ resize :: (width: int, height: int, msaa: u32 = 4) -> render_target: Render_Targ
     glBindFramebuffer(GL_FRAMEBUFFER, custom_fbo);
     glViewport(0, 0, cast(GLuint)width, cast(GLuint)height);
 
+    #if OS == .LINUX {
+        // We have to do this stupid thing because wayland
+        egl_context := eglGetCurrentContext();
+        eglMakeCurrent(egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context);
+    }
+
     internal_width = xx width;
     internal_height = xx height;
     _, _, window_width, window_height = get_dimensions(main_window, false);
@@ -1720,8 +1727,10 @@ using GL_State: struct {
     global_pipeline: GLuint;
     empty_stupid_vao: GLuint; // Because we cannot bind a vertex buffer without a vao
 
-    egl_display: EGLDisplay;
-    egl_surface: EGLSurface;
+    #if OS == .LINUX {
+        egl_display: EGLDisplay;
+        egl_surface: EGLSurface;
+    }
 
     Bound_Buffer :: struct {
         object: GLuint;
