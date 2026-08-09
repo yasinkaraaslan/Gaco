@@ -682,7 +682,7 @@ destroy_render_target :: (render_target: *Render_Target) {
     safe_release_and_reset(*render_target.depth_stencil_view);
 }
 
-resize :: (width: int, height: int, msaa: u32 = 4) -> render_target: Render_Target {
+resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Format.RGBA8, depth_format := Texture_Format.D24S8) -> render_target: Render_Target {
     destroy_render_target(*window_render_target);
     destroy_render_target(*custom_render_target);
     destroy_texture(*custom_color_texture);
@@ -698,8 +698,8 @@ resize :: (width: int, height: int, msaa: u32 = 4) -> render_target: Render_Targ
 
     window_render_target = create_render_target(.[back_buffer], .{});
 
-    custom_color_texture = create_texture(.[], cast(u32)width, cast(u32)height, 1, msaa, .RGBA8, .Render_Target | .Multisample);
-    custom_depth_texture = create_texture(.[], cast(u32)width, cast(u32)height, 1, msaa, .D24S8, .Multisample);
+    custom_color_texture = create_texture(.[], cast(u32)width, cast(u32)height, 1, msaa, color_format, .Render_Target | .Multisample);
+    custom_depth_texture = create_texture(.[], cast(u32)width, cast(u32)height, 1, msaa, depth_format, .Multisample);
     custom_render_target = create_render_target(.[custom_color_texture], custom_depth_texture);
 
     set_render_target(custom_render_target);
@@ -1303,6 +1303,7 @@ d3d11_set_blend :: (descs: []Blend_Desc, alpha_to_coverage_enable: bool, blend_f
 
 }
 
+#assert DXGI_FORMAT_MAP.count == enum_count(Texture_Format);
 DXGI_FORMAT_MAP :: DXGI_FORMAT.[
     .UNKNOWN,               // Unknown
 

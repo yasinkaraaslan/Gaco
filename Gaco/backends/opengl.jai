@@ -137,6 +137,12 @@ init :: (window: Window_Type) {
     glClipControl(GL_UPPER_LEFT, GL_ZERO_TO_ONE);
 
     glEnable(GL_SAMPLE_MASK);
+    glEnable(GL_FRAMEBUFFER_SRGB);
+    glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+    glEnable(GL_PRIMITIVE_RESTART_FIXED_INDEX);
+    glDisable(GL_DITHER);
+
+    glProvokingVertex(GL_FIRST_VERTEX_CONVENTION);
 
     // So we can bind vertex buffers without setting a shader.
     glCreateVertexArrays(1, *empty_stupid_vao);
@@ -954,7 +960,7 @@ destroy_render_target :: (render_target: *Render_Target) {
     glDeleteFramebuffers(1, *render_target.framebuffer);
 }
 
-resize :: (width: int, height: int, msaa: u32 = 4) -> render_target: Render_Target {
+resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Format.RGBA8, depth_format := Texture_Format.D24S8) -> render_target: Render_Target {
     if custom_fbo != 0 {
         glDeleteFramebuffers(1, *custom_fbo);
         glDeleteTextures(1, *custom_color_texture);
@@ -965,24 +971,33 @@ resize :: (width: int, height: int, msaa: u32 = 4) -> render_target: Render_Targ
     }
 
     glCreateFramebuffers(1, *custom_fbo);
+
+
+    color_info := GL_TEXTURE_MAP_ARRAY[color_format];
+    depth_info := GL_TEXTURE_MAP_ARRAY[depth_format];
+
     if msaa > 1 {
         glCreateTextures(GL_TEXTURE_2D_MULTISAMPLE, 1, *custom_color_texture);
-        glTextureStorage2DMultisample(custom_color_texture, msaa, GL_RGBA8, xx width, xx height, GL_TRUE);
+        glTextureStorage2DMultisample(custom_color_texture, msaa, color_info.internal_format, xx width, xx height, GL_TRUE);
     }
     else {
         glCreateTextures(GL_TEXTURE_2D, 1, *custom_color_texture);
-        glTextureStorage2D(custom_color_texture, 1, GL_RGBA8, xx width, xx height);
+        glTextureStorage2D(custom_color_texture, 1, color_info.internal_format, xx width, xx height);
     }
 
     glNamedFramebufferTexture(custom_fbo, GL_COLOR_ATTACHMENT0, custom_color_texture, 0);
 
     glCreateRenderbuffers(1, *custom_rbo);
-    glNamedRenderbufferStorageMultisample(custom_rbo, msaa, GL_DEPTH24_STENCIL8, xx width, xx height);
-    glNamedFramebufferRenderbuffer(custom_fbo, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, custom_rbo);
+    depth_attachment : GLenum = GL_DEPTH_ATTACHMENT;
+    if depth_info.upload_format == GL_DEPTH_STENCIL {
+        depth_attachment = GL_DEPTH_STENCIL_ATTACHMENT;
+    }
+    glNamedRenderbufferStorageMultisample(custom_rbo, msaa, depth_info.internal_format, xx width, xx height);
+    glNamedFramebufferRenderbuffer(custom_fbo, depth_attachment, GL_RENDERBUFFER, custom_rbo);
 
     glCreateFramebuffers(1, *resolve_fbo);
     glCreateTextures(GL_TEXTURE_2D, 1, *resolve_color_texture);
-    glTextureStorage2D(resolve_color_texture, 1, GL_RGBA8, xx width, xx height);
+    glTextureStorage2D(resolve_color_texture, 1, color_info.internal_format, xx width, xx height);
     glNamedFramebufferTexture(resolve_fbo, GL_COLOR_ATTACHMENT0, resolve_color_texture, 0);
 
     status := glCheckNamedFramebufferStatus(custom_fbo, GL_FRAMEBUFFER);
@@ -1287,7 +1302,8 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
 
     glSamplerParameteri(sampler.object, GL_TEXTURE_MIN_FILTER, gl_filtering);
     glSamplerParameteri(sampler.object, GL_TEXTURE_MAG_FILTER, gl_filtering);
-
+    glSamplerParameterf(sampler.object, GL_TEXTURE_MAX_ANISOTROPY, cast(float) max_anisotropy);
+    
     glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_S, gl_edge);
     glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_T, gl_edge);
     glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_R, gl_edge);
@@ -1763,6 +1779,8 @@ GL_Format_Info :: struct {
     upload_type     : u32;
 }
 
+
+#assert GL_TEXTURE_MAP_ARRAY.count == enum_count(Texture_Format);
 GL_TEXTURE_MAP_ARRAY :: GL_Format_Info.[
     .{ GL_NONE, 0, 0 }, // Unknown
 
