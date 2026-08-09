@@ -18,8 +18,10 @@ Texture :: struct {
     object: GLuint;
     width, height, stride: u32;
     depth: u32 = 1;
+    mip_levels: u32 = 1;
     format: Texture_Format;
     flags: Texture_Flags;
+    target: GLenum;
     pixel_format: GLuint;
     pixel_type: GLuint;
     pbo_size: u32;
@@ -39,30 +41,6 @@ Timer :: struct {
     end_query: GLuint;
     #overlay(start_query) queries: [2]GLuint;
 }
-
-Blend_State :: struct {
-    enabled: bool;
-    src_blend: GLenum;
-    dst_blend: GLenum;
-    src_blend_alpha: GLenum;
-    dst_blend_alpha: GLenum;
-
-    blend_op: GLenum;
-    blend_op_alpha: GLenum;
-
-    red: GLboolean;
-    green: GLboolean;
-    blue: GLboolean;
-    alpha: GLboolean;
-}
-
-Rasterizer_State :: struct {
-    polygon_mode: GLenum;
-    cull_mode: GLenum;
-    scissor_enabled: bool;
-}
-
-Depth_Stencil_State :: Depth_Stencil_Desc;
 
 is_valid :: (texture: Texture) -> bool {
     if texture.flags & .Copy return glIsBuffer(texture.object);
@@ -110,7 +88,7 @@ init :: (window: Window_Type) {
             wgl_create_compute_context(MAJOR, MINOR, DEBUG);
         }
         else {
-            wgl_create_context(window, major_version=MAJOR, minor_version=MINOR, debug=DEBUG);
+            wgl_create_context(window, major_version=MAJOR, minor_version=MINOR, debug=DEBUG, wanted_msaa=0);
         }
     }
     else {
@@ -309,9 +287,6 @@ unmap_buffer :: (buffer: *Buffer) {
 
 // This is actually here for api compatibility with D3D11.
 // The 'Texture' we have here is a pixel buffer object. So we assert that before doing anything.
-
-// Note that this gives a different data than the D3D11 one because the lower-left is 0,0 as opposed to upper-left.
-// You have to check the backend before using it.
 map_texture :: (texture: *Texture, flags: Map_Flags) -> *void {
     assert(texture.flags & .Copy != 0, "[Gaco] Only copy textures can be mapped to read.");
     access: GLbitfield;
@@ -334,20 +309,38 @@ update_buffer :: (buffer: *Buffer, data: *void) {
 update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 = 0) {
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
+    mip   := subresource % texture.mip_levels;
+    layer := subresource / texture.mip_levels;
+
+    is_layered := texture.target == GL_TEXTURE_2D_ARRAY
+               || texture.target == GL_TEXTURE_CUBE_MAP
+               || texture.target == GL_TEXTURE_CUBE_MAP_ARRAY;
+
     if is_block_compression(texture.format) {
         bw := (cast(u32)rect.width + 3) / 4;
         bh := (cast(u32)rect.height + 3) / 4;
         image_size := cast(u32)(bw * bh * texture.stride);
 
-        glCompressedTextureSubImage2D(texture.object, cast(s32)subresource,
-            rect.x, rect.y, cast(u32)rect.width, cast(u32)rect.height,
-            texture.pixel_format, image_size, data);
+        if is_layered {
+            glCompressedTextureSubImage3D(texture.object, cast(s32)mip,
+                rect.x, rect.y, cast(s32)layer, cast(u32)rect.width, cast(u32)rect.height, 1,
+                texture.pixel_format, image_size, data);
+        } else {
+            glCompressedTextureSubImage2D(texture.object, cast(s32)mip,
+                rect.x, rect.y, cast(u32)rect.width, cast(u32)rect.height,
+                texture.pixel_format, image_size, data);
+        }
     }
     else {
-        // @Incomplete: This is wrong for texture arrays
-        glTextureSubImage2D(texture.object, cast(s32)subresource,
-            rect.x, rect.y, cast(u32)rect.width, cast(u32)rect.height,
-            texture.pixel_format, texture.pixel_type, data);
+        if is_layered {
+            glTextureSubImage3D(texture.object, cast(s32)mip,
+                rect.x, rect.y, cast(s32)layer, cast(u32)rect.width, cast(u32)rect.height, 1,
+                texture.pixel_format, texture.pixel_type, data);
+        } else {
+            glTextureSubImage2D(texture.object, cast(s32)mip,
+                rect.x, rect.y, cast(u32)rect.width, cast(u32)rect.height,
+                texture.pixel_format, texture.pixel_type, data);
+        }
     }
 
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
@@ -381,7 +374,11 @@ update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 
 }
 
 update_texture :: inline (using texture: *Texture, data: *void, subresource: u32 = 0) {
-    update_texture(texture, data, .{0, 0, cast(s32)width, cast(s32)height}, subresource);
+   if flags & .Is_3D {
+        update_texture(texture, data, Box.{0, 0, 0, cast(s32)width, cast(s32)height, cast(s32)depth}, subresource);
+    } else {
+        update_texture(texture, data, Rect.{0, 0, cast(s32)width, cast(s32)height}, subresource);
+    }
 }
 
 write_buffer :: (buffer: *Buffer, data: *void, size: int) {
@@ -1066,11 +1063,13 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
         else       target = GL_TEXTURE_2D;
     }
 
-    glCreateTextures(target, 1, *texture.object);
-
     mip_levels := ifx is_msaa 1 else mip_levels_or_msaa;
     if mip_levels == 0 && generate_mips
         mip_levels = max_mip_levels(width, height);
+
+    texture.mip_levels = mip_levels;
+    texture.target = target;
+    glCreateTextures(target, 1, *texture.object);
 
     if is_msaa {
         if is_array {
@@ -1081,8 +1080,8 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     }
     else {
         if target == GL_TEXTURE_3D || target == GL_TEXTURE_2D_ARRAY || target == GL_TEXTURE_CUBE_MAP_ARRAY {
-            depth := ifx target == GL_TEXTURE_CUBE_MAP_ARRAY then logical_array_count * 6 else logical_array_count;
-            glTextureStorage3D(texture.object, mip_levels, gl_info.internal_format, width, height, depth);
+            texture.depth = ifx target == GL_TEXTURE_CUBE_MAP_ARRAY then logical_array_count * 6 else logical_array_count;
+            glTextureStorage3D(texture.object, mip_levels, gl_info.internal_format, width, height, texture.depth);
         }
         else {
             // GL_TEXTURE_2D, GL_TEXTURE_1D, and GL_TEXTURE_CUBE_MAP use 2D storage
@@ -1151,7 +1150,12 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
 bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
     if texture.flags & .Compute_RW {
         // Compute UAVs don't use samplers so no need to map
-        glBindImageTexture(slot, texture.object, 0, GL_FALSE, 0, GL_READ_WRITE, texture.pixel_format);
+        gl_info := GL_TEXTURE_MAP_ARRAY[texture.format];
+        is_layered := texture.target == GL_TEXTURE_2D_ARRAY
+                   || texture.target == GL_TEXTURE_3D
+                   || texture.target == GL_TEXTURE_CUBE_MAP
+                   || texture.target == GL_TEXTURE_CUBE_MAP_ARRAY;
+        glBindImageTexture(slot, texture.object, 0, xx is_layered, 0, GL_READ_WRITE, gl_info.internal_format);
         return;
     }
 
@@ -1188,15 +1192,15 @@ copy_texture :: (from: Texture, to: *Texture, source_rect: Rect) {
     }
     else {
         // @Incomplete: Only 2D textures.
-        glCopyImageSubData(from.object, GL_TEXTURE_2D, 0, source_rect.x, source_rect.y, 0, to.object, GL_TEXTURE_2D, 0, 0, 0, 0, cast(u32)source_rect.width, cast(u32)source_rect.height, 1);
+        glCopyImageSubData(from.object, from.target, 0, source_rect.x, source_rect.y, 0, to.object, to.target, 0, 0, 0, 0, cast(u32)source_rect.width, cast(u32)source_rect.height, 1);
     }
 }
 
 copy_texture :: (from: Texture, to: *Texture, source_box: Box) {
     glCopyImageSubData(
-        from.object, GL_TEXTURE_3D, 0,
+        from.object, from.target, 0,
         source_box.x, source_box.y, source_box.z,
-        to.object, GL_TEXTURE_3D, 0,
+        to.object, to.target, 0,
         0, 0, 0,
         cast(u32)source_box.width, cast(u32)source_box.height, cast(u32)source_box.depth
     );
@@ -1261,7 +1265,7 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
     else {
         glCopyImageSubData(
             final_tex, GL_TEXTURE_2D, 0, 0, 0, 0,
-            to.object, GL_TEXTURE_2D, 0, 0, 0, 0,
+            to.object, to.target, 0, 0, 0, 0,
             to.width, to.height, 1
         );
     }

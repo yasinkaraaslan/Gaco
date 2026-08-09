@@ -29,6 +29,7 @@ Texture :: struct {
     }
     width, height, stride: u32;
     depth: u32 = 1;
+    mip_levels: u32 = 1;
     format: Texture_Format;
     flags: Texture_Flags;
 };
@@ -46,18 +47,6 @@ Timer :: struct {
     disjoint_query: *ID3D11Query;
     start_query:    *ID3D11Query;
     end_query:      *ID3D11Query;
-}
-
-Blend_State :: struct {
-    state: *ID3D11BlendState;
-}
-
-Rasterizer_State :: struct {
-    state: *ID3D11RasterizerState;
-}
-
-Depth_Stencil_State :: struct {
-    state: *ID3D11DepthStencilState;
 }
 
 is_valid :: (texture: Texture) -> bool {
@@ -781,24 +770,29 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
         format=format,
         flags=flags};
 
-    init_data: []D3D11_SUBRESOURCE_DATA;
+    msaa: u32 = 1;
+    if flags & .Multisample {
+        msaa = mip_levels_or_msaa;
+    } else {
+        texture.mip_levels = mip_levels_or_msaa;
+    }
 
+    init_data: []D3D11_SUBRESOURCE_DATA;
     if data && !generate_mips {
         init_data = NewArray(data.count, D3D11_SUBRESOURCE_DATA,, temp);
 
-        // If we are multisampled, we cannot pass initial data anyway.
         array_count := ifx flags & .Is_3D 1 else array_count_or_depth;
 
-        expected_count := array_count * mip_levels_or_msaa;
+        expected_count := array_count * texture.mip_levels;
         if data.count < expected_count {
             log_error("[Gaco] Error while creating texture: Incomplete data array. Expected count %, got %.", expected_count, data.count);
             return .{};
         }
 
         for i: 0..array_count-1 {
-            for j: 0..mip_levels_or_msaa-1 {
+            for j: 0..texture.mip_levels-1 {
                 // D3D11CalcSubresource
-                index := j + i * mip_levels_or_msaa;
+                index := j + i * texture.mip_levels;
                 block_width := cast(u32)max(1, width >> j);
                 block_height:= cast(u32)max(1, height >> j);
 
@@ -823,11 +817,12 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
             return .{};
         }
 
+        texture.depth = array_count_or_depth;
         desc := D3D11_TEXTURE3D_DESC.{
             Width = width,
             Height = height,
             Depth = array_count_or_depth,
-            MipLevels = mip_levels_or_msaa,
+            MipLevels = texture.mip_levels,
             Format = dxgi_format,
             BindFlags = bind_flags,
             MiscFlags = misc_flags,
@@ -839,20 +834,13 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
         check_hr("ID3D11Device.CreateTexture3D", #code return .{});
     }
     else {
-        mip_levels: u32 = 1;
-        msaa: u32 = 1;
-        if flags & .Multisample {
-            msaa = mip_levels_or_msaa;
-        }
-        else {
-            mip_levels = mip_levels_or_msaa;
-        }
+
 
         desc := D3D11_TEXTURE2D_DESC.{
             Width = width,
             Height = height,
             SampleDesc.Count = msaa,
-            MipLevels = mip_levels,
+            MipLevels = texture.mip_levels,
             ArraySize = array_count_or_depth,
             Format = dxgi_format,
             BindFlags = bind_flags,
@@ -868,7 +856,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     resource := ifx flags & .Is_3D cast(*ID3D11Resource) texture.texture3d else texture.texture2d;
 
     if generate_mips {
-        mip_levels := ifx mip_levels_or_msaa else max_mip_levels(width, height);
+        mip_levels := ifx texture.mip_levels else max_mip_levels(width, height);
 
         for data {
             // D3D11CalcSubresource
