@@ -76,7 +76,6 @@ init :: (window: Window_Type) {
         setenv("DRI_PRIME", "1", 1);
 
         // Request dGPU from Nvidia proprietary drivers
-
         if file_exists("/sys/module/nvidia") {
             setenv("__NV_PRIME_RENDER_OFFLOAD", "1", 1);
             setenv("__GLX_VENDOR_LIBRARY_NAME", "nvidia", 1);
@@ -166,6 +165,10 @@ init :: (window: Window_Type) {
 }
 
 deinit :: () {
+    glDeleteProgramPipelines(1, *global_pipeline);
+    glDeleteVertexArrays(1, *empty_stupid_vao);
+    destroy_sampler(*default_sampler);
+
     #if OS == .WINDOWS {
         hglrc := wglGetCurrentContext();
         if hglrc {
@@ -182,10 +185,6 @@ deinit :: () {
             eglDestroyContext(egl_display, gl_context);
         }
     }
-
-    glDeleteProgramPipelines(1, *global_pipeline);
-    glDeleteVertexArrays(1, *empty_stupid_vao);
-    destroy_sampler(*default_sampler);
 }
 
 create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usage := Buffer_Usage.Default, debug_name := "") -> Buffer(type) {
@@ -698,9 +697,18 @@ set_scissor :: (using rect: Rect) {
     glScissor(x, y, cast(u32)width, cast(u32)height);
 }
 
-set_viewport :: (x: float, y: float, width: float, height: float, near_depth := 0.0, far_depth := 1.0) {
+set_viewport :: (using info: Viewport_Info) {
     glViewportIndexedf(0, x, y, width, height);
     glDepthRangef(near_depth, far_depth);
+}
+
+get_viewport :: () -> Viewport_Info {
+    info: Viewport_Info;
+
+    glGetFloatv(GL_VIEWPORT, *info.x);
+    glGetFloatv(GL_DEPTH_RANGE, *info.near_depth);
+
+    return info;
 }
 
 set_rasterizer_state :: (desc: Rasterizer_Desc) {
@@ -856,13 +864,13 @@ draw_instanced :: ($indexed: bool, count: u32, instance_count: u32, first: u32 =
 }
 
 draw_indirect :: ($indexed: bool, buffer: Buffer(.Indirect), byte_offset: u32 = 0) {
-    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, buffer.buffer);
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, buffer.object);
     #if indexed {
-        glDrawElementsIndirect(current_primitive_mode, cast(*void)byte_offset);
+        format := ifx current_index_stride == 4 cast(u32)GL_UNSIGNED_INT else cast(u32)GL_UNSIGNED_SHORT;
+        glDrawElementsIndirect(current_primitive_mode, format, cast(*void)byte_offset);
     }
     else {
-        format := ifx current_index_stride == 4 cast(u32)GL_UNSIGNED_INT else cast(u32)GL_UNSIGNED_SHORT;
-        glDrawArraysIndirect(current_primitive_mode, format, cast(*void)byte_offset);
+        glDrawArraysIndirect(current_primitive_mode, cast(*void)byte_offset);
     }
 }
 
@@ -1303,7 +1311,7 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
     glSamplerParameteri(sampler.object, GL_TEXTURE_MIN_FILTER, gl_filtering);
     glSamplerParameteri(sampler.object, GL_TEXTURE_MAG_FILTER, gl_filtering);
     glSamplerParameterf(sampler.object, GL_TEXTURE_MAX_ANISOTROPY, cast(float) max_anisotropy);
-    
+
     glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_S, gl_edge);
     glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_T, gl_edge);
     glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_R, gl_edge);

@@ -488,6 +488,12 @@ debug_region :: (name: string) #expand {
     `defer end_debug_region();
 }
 
+push_viewport :: (x: float, y: float, width: float, height: float, near_depth := 0.0, far_depth := 1.0) #expand {
+    viewport_info := get_viewport();
+    set_viewport(.{x,y,width,height,near_depth,far_depth});
+    defer set_viewport(viewport_info);
+}
+
 #if BACKEND == {
 case .D3D11;
 #load "backends/d3d11.jai";
@@ -511,6 +517,12 @@ Texture_Sampler_Mapping :: struct {
     texture_index: u8;
     sampler_index: u8;
     stage: Shader_Type;
+}
+
+Viewport_Info :: struct {
+    x, y, width, height: float;
+    near_depth := 0.0;
+    far_depth := 1.0;
 }
 
 #scope_module

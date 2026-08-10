@@ -301,7 +301,7 @@ unmap_texture :: (texture: *Texture) {
 }
 
 update_buffer :: (buffer: *Buffer, data: *void) {
-    ID3D11DeviceContext_UpdateSubresource(device_context, buffer.buffer, 0, null, data, buffer.stride, 0);
+    ID3D11DeviceContext_UpdateSubresource(device_context, buffer.buffer, 0, null, data, 0, 0);
 }
 
 update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 = 0) {
@@ -350,7 +350,7 @@ destroy_buffer :: (buffer: *Buffer) {
     #if buffer.type == .Structured   {
         safe_release_and_reset(*buffer.srv);
     }
-    else #if buffer.type == .Structured_RW {
+    else #if buffer.type == .Structured_RW || buffer.type == .Indirect {
         safe_release_and_reset(*buffer.uav);
     }
 
@@ -511,15 +511,16 @@ set_scissor :: (rect: Rect) {
 
 // HLSL doesn't have a way to specify a viewport index (except for geometry shaders, which we don't support).
 // So there is no reason for a 'set_viewports'.
-set_viewport :: (x: float, y: float, width: float, height: float, near_depth := 0.0, far_depth := 1.0) {
-    vp: D3D11_VIEWPORT;
-    vp.TopLeftX = x;
-    vp.TopLeftY = y;
-    vp.Width = width;
-    vp.Height = height;
-    vp.MinDepth = near_depth;
-    vp.MaxDepth = far_depth;
-    ID3D11DeviceContext_RSSetViewports(device_context, 1, *vp);
+set_viewport :: (info: Viewport_Info) {
+    viewport := cast,force(D3D11_VIEWPORT)info;
+    ID3D11DeviceContext_RSSetViewports(device_context, 1, *viewport);
+}
+
+get_viewport :: () -> Viewport_Info {
+    info: Viewport_Info;
+    count : u32 = 1;
+    ID3D11DeviceContext_RSGetViewports(device_context, *count, *cast,force(D3D11_VIEWPORT)info);
+    return info;
 }
 
 set_rasterizer_state :: (desc: Rasterizer_Desc) {
@@ -633,7 +634,7 @@ present :: (interval: u32 = 1) {
         device_context,
         back_buffer, 0,
         custom_color_texture.texture2d, 0,  // Source (multisampled offscreen target)
-        .R8G8B8A8_UNORM
+        DXGI_FORMAT_MAP[custom_color_texture.format]
     );
 
     IUnknown_Release(back_buffer);
@@ -688,6 +689,8 @@ resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Forma
     destroy_texture(*custom_color_texture);
     destroy_texture(*custom_depth_texture);
 
+    set_render_target(.{});
+
     hr := IDXGISwapChain_ResizeBuffers(swap_chain, 0, cast(u32)width, cast(u32)height, .UNKNOWN, 0);
     check_hr("IDXGISwapChain.ResizeBuffers", #code `return .{});
 
@@ -703,7 +706,7 @@ resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Forma
     custom_render_target = create_render_target(.[custom_color_texture], custom_depth_texture);
 
     set_render_target(custom_render_target);
-    set_viewport(0, 0, cast(float)width, cast(float)height);
+    set_viewport(.{width=xx width, height= xx height});
 
     return custom_render_target;
 }
