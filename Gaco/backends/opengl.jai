@@ -890,6 +890,12 @@ present :: (interval: u32 = 1) {
     if xx interval != current_swap_interval {
         set_swap_interval(xx interval);
     }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // Disable when blitting to avoid unwanted gamma correction.
+    glDisable(GL_FRAMEBUFFER_SRGB);
+
     if current_msaa == 1 || (internal_width == window_width && internal_height == window_height) {
         glBlitNamedFramebuffer(
             custom_fbo, 0,
@@ -917,12 +923,15 @@ present :: (interval: u32 = 1) {
         );
     }
 
+    glEnable(GL_FRAMEBUFFER_SRGB);
+
     #if OS == .WINDOWS {
         dc := wglGetCurrentDC();
         SwapBuffers(dc);
     }
     else #if OS == .LINUX {
         eglSwapBuffers(egl_display, egl_surface);
+        glBindFramebuffer(GL_FRAMEBUFFER, custom_fbo);
     }
 }
 
@@ -978,8 +987,14 @@ resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Forma
         glDeleteTextures(1, *resolve_color_texture);
     }
 
-    glCreateFramebuffers(1, *custom_fbo);
+    #if OS == .LINUX {
+        // We have to do this stupid thing because wayland
+        egl_context := eglGetCurrentContext();
+        eglMakeCurrent(egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context);
+    }
 
+    glCreateFramebuffers(1, *custom_fbo);
 
     color_info := GL_TEXTURE_MAP_ARRAY[color_format];
     depth_info := GL_TEXTURE_MAP_ARRAY[depth_format];
@@ -1015,13 +1030,6 @@ resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Forma
 
     glBindFramebuffer(GL_FRAMEBUFFER, custom_fbo);
     glViewport(0, 0, cast(GLuint)width, cast(GLuint)height);
-
-    #if OS == .LINUX {
-        // We have to do this stupid thing because wayland
-        egl_context := eglGetCurrentContext();
-        eglMakeCurrent(egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context);
-    }
 
     internal_width = xx width;
     internal_height = xx height;
