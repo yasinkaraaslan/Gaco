@@ -9,3 +9,4 @@ examples/screenshot/screenshot.png
 *.o
 .added_strings_*
 .build*
+*.spv

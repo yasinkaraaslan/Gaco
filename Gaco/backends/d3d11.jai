@@ -98,20 +98,29 @@ init :: (window: HWND) {
     };
 
     dxgi_factory: *IDXGIFactory2;
+
     {
         dxgi_device: *IDXGIDevice2;
         hr = IUnknown_QueryInterface(device, *uid(IDXGIDevice2_UUID), xx *dxgi_device);
         check_hr("IUnknown.QueryInterface");
+        defer safe_release(dxgi_device);
+
         dxgi_adapter: *IDXGIAdapter;
         hr = IDXGIDevice_GetAdapter(dxgi_device, *dxgi_adapter);
         check_hr("IDXGIDevice.GetAdapter");
+        defer safe_release(dxgi_adapter);
+
+        #if DEBUG {
+            desc: DXGI_ADAPTER_DESC ;
+            IDXGIAdapter_GetDesc(dxgi_adapter, *desc);
+            renderer_name, success := wide_to_utf8(cast(*u16)desc.Description.data);
+            log("[Gaco] D3D11 Renderer: %", renderer_name);
+        }
 
         hr = IDXGIObject_GetParent(dxgi_adapter, *uid(IDXGIFactory2_UUID), xx *dxgi_factory);
         check_hr("IDXGIObject.GetParent");
-
-        safe_release(dxgi_adapter);
-        safe_release(dxgi_device);
     }
+
     hr = IDXGIFactory2_CreateSwapChainForHwnd(dxgi_factory, device, window, *swap_chain_desc, null, null, *swap_chain);
     check_hr("IDXGIFactory2.CreateSwapChainForHwnd");
 
@@ -666,7 +675,7 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
         }
         hr := ID3D11Device_CreateDepthStencilView(device, depth_stencil_texture.texture2d, *ds_desc, *render_target.depth_stencil_view);
         check_hr("ID3D11Device.CreateDepthStencilView", #code return .{});
-        if debug_name  d3d11_set_debug_name(depth_stencil_texture.texture2d, debug_name);
+        if debug_name  d3d11_set_debug_name(render_target.depth_stencil_view, debug_name);
 
     }
     return render_target;
@@ -757,7 +766,6 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     if flags & .Cubemap
         misc_flags |= .TEXTURECUBE;
 
-
     if dxgi_format == .DXGI_FORMAT_UNKNOWN {
         log_error("[Gaco] Error while creating texture: Format % is Unknown or unsupported.", format);
         return .{};
@@ -769,9 +777,11 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     texture := Texture.{
         width=width,
         height=height,
+        depth=array_count_or_depth,
         stride=bytes_per_block,
         format=format,
-        flags=flags};
+        flags=flags
+    };
 
     msaa: u32 = 1;
     if flags & .Multisample {
@@ -780,10 +790,13 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
         texture.mip_levels = mip_levels_or_msaa;
     }
 
+    if flags & .Cubemap {
+        texture.depth /= 6;
+    }
+
     init_data: []D3D11_SUBRESOURCE_DATA;
     if data && !generate_mips {
         init_data = NewArray(data.count, D3D11_SUBRESOURCE_DATA,, temp);
-
         array_count := ifx flags & .Is_3D 1 else array_count_or_depth;
 
         expected_count := array_count * texture.mip_levels;
@@ -820,7 +833,6 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
             return .{};
         }
 
-        texture.depth = array_count_or_depth;
         desc := D3D11_TEXTURE3D_DESC.{
             Width = width,
             Height = height,
@@ -837,8 +849,6 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
         check_hr("ID3D11Device.CreateTexture3D", #code return .{});
     }
     else {
-
-
         desc := D3D11_TEXTURE2D_DESC.{
             Width = width,
             Height = height,
@@ -890,7 +900,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
             if array_count_or_depth > 6 {
                 srv_desc.ViewDimension = .D3D11_SRV_DIMENSION_TEXTURECUBEARRAY;
                 srv_desc.TextureCubeArray.MipLevels = 0xFFFF_FFFF;
-                srv_desc.TextureCubeArray.NumCubes = array_count_or_depth / 6;
+                srv_desc.TextureCubeArray.NumCubes = texture.depth;
             } else {
                 srv_desc.ViewDimension = .D3D11_SRV_DIMENSION_TEXTURECUBE;
                 srv_desc.TextureCube.MipLevels = 0xFFFF_FFFF;

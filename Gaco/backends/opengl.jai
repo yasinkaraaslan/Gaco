@@ -104,8 +104,8 @@ init :: (window: Window_Type) {
     }
 
     #if DEBUG {
-        renderer := glGetString(GL_RENDERER);
-        log("[Gaco] Selected OpenGL Renderer: %", to_string(renderer));
+        renderer_name := glGetString(GL_RENDERER);
+        log("[Gaco] OpenGL Renderer: %", to_string(renderer_name));
     }
 
 
@@ -317,9 +317,7 @@ update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 
     mip   := subresource % texture.mip_levels;
     layer := subresource / texture.mip_levels;
 
-    is_layered := texture.target == GL_TEXTURE_2D_ARRAY
-               || texture.target == GL_TEXTURE_CUBE_MAP
-               || texture.target == GL_TEXTURE_CUBE_MAP_ARRAY;
+    is_layered := is_target_layered(texture.target);
 
     if is_block_compression(texture.format) {
         bw := (cast(u32)rect.width + 3) / 4;
@@ -440,7 +438,6 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, file_name: str
     args.spirv_target_env = "vulkan1.1";
     args.defines = defines;
 
-    // If we don't set this, it fails with nvidia gpus on linux for some reason
     args.spirv_generate_non_semanantic_debug_info = false;
 
     sampler_mappings := [..]Texture_Sampler_Mapping.{allocator=temp};
@@ -459,8 +456,9 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, file_name: str
         extra_args.allocator = temp;
 
 
-        array_add(*extra_args, "-fspv-flatten-resource-arrays");
+        // array_add(*extra_args, "-fspv-flatten-resource-arrays");
         if shader_type == .Vertex {
+            array_add(*extra_args, "-fspv-preserve-interface");
             // array_add(*extra_args, "-fvk-invert-y");
         }
 
@@ -1054,6 +1052,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
         width = width,
         height = height,
         stride = bytes_per_block,
+        depth = array_count_or_depth,
         flags = flags,
         pixel_type = gl_info.upload_type,
         pixel_format = gl_info.upload_format,
@@ -1071,9 +1070,9 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     target: GLenum = GL_TEXTURE_2D;
 
     is_cube  := (flags & .Cubemap) != 0;
-    logical_array_count := array_count_or_depth;
-    if is_cube logical_array_count /= 6;
-    is_array := logical_array_count > 1;
+    if is_cube texture.depth /= 6;
+
+    is_array := texture.depth > 1;
     is_3d    := (flags & .Is_3D) != 0;
     is_msaa  := (flags & .Multisample) != 0;
 
@@ -1102,6 +1101,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     texture.target = target;
     glCreateTextures(target, 1, *texture.object);
 
+    texture.depth = array_count_or_depth;
     if is_msaa {
         if is_array {
             glTextureStorage3DMultisample(texture.object, mip_levels_or_msaa, gl_info.internal_format, width, height, array_count_or_depth, GL_TRUE);
@@ -1111,8 +1111,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     }
     else {
         if target == GL_TEXTURE_3D || target == GL_TEXTURE_2D_ARRAY || target == GL_TEXTURE_CUBE_MAP_ARRAY {
-            texture.depth = ifx target == GL_TEXTURE_CUBE_MAP_ARRAY then logical_array_count * 6 else logical_array_count;
-            glTextureStorage3D(texture.object, mip_levels, gl_info.internal_format, width, height, texture.depth);
+            glTextureStorage3D(texture.object, mip_levels, gl_info.internal_format, width, height, array_count_or_depth);
         }
         else {
             // GL_TEXTURE_2D, GL_TEXTURE_1D, and GL_TEXTURE_CUBE_MAP use 2D storage
@@ -1182,11 +1181,7 @@ bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
     if texture.flags & .Compute_RW {
         // Compute UAVs don't use samplers so no need to map
         gl_info := GL_TEXTURE_MAP_ARRAY[texture.format];
-        is_layered := texture.target == GL_TEXTURE_2D_ARRAY
-                   || texture.target == GL_TEXTURE_3D
-                   || texture.target == GL_TEXTURE_CUBE_MAP
-                   || texture.target == GL_TEXTURE_CUBE_MAP_ARRAY;
-        glBindImageTexture(slot, texture.object, 0, xx is_layered, 0, GL_READ_WRITE, gl_info.internal_format);
+        glBindImageTexture(slot, texture.object, 0, xx is_target_layered(texture.target), 0, GL_READ_WRITE, gl_info.internal_format);
         return;
     }
 
@@ -1742,6 +1737,14 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_b
     new_bytecode.count = out.count * size_of(u32);
 
     return new_bytecode, mappings;
+}
+
+is_target_layered :: (target: GLenum) -> bool {
+    return target == GL_TEXTURE_2D_ARRAY
+        || target == GL_TEXTURE_3D
+        || target == GL_TEXTURE_CUBE_MAP
+        || target == GL_TEXTURE_CUBE_MAP_ARRAY
+        || target == GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
 }
 
 using GL_State: struct {
