@@ -83,7 +83,7 @@ hide_cursor :: inline ()
 }
 
 clip_cursor :: inline (window: Window_Type) {
-    if OS == .WINDOWS {
+    #if OS == .WINDOWS {
         win32 :: #import "Windows";
         rect: win32.RECT;
         win32.GetClientRect(window, *rect);
@@ -107,7 +107,7 @@ clip_cursor :: inline (window: Window_Type) {
 
 
 unclip_cursor :: inline () {
-    if OS == .WINDOWS {
+    #if OS == .WINDOWS {
         win32 :: #import "Windows";
         win32.ClipCursor(null);
     }
