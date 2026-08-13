@@ -53,6 +53,10 @@ is_valid :: (texture: Texture) -> bool {
     return texture.texture2d != null; // and texture3d
 }
 
+is_valid ::(sampler: Sampler) -> bool {
+    return sampler.state != null;
+}
+
 is_valid :: (buffer: Buffer) -> bool {
     return buffer.buffer != null;
 }
@@ -68,6 +72,10 @@ is_valid :: (using shader: Shader) -> bool {
 is_valid :: (using render_target: Render_Target) -> bool {
     // If the first one is null then the color view is empty
     return color_views[0] || depth_stencil_view;
+}
+
+is_valid :: (timer: Timer) -> bool {
+    return disjoint_query != null && start_query != null && end_query != null;
 }
 
 init :: (window: Window_Type) {
@@ -520,13 +528,13 @@ set_scissor :: (rect: Rect) {
 
 // HLSL doesn't have a way to specify a viewport index (except for geometry shaders, which we don't support).
 // So there is no reason for a 'set_viewports'.
-set_viewport :: (info: Viewport_Info) {
+set_viewport :: (info: Viewport_Desc) {
     viewport := cast,force(D3D11_VIEWPORT)info;
     ID3D11DeviceContext_RSSetViewports(device_context, 1, *viewport);
 }
 
-get_viewport :: () -> Viewport_Info {
-    info: Viewport_Info;
+get_viewport :: () -> Viewport_Desc {
+    info: Viewport_Desc;
     count : u32 = 1;
     ID3D11DeviceContext_RSGetViewports(device_context, *count, *cast,force(D3D11_VIEWPORT)info);
     return info;

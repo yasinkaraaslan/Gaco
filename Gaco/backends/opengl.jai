@@ -47,6 +47,10 @@ is_valid :: (texture: Texture) -> bool {
     return glIsTexture(texture.object);
 }
 
+is_valid ::(sampler: Sampler) -> bool {
+    return glIsSampler(sampler.object);
+}
+
 is_valid :: (buffer: Buffer) -> bool {
     return glIsBuffer(buffer.object);
 }
@@ -64,6 +68,10 @@ is_valid :: (render_target: Render_Target) -> bool {
     return status == GL_FRAMEBUFFER_COMPLETE;
 }
 
+is_valid :: (timer: Timer) -> bool {
+    return glIsQuery(timer.start_query) && glIsQuery(timer.end_query);
+}
+
 init :: (window: WT.Window_Type) {
     MAJOR :: 4;
     MINOR :: 5;
@@ -79,6 +87,7 @@ init :: (window: WT.Window_Type) {
         if file_exists("/sys/module/nvidia") {
             setenv("__NV_PRIME_RENDER_OFFLOAD", "1", 1);
             setenv("__GLX_VENDOR_LIBRARY_NAME", "nvidia", 1);
+            // setenv("__EGL_VENDOR_LIBRARY_FILENAMES", "/usr/share/glvnd/egl_vendor.d/10_nvidia.json", 1)
             // setenv("__NV_PRIME_RENDER_OFFLOAD_PROVIDER","NVIDIA-G0", 1);
         }
     }
@@ -192,7 +201,22 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
     buffer.size = count * stride;
     buffer.stride = stride;
 
-    assert(count > 0 && stride > 0, "[Gaco] Creating a buffer with 0 size is not permitted");
+    assert(buffer.size > 0, "[Gaco] Creating a buffer with 0 size is not permitted.");
+
+    #if type == .Constant if stride % 16 != 0 {
+        message: string;
+        if debug_name
+            message = tprint("[Gaco] Buffer creation failed ('%'): Constant buffers require 16-byte aligned size (got %).", debug_name, buffer.size);
+        else
+            message = tprint("[Gaco] Buffer creation failed: Constant buffers require 16-byte aligned size (got %).", buffer.size);
+
+        log_error(message);
+
+        #if DEBUG {
+            debug_break();
+        }
+        return .{};
+    }
 
     glCreateBuffers(1, *buffer.object);
 
@@ -378,7 +402,7 @@ update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 
 }
 
 update_texture :: inline (using texture: *Texture, data: *void, subresource: u32 = 0) {
-   if flags & .Is_3D {
+    if flags & .Is_3D {
         update_texture(texture, data, Box.{0, 0, 0, cast(s32)width, cast(s32)height, cast(s32)depth}, subresource);
     } else {
         update_texture(texture, data, Rect.{0, 0, cast(s32)width, cast(s32)height}, subresource);
@@ -386,6 +410,7 @@ update_texture :: inline (using texture: *Texture, data: *void, subresource: u32
 }
 
 write_buffer :: (buffer: *Buffer, data: *void, size: int) {
+
     // Orphan the buffer
     glNamedBufferData(buffer.object, size, null, GL_DYNAMIC_DRAW);
     glNamedBufferSubData(buffer.object, 0, size, data);
@@ -692,13 +717,13 @@ set_scissor :: (using rect: Rect) {
     glScissor(x, y, cast(u32)width, cast(u32)height);
 }
 
-set_viewport :: (using info: Viewport_Info) {
+set_viewport :: (using info: Viewport_Desc) {
     glViewportIndexedf(0, x, y, width, height);
     glDepthRangef(near_depth, far_depth);
 }
 
-get_viewport :: () -> Viewport_Info {
-    info: Viewport_Info;
+get_viewport :: () -> Viewport_Desc {
+    info: Viewport_Desc;
 
     glGetFloatv(GL_VIEWPORT, *info.x);
     glGetFloatv(GL_DEPTH_RANGE, *info.near_depth);
@@ -979,12 +1004,6 @@ destroy_render_target :: (render_target: *Render_Target) {
 }
 
 resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Format.RGBA8, depth_format := Texture_Format.D24S8) -> render_target: Render_Target {
-    #if OS == .LINUX {
-        if egl_child_window != 0 {
-            XResizeWindow(x_global_display, egl_child_window, xx width, xx height);
-        }
-    }
-
     if custom_fbo != 0 {
         glDeleteFramebuffers(1, *custom_fbo);
         glDeleteTextures(1, *custom_color_texture);
@@ -1034,6 +1053,13 @@ resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Forma
     internal_width = xx width;
     internal_height = xx height;
     _, _, window_width, window_height = get_dimensions(main_window, false);
+
+    #if OS == .LINUX {
+        if egl_child_window != 0 {
+            XResizeWindow(x_global_display, egl_child_window, xx window_width, xx window_height);
+        }
+    }
+
     current_msaa = msaa;
 
     return .{custom_fbo, 1};

@@ -496,9 +496,9 @@ debug_region :: (name: string) #expand {
 }
 
 push_viewport :: (x: float, y: float, width: float, height: float, near_depth := 0.0, far_depth := 1.0) #expand {
-    viewport_info := get_viewport();
+    viewport := get_viewport();
     set_viewport(.{x,y,width,height,near_depth,far_depth});
-    defer set_viewport(viewport_info);
+    `defer set_viewport(viewport);
 }
 
 #if BACKEND == {
@@ -526,7 +526,7 @@ Texture_Sampler_Mapping :: struct {
     stage: Shader_Type;
 }
 
-Viewport_Info :: struct {
+Viewport_Desc :: struct {
     x, y, width, height: float;
     near_depth := 0.0;
     far_depth := 1.0;
