@@ -282,13 +282,9 @@ Box :: struct {
     width, height, depth: s32;
 }
 
-compile_shader :: (file_name: string, output_file_name: string, type: Shader_Type, defines := string.[]) -> bool {
-    push_allocator(temp);
-    source, ok := read_entire_file(file_name, zero_terminated=true);
-    if !ok return false;
-
-    bytecode:, ok = compile_shader_to_bytecode(source, type, file_name, defines);
-    if !ok return false;
+compile_shader_from_memory :: (source: string, type: Shader_Type, debug_file_name: string, defines := string.[]) -> string, bool {
+    bytecode, ok := compile_shader_to_bytecode(source, type, debug_file_name, defines,, temp);
+    if !ok return "", false;
 
     backend :: #ifx BACKEND == .D3D11 Shader_Backend.DXBC else Shader_Backend.SPIR_V;
 
@@ -297,7 +293,7 @@ compile_shader :: (file_name: string, output_file_name: string, type: Shader_Typ
         version = 1,
         backend = backend,
         type = type,
-        sampler_mapping_count = cast(u16)bytecode.mappings.count,
+        mapping_count = cast(u16)bytecode.mappings.count,
         vs_size = xx bytecode.vs.count,
         fs_size = xx bytecode.fs.count,
         cs_size = xx bytecode.cs.count,
@@ -309,17 +305,28 @@ compile_shader :: (file_name: string, output_file_name: string, type: Shader_Typ
     append(*sb, bytecode.vs);
     append(*sb, bytecode.fs);
     append(*sb, bytecode.cs);
-    return write_entire_file(output_file_name, *sb);
+    return builder_to_string(*sb), true;
+}
+
+compile_shader :: (file_name: string, output_file_name: string, type: Shader_Type, defines := string.[]) -> bool {
+    push_allocator(temp);
+    source, ok := read_entire_file(file_name, zero_terminated=true);
+    if !ok return false;
+
+    file_data:, ok = compile_shader_from_memory(source, type, file_name, defines);
+    if !ok return false;
+
+    return write_entire_file(output_file_name, file_data);
 }
 
 load_shader :: (file_name: string) -> Shader {
-    data, ok := read_entire_file(file_name,, temp);
+    source, ok := read_entire_file(file_name,, temp);
     if !ok  return .{};
-    return load_shader_from_memory(data, file_name);
+    return load_shader_from_memory(source, file_name);
 }
 
-load_shader_from_memory :: (data: string, debug_name := "") -> Shader {
-    cursor := data.data;
+load_shader_from_memory :: (source: string, debug_name := "") -> Shader {
+    cursor := source.data;
     header := (cast(*Shader_Header)cursor).*;
 
     if header.magic != GACO_MAGIC {
@@ -331,9 +338,9 @@ load_shader_from_memory :: (data: string, debug_name := "") -> Shader {
 
     cursor += size_of(Shader_Header);
     bytecode.mappings.data = cast(*Texture_Sampler_Mapping)cursor;
-    bytecode.mappings.count = header.sampler_mapping_count;
+    bytecode.mappings.count = header.mapping_count;
 
-    cursor += header.sampler_mapping_count * size_of(Texture_Sampler_Mapping);
+    cursor += header.mapping_count * size_of(Texture_Sampler_Mapping);
     bytecode.vs.data = cursor;
     bytecode.vs.count = header.vs_size;
 
@@ -545,7 +552,7 @@ Shader_Header :: struct {
     version: u32;
     backend: Shader_Backend;
     type: Shader_Type;
-    sampler_mapping_count: u16; // Only used for SPIR-V
+    mapping_count: u16; // Only used for SPIR-V
     vs_size: u32;
     fs_size: u32;
     cs_size: u32;

@@ -64,7 +64,7 @@ is_valid :: (render_target: Render_Target) -> bool {
     return status == GL_FRAMEBUFFER_COMPLETE;
 }
 
-init :: (window: Window_Type) {
+init :: (window: WT.Window_Type) {
     MAJOR :: 4;
     MINOR :: 5;
 
@@ -1531,7 +1531,7 @@ get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
     return input_vao;
 }
 
-// I had to reimplement this function from spv-opt because OpenGL...
+// I had to reimplement this function from spirv-opt because OpenGL...
 build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_bytecode: string, mappings: []Texture_Sampler_Mapping {
     if bytecode.count < 20 return "", .[];
 

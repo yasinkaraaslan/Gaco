@@ -70,7 +70,7 @@ is_valid :: (using render_target: Render_Target) -> bool {
     return color_views[0] || depth_stencil_view;
 }
 
-init :: (window: HWND) {
+init :: (window: Window_Type) {
     flags: D3D11_CREATE_DEVICE_FLAG;
     #if DEBUG flags |= .DEBUG;
     feature_levels := D3D_FEATURE_LEVEL.[._11_1];
@@ -1141,7 +1141,7 @@ using D3D11_State: struct {
 
     rasterizer_table: Table(Rasterizer_Desc, *ID3D11RasterizerState, get_plain_old_data_hash, compare_plain_old_data);
 
-    // We can't use our own description because it doesn't map clearly
+    // We can't use our own description because it doesn't map exactly
     blend_table: Table(D3D11_BLEND_DESC, *ID3D11BlendState, get_plain_old_data_hash, compare_plain_old_data);
 
     depth_stencil_table: Table(Depth_Stencil_Desc, *ID3D11DepthStencilState, get_plain_old_data_hash, compare_plain_old_data);
@@ -1483,3 +1483,4 @@ ID3DUserDefinedAnnotation_VTable :: struct {
 #import "dxgi";
 #import "Windows";
 #import "Windows_Utf8";
+#import "Window_Type";
