@@ -157,11 +157,11 @@ Stencil_Op :: enum u8 {
     Keep :: 1;
     Zero;
     Replace;
-    Incr_Wrap;
-    Decr_Wrap;
-    Invert;
     Incr;
     Decr;
+    Invert;
+    Incr_Wrap;
+    Decr_Wrap;
 }
 
 Blend :: enum u8 {

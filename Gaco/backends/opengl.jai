@@ -231,6 +231,7 @@ bind_buffer :: (buffer: Buffer(.Vertex), slot: u32 = 0, offset: u32 = 0) {
 
 bind_buffer :: (buffer: Buffer(.Index)) {
     assert(buffer.stride == 2 || buffer.stride == 4);
+
     current_index_stride = buffer.stride;
     bound_index_buffer = buffer.object;
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer.object);
@@ -559,7 +560,6 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type, debu
             glDeleteProgram(program);
             `return .{};
         }
-
         return program;
     }
 
@@ -608,12 +608,9 @@ clear :: (render_target: Render_Target, color: Vector4, depth := 1.0, stencil: u
         glClearStencil(cast(GLint)stencil);
 
         mask: GLbitfield;
-        #if flags & .Color
-            mask |= GL_COLOR_BUFFER_BIT;
-        #if flags & .Depth
-            mask |= GL_DEPTH_BUFFER_BIT;
-        #if flags & .Stencil
-            mask |= GL_STENCIL_BUFFER_BIT;
+        #if flags & .Color   mask |= GL_COLOR_BUFFER_BIT;
+        #if flags & .Depth   mask |= GL_DEPTH_BUFFER_BIT;
+        #if flags & .Stencil mask |= GL_STENCIL_BUFFER_BIT;
         glClear(mask);
     } else {
         #if flags & .Color {
@@ -816,16 +813,16 @@ set_blend_state :: (descs: []Blend_Desc, alpha_to_coverage_enable := false, blen
 set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
     if desc.depth_enable {
         glEnable(GL_DEPTH_TEST);
-        glDepthMask(desc.depth_write);
         glDepthFunc(GL_COMPARISON_MAP[desc.depth_func]);
     }
     else {
         glDisable(GL_DEPTH_TEST);
     }
 
+    glDepthMask(desc.depth_write);
+
     if desc.stencil_enable {
         glEnable(GL_STENCIL_TEST);
-        glStencilMask(desc.stencil_write_mask);
 
         func_and_op :: (using face_desc: Stencil_Face_Desc, front: bool) #expand {
             face := ifx front GL_FRONT.(u32) else GL_BACK;
@@ -839,6 +836,8 @@ set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
     else {
         glDisable(GL_STENCIL_TEST);
     }
+
+    glStencilMask(desc.stencil_write_mask);
 }
 
 draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex: s32 = 0) {
@@ -889,7 +888,10 @@ present :: (interval: u32 = 1) {
         set_swap_interval(xx interval);
     }
 
+    current_fbo: GLuint;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, cast(*s32)*current_fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    defer glBindFramebuffer(GL_FRAMEBUFFER, current_fbo);
 
     // Disable when blitting to avoid unwanted gamma correction.
     glDisable(GL_FRAMEBUFFER_SRGB);
@@ -931,11 +933,11 @@ present :: (interval: u32 = 1) {
         eglSwapBuffers(egl_display, egl_surface);
     }
 
-    glBindFramebuffer(GL_FRAMEBUFFER, custom_fbo);
 }
 
 create_render_target :: (color_textures: []Texture, depth_stencil_texture: Texture, debug_name := "") -> Render_Target {
     render_target: Render_Target;
+
     draw_buffers := NewArray(color_textures.count, GLenum,, temp);
     glCreateFramebuffers(1, *render_target.framebuffer);
 
@@ -954,6 +956,7 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
         glNamedFramebufferTexture(render_target.framebuffer, attachment, depth_stencil_texture.object, 0);
     }
 
+    render_target.color_view_count = cast(u32)draw_buffers.count;
     glNamedFramebufferDrawBuffers(render_target.framebuffer, cast(u32)draw_buffers.count, draw_buffers.data);
 
     status := glCheckNamedFramebufferStatus(render_target.framebuffer, GL_FRAMEBUFFER);
@@ -962,7 +965,6 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
         return .{};
     }
 
-    render_target.color_view_count = cast(u32)draw_buffers.count;
     if debug_name  gl_set_debug_name(render_target.framebuffer, GL_FRAMEBUFFER, debug_name);
 
     return render_target;
@@ -1188,13 +1190,22 @@ bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
     assert(texture.flags & .Sampled != 0, "[Gaco] Texture must have Sampled flag to be bound to a shader.");
 
     search_and_bind :: (mappings: []Texture_Sampler_Mapping, $stage: Shader_Type) #expand {
+        found := false;
+
         index := `slot;
         #if stage == .Fragment index += 16;
         else #if stage == .Compute index += 32;
         for mappings {
             if it.stage == stage && it.texture_index == index {
                 glBindTextureUnit(cast(GLuint)it.mapped_index, texture.object);
+                found = true;
             }
+        }
+
+        // If it's a raw Texture2D without a sampler (e.g., using .Load()),
+        // it won't be in the mappings. Bind it directly to the shifted binding index.
+        if !found {
+            glBindTextureUnit(cast(GLuint)index, texture.object);
         }
     }
 
@@ -1548,8 +1559,8 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_b
     loads         := NewArray(id_bound, u32,, temp);       // Result ID -> Variable ID it loaded from
     id_remap      := NewArray(id_bound, u32,, temp);       // Old ID -> New ID to replace it with
     deleted_ids   := NewArray(id_bound, bool,, temp);      // IDs marked for deletion
-    inst_ptrs     := NewArray(id_bound, *[..]u32,, temp);  // ID -> Pointer to instruction data
-    binding_insts := NewArray(id_bound, *[..]u32,, temp);
+    inst_ptrs     := NewArray(id_bound, [..]u32,, temp);  // ID -> Pointer to instruction data
+    binding_insts := NewArray(id_bound, [..]u32,, temp);
 
     for i: 0..id_bound-1 {
         bindings[i] = 0xFFFF_FFFF;
@@ -1558,30 +1569,42 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_b
         deleted_ids[i] = false;
     }
 
-    instructions: [..] *[..]u32;
+    instructions: [..] [..]u32;
     instructions.allocator = temp;
 
     // Parsing the instructions
     i := 5;
     while i < num_words {
         count := words[i] >> 16;
-        inst := New([..]u32,, temp);
-        array_reserve(inst, count);
-        for w: 0..count-1 array_add(inst, words[i + w]);
+        inst := [..]u32.{allocator=temp};
+        array_reserve(*inst, count);
+        for w: 0..count-1 array_add(*inst, words[i + w]);
 
-        op := cast(SpvOp) (inst.*[0] & 0xFFFF);
+        op := cast(SpvOp) (inst[0] & 0xFFFF);
         if op == {
             case .Decorate;
-                decoration := cast(SpvDecoration) inst.*[2];
+                decoration := cast(SpvDecoration) inst[2];
                 if decoration == .Binding {
-                    bindings[inst.*[1]] = inst.*[3];
-                    binding_insts[inst.*[1]] = inst; // Save the instruction pointer to edit later
+                    bindings[inst[1]] = inst[3];
+                    binding_insts[inst[1]] = inst; // Save the instruction pointer to edit later
+                }
+
+                // SPIR-V produced with spirv_target_env=vulkan1.1 uses VertexIndex/InstanceIndex,
+                // but GL_ARB_gl_spirv expects VertexId/InstanceId.
+                else if decoration == .BuiltIn {
+                    builtin_value := cast(*SpvBuiltIn)*inst[3];
+                    if builtin_value.* == .VertexIndex {
+                        builtin_value.* = .VertexId;
+                    }
+                    else if builtin_value.* == .InstanceIndex {
+                        builtin_value.* = .InstanceId;
+                    }
                 }
             case .Load;
-                loads[inst.*[2]] = inst.*[3];
-                inst_ptrs[inst.*[2]] = inst;
+                loads[inst[2]] = inst[3];
+                inst_ptrs[inst[2]] = inst;
             case .Variable;
-                inst_ptrs[inst.*[2]] = inst;
+                inst_ptrs[inst[2]] = inst;
         }
 
         array_add(*instructions, inst);
@@ -1591,9 +1614,8 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_b
     mappings: [..]Texture_Sampler_Mapping;
 
     // Helper: Find an existing Pointer type for our combined SampledImage, or inject a new one.
-    get_or_create_ptr_type :: (type_id: u32, insts: *[..] *[..]u32, bound: *u32) -> u32 {
-        for inst_ptr: insts.* {
-            inst := inst_ptr.*;
+    get_or_create_ptr_type :: (type_id: u32, insts: *[..] [..]u32, bound: *u32) -> u32 {
+        for inst: insts.* {
             op := cast(SpvOp) (inst[0] & 0xFFFF);
             if op == .TypePointer {
                 if inst[2] == 0 && inst[3] == type_id return inst[1];
@@ -1601,16 +1623,16 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_b
         }
         new_id := bound.*;
         bound.* += 1;
-        new_inst := New([..]u32,, temp);
-        array_add(new_inst, (4 << 16) | cast(u32) SpvOp.TypePointer);
-        array_add(new_inst, new_id);
-        array_add(new_inst, 0);
-        array_add(new_inst, type_id);
+        new_inst := [..]u32.{allocator=temp};
+        array_add(*new_inst, (4 << 16) | cast(u32) SpvOp.TypePointer);
+        array_add(*new_inst, new_id);
+        array_add(*new_inst, 0);
+        array_add(*new_inst, type_id);
 
         // Inject before the first Variable or Function definition
         insert_idx := insts.count;
         for idx: 0..insts.count-1 {
-            op := cast(SpvOp) (insts.*[idx].*[0] & 0xFFFF);
+            op := cast(SpvOp) (insts.*[idx][0] & 0xFFFF);
             if op == .Variable || op == .Function {
                 insert_idx = idx;
                 break;
@@ -1623,15 +1645,14 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_b
     // Look for where a separate Texture and Sampler are merged (OpSampledImage).
     // We rewrite the original Texture variable to be a combined SampledImage instead,
     // and delete the separate Sampler.
-    for inst_ptr: instructions {
-        inst := inst_ptr;
-        op := cast(SpvOp) (inst.*[0] & 0xFFFF);
+    for inst: instructions {
+        op := cast(SpvOp) (inst[0] & 0xFFFF);
 
         if op == .SampledImage {
-            sampled_img_type := inst.*[1];
-            sampled_img_id   := inst.*[2];
-            image_load_id    := inst.*[3];
-            sampler_load_id  := inst.*[4];
+            sampled_img_type := inst[1];
+            sampled_img_id   := inst[2];
+            image_load_id    := inst[3];
+            sampler_load_id  := inst[4];
 
             image_var_id   := loads[image_load_id];
             sampler_var_id := loads[sampler_load_id];
@@ -1664,7 +1685,7 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_b
                 // Overwrite the original Texture's SPIR-V OpDecorate Binding with the new mapped binding slot
                 decorate_inst := binding_insts[image_var_id];
                 if decorate_inst {
-                    decorate_inst.*[3] = cast(u32) mapped_idx;
+                    decorate_inst[3] = cast(u32) mapped_idx;
                 }
             }
 
@@ -1674,19 +1695,19 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_b
             // Change the Texture Variable's type to pointer-to-SampledImage
             ptr_type := get_or_create_ptr_type(sampled_img_type, *instructions, *id_bound);
             var_inst := inst_ptrs[image_var_id];
-            if var_inst var_inst.*[1] = ptr_type;
+            if var_inst var_inst[1] = ptr_type;
 
             // Change all OpLoads of this texture variable to return a SampledImage
             for ptr: instructions {
-                if cast(SpvOp) (ptr.*[0] & 0xFFFF) == .Load {
-                    if ptr.*[3] == image_var_id ptr.*[1] = sampled_img_type;
+                if cast(SpvOp) (ptr[0] & 0xFFFF) == .Load {
+                    if ptr[3] == image_var_id ptr[1] = sampled_img_type;
                 }
             }
 
             // Mark the Sampler definitions and the OpSampledImage itself for deletion (.Nop)
-            inst.*[0] = 0;
-            if sampler_var_id && inst_ptrs[sampler_var_id]   inst_ptrs[sampler_var_id].*[0] = 0;
-            if sampler_load_id && inst_ptrs[sampler_load_id] inst_ptrs[sampler_load_id].*[0] = 0;
+            inst[0] = 0;
+            if sampler_var_id && inst_ptrs[sampler_var_id]   inst_ptrs[sampler_var_id][0] = 0;
+            if sampler_load_id && inst_ptrs[sampler_load_id] inst_ptrs[sampler_load_id][0] = 0;
 
             deleted_ids[sampler_var_id] = true;
             deleted_ids[sampler_load_id] = true;
@@ -1695,14 +1716,13 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_b
 
 
     // If we leave OpNames or OpDecorates pointing to deleted samplers, validation will fail.
-    for inst_ptr: instructions {
-        inst := inst_ptr.*;
+    for inst: instructions {
         op := cast(SpvOp) (inst[0] & 0xFFFF);
 
         if op == .Name || op == .Decorate {
             target_id := inst[1];
             if target_id < deleted_ids.count && deleted_ids[target_id] {
-                inst_ptr.*[0] = 0; // Nop it out
+                inst[0] = 0; // Nop it out
             }
         }
     }
@@ -1712,8 +1732,7 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_b
     for w: 0..4 array_add(*out, words[w]);
     out[3] = id_bound;
 
-    for inst_ptr: instructions {
-        inst := inst_ptr.*;
+    for inst: instructions {
         op := cast(SpvOp) (inst[0] & 0xFFFF);
 
         if op == .Nop continue;
@@ -1858,7 +1877,7 @@ GL_TEXTURE_MAP_ARRAY :: GL_Format_Info.[
 
 GL_COMPARISON_MAP :: GLenum.[GL_NONE, GL_NEVER, GL_LESS, GL_EQUAL, GL_LEQUAL, GL_GREATER, GL_NOTEQUAL, GL_GEQUAL, GL_ALWAYS];
 
-GL_STENCIL_OP_MAP :: GLenum.[GL_NONE, GL_KEEP, GL_ZERO, GL_REPLACE, GL_INCR_WRAP, GL_DECR_WRAP, GL_INVERT, GL_INCR, GL_DECR];
+GL_STENCIL_OP_MAP :: GLenum.[GL_NONE, GL_KEEP, GL_ZERO, GL_REPLACE, GL_INCR, GL_DECR, GL_INVERT, GL_INCR_WRAP, GL_DECR_WRAP];
 
 GL_BLEND_MAP :: GLenum.[
     GL_ZERO,
