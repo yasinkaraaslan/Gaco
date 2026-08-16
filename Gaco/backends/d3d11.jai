@@ -284,35 +284,21 @@ bind_buffer :: (buffer: Buffer(.Indirect), slot: u32 = 0) {
     ID3D11DeviceContext_CSSetUnorderedAccessViews(device_context, slot, 1, *buffer.uav, null);
 }
 
-map_buffer :: (buffer: *Buffer, flags: Map_Flags) -> *void {
-    subresource: D3D11_MAPPED_SUBRESOURCE;
-    d3d11_flags: D3D11_MAP;
-    if flags & .Read  d3d11_flags |= .READ;
-    if flags & .Write {
-        #if buffer.type == .Copy d3d11_flags |= .WRITE;
-        else                     d3d11_flags |= .WRITE_DISCARD;
-    }
-
-    hr := ID3D11DeviceContext_Map(device_context, buffer.buffer, 0, d3d11_flags, 0, *subresource);
-    check_hr("ID3D11DeviceContext.Map", #code return null);
-    return subresource.pData;
+// You can ignore 'busy' if you didn't specify .Non_Blocking
+map_buffer :: (buffer: *Buffer, flags: Map_Flags) -> *void, busy: bool {
+    data, busy := d3d11_map_resource(buffer.buffer, flags, buffer.type == .Copy, 0);
+    return data, busy;
 }
 
 unmap_buffer :: (buffer: *Buffer) {
     ID3D11DeviceContext_Unmap(device_context, buffer.buffer, 0);
 }
 
-map_texture :: (texture: *Texture, flags: Map_Flags) -> *void {
-    // @Cutnpaste from the top
-    d3d11_subresource: D3D11_MAPPED_SUBRESOURCE;
-    d3d11_flags: D3D11_MAP;
-
-    if flags & .Read  d3d11_flags |= .READ;
-    if flags & .Write d3d11_flags |= .WRITE_DISCARD;
-
-    hr := ID3D11DeviceContext_Map(device_context, texture.texture2d, 0, d3d11_flags, 0, *d3d11_subresource);
-    check_hr("ID3D11DeviceContext.Map", #code return null);
-    return d3d11_subresource.pData;
+// You can ignore 'busy' if you didn't specify .Non_Blocking
+map_texture :: (texture: *Texture, flags: Map_Flags) -> *void, busy: bool {
+    assert(texture.flags & .Copy != 0, "[Gaco] Only Copy textures can be mapped to read.");
+    data, busy := d3d11_map_resource(texture.texture2d, flags, true, 0);
+    return data, busy;
 }
 
 unmap_texture :: (texture: *Texture) {
@@ -1199,6 +1185,41 @@ get_depth_format_variants :: (format: Texture_Format) -> texture_format: DXGI_FO
     }
     assert(false);
     return .UNKNOWN, .UNKNOWN; // Unreachable but to shut the compiler
+}
+
+d3d11_map_resource :: (resource: *ID3D11Resource, flags: Map_Flags, $copy: bool, subresource_index: u32) -> *void, busy: bool {
+    subresource: D3D11_MAPPED_SUBRESOURCE;
+    map_type: D3D11_MAP;
+    map_flags: u32 = 0;
+
+    if flags & .Read && flags & .Write {
+        map_type = .READ_WRITE;
+    }
+    else if flags & .Read {
+        map_type = .READ;
+    }
+    else if flags & .Write {
+        #if copy {
+            map_type = .WRITE;
+        } else {
+            map_type = .WRITE_DISCARD;
+        }
+    }
+
+    // TODO(Yasin): WRITE_NO_OVERWRITE
+
+    if flags & .Non_Blocking {
+        map_flags |= xx D3D11_MAP_FLAG.DO_NOT_WAIT;
+    }
+
+    hr := ID3D11DeviceContext_Map(device_context, resource, subresource_index, map_type, map_flags, *subresource);
+    if hr == DXGI_ERROR_WAS_STILL_DRAWING {
+        return null, true;
+    }
+
+
+    check_hr("ID3D11DeviceContext.Map", #code return null, false);
+    return subresource.pData, false;
 }
 
 get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {

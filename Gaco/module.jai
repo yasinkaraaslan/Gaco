@@ -61,6 +61,7 @@ Buffer_Usage :: enum u32 {
 Map_Flags :: enum_flags u32 {
     Read;
     Write;
+    Non_Blocking;
 }
 
 Texture_Flags :: enum_flags u32 {

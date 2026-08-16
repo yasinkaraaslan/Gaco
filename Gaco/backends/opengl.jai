@@ -12,6 +12,7 @@ Buffer :: struct (type: Buffer_Type) {
     object: GLuint;
     size: u32;
     stride: u32;
+    fence: GLsync;
 }
 
 Texture :: struct {
@@ -25,6 +26,7 @@ Texture :: struct {
     pixel_format: GLuint;
     pixel_type: GLuint;
     pbo_size: u32;
+    fence: GLsync;
 }
 
 Sampler :: struct {
@@ -221,7 +223,7 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
         storage_flags: GLbitfield;
 
         #if type == .Copy {
-            storage_flags |= GL_MAP_READ_BIT | GL_CLIENT_STORAGE_BIT;
+            storage_flags |= GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_CLIENT_STORAGE_BIT;
         }
         else #if type != .Structured_RW if usage == .Default {
             storage_flags |= GL_DYNAMIC_STORAGE_BIT;
@@ -286,44 +288,42 @@ bind_buffer :: (buffer: Buffer(.Indirect), slot: u32 = 0) {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot, buffer.object);
 }
 
-map_buffer :: (buffer: *Buffer, flags: Map_Flags) -> *void {
-    access: GLbitfield;
-
-    if flags & .Read {
-        access |= GL_MAP_READ_BIT;
-    }
-
-    if flags & .Write {
-        access |= GL_MAP_WRITE_BIT;
-
-        #if buffer.type != .Copy {
-            access |= GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_UNSYNCHRONIZED_BIT;
-        }
-    }
-
-    return glMapNamedBufferRange(buffer.object, 0, buffer.size, access);
+// You can ignore 'busy' if you didn't specify .Non_Blocking
+map_buffer :: (buffer: *Buffer, flags: Map_Flags) -> *void, busy: bool {
+    data, busy := gl_map_buffer(buffer.object, buffer.size, flags, buffer.type == .Copy, buffer.fence);
+    return data, busy;
 }
 
 unmap_buffer :: (buffer: *Buffer) {
     if glUnmapNamedBuffer(buffer.object) == GL_FALSE {
         log_error("[Gaco] Couldn't unmap buffer!");
     }
+
+    if buffer.fence {
+        glDeleteSync(buffer.fence);
+        buffer.fence = 0;
+    }
 }
+
 
 // This is actually here for api compatibility with D3D11.
 // The 'Texture' we have here is a pixel buffer object. So we assert that before doing anything.
-map_texture :: (texture: *Texture, flags: Map_Flags) -> *void {
+// You can ignore 'busy' if you didn't specify .Non_Blocking
+map_texture :: (texture: *Texture, flags: Map_Flags) -> *void, busy: bool {
     assert(texture.flags & .Copy != 0, "[Gaco] Only copy textures can be mapped to read.");
-    access: GLbitfield;
-    if flags & .Read  access |= GL_MAP_READ_BIT;
-    if flags & .Write access |= GL_MAP_WRITE_BIT;
-    return glMapNamedBufferRange(texture.object, 0, texture.pbo_size, access);
+    data, busy := gl_map_buffer(texture.object, texture.pbo_size, flags, true, texture.fence);
+    return data, busy;
 }
 
 unmap_texture :: (texture: *Texture) {
     assert(texture.flags & .Copy != 0);
     if glUnmapNamedBuffer(texture.object) == GL_FALSE {
         log_error("[Gaco] Couldn't unmap texture!");
+    }
+
+    if texture.fence {
+        glDeleteSync(texture.fence);
+        texture.fence = 0;
     }
 }
 
@@ -412,14 +412,27 @@ write_buffer :: (buffer: *Buffer, data: *void, size: int) {
 
 copy_buffer :: (from: Buffer, to: *Buffer) {
     glCopyNamedBufferSubData(from.object, to.object, 0, 0, from.size);
+
+    #if to.type == .Copy {
+        if to.fence glDeleteSync(to.fence);
+        to.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    }
 }
 
 destroy_buffer :: (buffer: *Buffer) {
+    if buffer.fence {
+        glDeleteSync(buffer.fence);
+        buffer.fence = 0;
+    }
     glDeleteBuffers(1, *buffer.object);
     buffer.object = 0;
 }
 
 destroy_texture :: (texture: *Texture) {
+    if texture.fence {
+        glDeleteSync(texture.fence);
+        texture.fence = 0;
+    }
     if texture.flags & .Copy
         glDeleteBuffers(1, *texture.object);
     else
@@ -1227,6 +1240,9 @@ copy_texture :: (from: Texture, to: *Texture, source_rect: Rect) {
         glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
         glGetTextureSubImage(from.object, 0, source_rect.x, source_rect.y, 0, cast(u32)source_rect.width, cast(u32)source_rect.height, 1, from.pixel_format, from.pixel_type, to.pbo_size, null);
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
+        if to.fence glDeleteSync(to.fence);
+        to.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     }
     else {
         // @Incomplete: Only 2D textures.
@@ -1235,13 +1251,31 @@ copy_texture :: (from: Texture, to: *Texture, source_rect: Rect) {
 }
 
 copy_texture :: (from: Texture, to: *Texture, source_box: Box) {
-    glCopyImageSubData(
-        from.object, from.target, 0,
-        source_box.x, source_box.y, source_box.z,
-        to.object, to.target, 0,
-        0, 0, 0,
-        cast(u32)source_box.width, cast(u32)source_box.height, cast(u32)source_box.depth
-    );
+    if to.flags & .Copy {
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glGetTextureSubImage(
+            from.object, 0,
+            source_box.x, source_box.y, source_box.z,
+            cast(u32)source_box.width, cast(u32)source_box.height, cast(u32)source_box.depth,
+            from.pixel_format, from.pixel_type,
+            to.pbo_size, null
+        );
+        glPixelStorei(GL_PACK_ALIGNMENT, 4);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
+        if to.fence glDeleteSync(to.fence);
+        to.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    }
+    else {
+        glCopyImageSubData(
+            from.object, from.target, 0,
+            source_box.x, source_box.y, source_box.z,
+            to.object, to.target, 0,
+            0, 0, 0,
+            cast(u32)source_box.width, cast(u32)source_box.height, cast(u32)source_box.depth
+        );
+    }
 }
 
 copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u32 = 0) {
@@ -1289,6 +1323,7 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
 
     if to.flags & .Copy {
         glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
         glGetTextureSubImage(
             final_tex, 0,
@@ -1299,6 +1334,10 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
         );
 
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        glPixelStorei(GL_PACK_ALIGNMENT, 4);
+
+        if to.fence glDeleteSync(to.fence);
+        to.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     }
     else {
         glCopyImageSubData(
@@ -1796,6 +1835,34 @@ flush_graphics_bindings :: () {
 
 flush_compute_bindings :: () {
     if cs_mappings flush_resource_bindings(cs_mappings, .Compute);
+}
+
+gl_map_buffer :: (object: GLuint, size: u32, flags: Map_Flags, $copy: bool, fence: GLsync) -> *void, busy: bool {
+    if flags & .Non_Blocking && fence {
+        status := glClientWaitSync(fence, 0, 0);
+        if status == GL_TIMEOUT_EXPIRED {
+            return null, true;
+        }
+        if status == GL_WAIT_FAILED {
+            log_error("[Gaco] glClientWaitSync failed.");
+            return null, false;
+        }
+    }
+
+    access: GLbitfield;
+    if flags & .Read  access |= GL_MAP_READ_BIT;
+    if flags & .Write {
+        access |= GL_MAP_WRITE_BIT;
+        #if !copy access |= GL_MAP_INVALIDATE_BUFFER_BIT;
+    }
+
+    ptr := glMapNamedBufferRange(object, 0, size, access);
+    if !ptr {
+        log_error("[Gaco] Couldn't map object!");
+        return null, false;
+    }
+
+    return ptr, false;
 }
 
 is_target_layered :: (target: GLenum) -> bool {
