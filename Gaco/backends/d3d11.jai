@@ -100,9 +100,11 @@ init :: (window: Window_Type) {
     swap_chain_desc := DXGI_SWAP_CHAIN_DESC1.{
         Width = 0, Height = 0, // Get from the window.
         Format = .R8G8B8A8_UNORM,
-        BufferCount = 1,
+        BufferCount = 2,
         BufferUsage = .RENDER_TARGET_OUTPUT,
         SampleDesc = .{Count = 1, Quality = 0},
+        SwapEffect = .FLIP_DISCARD,
+        Flags = xx DXGI_SWAP_CHAIN_FLAG.ALLOW_TEARING
     };
 
     dxgi_factory: *IDXGIFactory2;
@@ -653,9 +655,14 @@ present :: (interval: u32 = 1) {
         custom_color_texture.texture2d, 0,  // Source (multisampled offscreen target)
         DXGI_FORMAT_MAP[custom_color_texture.format]
     );
-
     IUnknown_Release(back_buffer);
-    hr := IDXGISwapChain_Present(swap_chain, interval, 0);
+
+    present_flags: DXGI_PRESENT;
+    if interval == 0 {
+        present_flags |= .ALLOW_TEARING;
+    }
+
+    hr := IDXGISwapChain_Present(swap_chain, interval, xx present_flags);
     check_hr("IDXGISwapChain_Present", #code {});
 }
 
@@ -708,7 +715,7 @@ resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Forma
 
     set_render_target(.{});
 
-    hr := IDXGISwapChain_ResizeBuffers(swap_chain, 0, cast(u32)width, cast(u32)height, .UNKNOWN, 0);
+    hr := IDXGISwapChain_ResizeBuffers(swap_chain, 0, cast(u32)width, cast(u32)height, .UNKNOWN, xx DXGI_SWAP_CHAIN_FLAG.ALLOW_TEARING);
     check_hr("IDXGISwapChain.ResizeBuffers", #code `return .{});
 
     back_buffer: Texture;
