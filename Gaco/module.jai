@@ -524,7 +524,10 @@ Texture_Sampler_Mapping :: struct {
     texture_index: u8;
     sampler_index: u8;
     stage: Shader_Type;
+
+    NO_SAMPLER :: 0xFF;
 }
+
 
 Viewport_Desc :: struct {
     x, y, width, height: float;

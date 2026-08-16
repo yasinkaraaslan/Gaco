@@ -108,6 +108,7 @@ init :: (window: WT.Window_Type) {
 
     gl_load(*gl);
     major, minor := gl_get_version();
+
     if major < 4 || minor < 5 { // We support 4.5 and require SPIR-V extension.
         log_error("[Gaco] Unsupported GL version: %.%, need at least 4.5", major, minor);
     }
@@ -164,13 +165,7 @@ init :: (window: WT.Window_Type) {
     set_swap_interval(0);
     _, _, window_width, window_height = get_dimensions(main_window, false);
 
-    default_sampler = create_sampler(); // To be the same with d3d11
-    max_units: GLint;
-    glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, *max_units);
-    limit := ifx max_units > 0 then max_units else 96;
-    for 0..limit-1 {
-        glBindSampler(cast(u32)it, default_sampler.object);
-    }
+    default_sampler = create_sampler();
 }
 
 deinit :: () {
@@ -263,23 +258,23 @@ bind_buffer :: (buffer: Buffer(.Index)) {
 
 bind_buffer :: (buffer: Buffer(.Constant), slot: u32 = 0, bind_to: Shader_Type) {
     if bind_to & .Vertex
-        glBindBufferBase(GL_UNIFORM_BUFFER, slot, buffer.object);
+        glBindBufferBase(GL_UNIFORM_BUFFER, slot + VS_SHIFT, buffer.object);
 
     if bind_to & .Fragment
-        glBindBufferBase(GL_UNIFORM_BUFFER, slot + 16, buffer.object);
+        glBindBufferBase(GL_UNIFORM_BUFFER, slot + FS_SHIFT, buffer.object);
 
     if bind_to & .Compute
-        glBindBufferBase(GL_UNIFORM_BUFFER, slot + 32, buffer.object);
+        glBindBufferBase(GL_UNIFORM_BUFFER, slot + CS_SHIFT, buffer.object);
 
 }
 
 bind_buffer :: (buffer: Buffer(.Structured), slot: u32 = 0, bind_to: Shader_Type) {
     if bind_to & .Vertex
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot, buffer.object);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot + VS_SHIFT, buffer.object);
     if bind_to & .Fragment
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot+16, buffer.object);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot + FS_SHIFT, buffer.object);
     if bind_to & .Compute
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot+32, buffer.object);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot + CS_SHIFT, buffer.object);
 }
 
 bind_buffer :: (buffer: Buffer(.Structured_RW), slot: u32 = 0) {
@@ -410,7 +405,6 @@ update_texture :: inline (using texture: *Texture, data: *void, subresource: u32
 }
 
 write_buffer :: (buffer: *Buffer, data: *void, size: int) {
-
     // Orphan the buffer
     glNamedBufferData(buffer.object, size, null, GL_DYNAMIC_DRAW);
     glNamedBufferSubData(buffer.object, 0, size, data);
@@ -494,17 +488,17 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, file_name: str
 
         if shader_type == {
         case .Vertex;
-            t_shift = "0";
-            b_shift = "0";
-            s_shift = "0";
+            t_shift = VS_SHIFT_STR;
+            b_shift = VS_SHIFT_STR;
+            s_shift = VS_SHIFT_STR;
         case .Fragment;
-            t_shift = "16";
-            b_shift = "16";
-            s_shift = "16";
+            t_shift = FS_SHIFT_STR;
+            b_shift = FS_SHIFT_STR;
+            s_shift = FS_SHIFT_STR;
         case .Compute;
-            t_shift = "32";
-            b_shift = "32";
-            s_shift = "32";
+            t_shift = CS_SHIFT_STR;
+            b_shift = CS_SHIFT_STR;
+            s_shift = CS_SHIFT_STR;
         }
 
         shift_args := string.[
@@ -519,8 +513,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, file_name: str
         if !result {
             `return .{}, false;
         }
-        new_bytecode, mappings := build_combined_image_samplers(cast(string)result, shader_type);
-        array_add(*`sampler_mappings, ..mappings);
+        new_bytecode := build_combined_image_samplers(cast(string)result, shader_type, *sampler_mappings);
         return new_bytecode;
     }
 
@@ -866,6 +859,7 @@ set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
 }
 
 draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex: s32 = 0) {
+    flush_graphics_bindings();
     #if indexed {
         format := ifx current_index_stride == 4 cast(u32)GL_UNSIGNED_INT else cast(u32)GL_UNSIGNED_SHORT;
         glDrawElementsBaseVertex(current_primitive_mode, count, format, cast(*void)(current_index_stride * first), base_vertex);
@@ -876,6 +870,7 @@ draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex: s32 = 0) {
 }
 
 draw_instanced :: ($indexed: bool, count: u32, instance_count: u32, first: u32 = 0, first_instance: u32 = 0, base_vertex: s32 = 0) {
+    flush_graphics_bindings();
     format := ifx current_index_stride == 4 cast(u32)GL_UNSIGNED_INT else cast(u32)GL_UNSIGNED_SHORT;
     #if indexed {
         glDrawElementsInstancedBaseVertexBaseInstance(current_primitive_mode, count, format, cast(*void)(current_index_stride * first), instance_count, base_vertex, first_instance);
@@ -886,6 +881,7 @@ draw_instanced :: ($indexed: bool, count: u32, instance_count: u32, first: u32 =
 }
 
 draw_indirect :: ($indexed: bool, buffer: Buffer(.Indirect), byte_offset: u32 = 0) {
+    flush_graphics_bindings();
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, buffer.object);
     #if indexed {
         format := ifx current_index_stride == 4 cast(u32)GL_UNSIGNED_INT else cast(u32)GL_UNSIGNED_SHORT;
@@ -898,11 +894,13 @@ draw_indirect :: ($indexed: bool, buffer: Buffer(.Indirect), byte_offset: u32 = 
 
 
 dispatch_compute :: (num_groups_x: u32, num_groups_y: u32, num_groups_z: u32) {
+    flush_compute_bindings();
     glDispatchCompute(num_groups_x, num_groups_y, num_groups_z);
     glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
 }
 
 dispatch_compute_indirect :: (buffer: Buffer(.Indirect), byte_offset: u32 = 0) {
+    flush_compute_bindings();
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, buffer.object);
     glDispatchComputeIndirect(cast(GLintptr)byte_offset);
     glMemoryBarrier(GL_COMMAND_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
@@ -1215,32 +1213,9 @@ bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
 
     assert(texture.flags & .Sampled != 0, "[Gaco] Texture must have Sampled flag to be bound to a shader.");
 
-    search_and_bind :: (mappings: []Texture_Sampler_Mapping, $stage: Shader_Type) #expand {
-        found := false;
-
-        index := `slot;
-        #if stage == .Fragment index += 16;
-        else #if stage == .Compute index += 32;
-        for mappings {
-            if it.stage == stage && it.texture_index == index {
-                glBindTextureUnit(cast(GLuint)it.mapped_index, texture.object);
-                found = true;
-            }
-        }
-
-        // If it's a raw Texture2D without a sampler (e.g., using .Load()),
-        // it won't be in the mappings. Bind it directly to the shifted binding index.
-        if !found {
-            glBindTextureUnit(cast(GLuint)index, texture.object);
-        }
-    }
-
-    if bind_to & .Vertex
-        search_and_bind(vs_mappings, .Vertex);
-    if bind_to & .Fragment
-        search_and_bind(fs_mappings, .Fragment);
-    if bind_to & .Compute
-        search_and_bind(cs_mappings, .Compute);
+    if bind_to & .Vertex   bound_textures[slot + VS_SHIFT] = texture.object;
+    if bind_to & .Fragment bound_textures[slot + FS_SHIFT] = texture.object;
+    if bind_to & .Compute  bound_textures[slot + CS_SHIFT] = texture.object;
 }
 
 copy_texture :: inline (from: Texture, to: *Texture) {
@@ -1362,23 +1337,9 @@ create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampl
 }
 
 bind_sampler :: (sampler: Sampler, slot: u32, bind_to := Shader_Type.Fragment) {
-    search_and_bind :: (mappings: []Texture_Sampler_Mapping, $stage: Shader_Type) #expand {
-        index := `slot;
-        #if stage == .Fragment index += 16;
-        else #if stage == .Compute index += 32;
-        for mappings {
-            if it.stage == stage && it.sampler_index == index {
-                glBindSampler(cast(GLuint)it.mapped_index, sampler.object);
-            }
-        }
-    }
-
-    if bind_to & .Vertex
-        search_and_bind(vs_mappings, .Vertex);
-    if bind_to & .Fragment
-        search_and_bind(fs_mappings, .Fragment);
-    if bind_to & .Compute
-        search_and_bind(cs_mappings, .Compute);
+    if bind_to & .Vertex   bound_samplers[slot + VS_SHIFT] = sampler.object;
+    if bind_to & .Fragment bound_samplers[slot + FS_SHIFT] = sampler.object;
+    if bind_to & .Compute  bound_samplers[slot + CS_SHIFT] = sampler.object;
 }
 
 destroy_sampler :: (sampler: *Sampler) {
@@ -1568,9 +1529,17 @@ get_input_vao_from_spv :: (spv_bytecode: string) -> GLuint {
     return input_vao;
 }
 
+VS_SHIFT :: 0;
+FS_SHIFT :: 32;
+CS_SHIFT :: 64;
+
+VS_SHIFT_STR :: "0";
+FS_SHIFT_STR :: "32";
+CS_SHIFT_STR :: "64";
+
 // I had to reimplement this function from spirv-opt because OpenGL...
-build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_bytecode: string, mappings: []Texture_Sampler_Mapping {
-    if bytecode.count < 20 return "", .[];
+build_combined_image_samplers :: (bytecode: string, stage: Shader_Type, mappings: *[..]Texture_Sampler_Mapping) -> new_bytecode: string {
+    if bytecode.count < 20 return "";
 
     words := cast(*u32) bytecode.data;
     num_words := bytecode.count / 4;
@@ -1637,8 +1606,6 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_b
         i += count;
     }
 
-    mappings: [..]Texture_Sampler_Mapping;
-
     // Helper: Find an existing Pointer type for our combined SampledImage, or inject a new one.
     get_or_create_ptr_type :: (type_id: u32, insts: *[..] [..]u32, bound: *u32) -> u32 {
         for inst: insts.* {
@@ -1690,7 +1657,7 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_b
             if img_binding != 0xFFFF_FFFF && samp_binding != 0xFFFF_FFFF {
                 mapped_idx: u8;
                 found := false;
-                for m: mappings {
+                for m: mappings.* {
                     if m.texture_index == cast(u8)img_binding && m.sampler_index == cast(u8)samp_binding {
                         mapped_idx = m.mapped_index;
                         found = true;
@@ -1705,7 +1672,7 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_b
                     mapping.texture_index = cast(u8) img_binding;
                     mapping.sampler_index = cast(u8) samp_binding;
                     mapping.stage         = stage;
-                    array_add(*mappings, mapping);
+                    array_add(mappings, mapping);
                 }
 
                 // Overwrite the original Texture's SPIR-V OpDecorate Binding with the new mapped binding slot
@@ -1753,6 +1720,8 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_b
         }
     }
 
+    // TODO(Yasin): Handle standalone textures (used with .Load())
+
     // Reconstruct the flat bytecode, skipping Nops and rewiring usages.
     out: [..]u32;
     for w: 0..4 array_add(*out, words[w]);
@@ -1777,11 +1746,56 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type) -> new_b
         for w: 0..inst.count-1 array_add(*out, inst[w]);
     }
 
+
     new_bytecode: string;
     new_bytecode.data  = cast(*u8) out.data;
     new_bytecode.count = out.count * size_of(u32);
 
-    return new_bytecode, mappings;
+    return new_bytecode;
+}
+
+flush_resource_bindings :: (mappings: []Texture_Sampler_Mapping, stage: Shader_Type) {
+    stage_index := 0;
+    shift: u8 = VS_SHIFT;
+
+    if stage == {
+        case .Fragment;
+            stage_index = 1;
+            shift = FS_SHIFT;
+        case .Compute;
+            stage_index = 2;
+            shift = CS_SHIFT;
+    }
+
+    for mappings {
+        if it.stage != stage continue;
+
+        unit := it.mapped_index;
+
+        texture_object  := bound_textures[it.texture_index];
+
+        glBindTextureUnit(cast(GLuint)unit, texture_object);
+
+        if it.sampler_index != Texture_Sampler_Mapping.NO_SAMPLER {
+            sampler_object := bound_samplers[it.sampler_index];
+
+            // Use the default sampler if the user didn't specify it
+            if sampler_object == 0
+                sampler_object = default_sampler.object;
+
+            glBindSampler(cast(GLuint)unit, sampler_object);
+        }
+
+    }
+}
+
+flush_graphics_bindings :: () {
+    if vs_mappings flush_resource_bindings(vs_mappings, .Vertex);
+    if fs_mappings flush_resource_bindings(fs_mappings, .Fragment);
+}
+
+flush_compute_bindings :: () {
+    if cs_mappings flush_resource_bindings(cs_mappings, .Compute);
 }
 
 is_target_layered :: (target: GLenum) -> bool {
@@ -1792,6 +1806,7 @@ is_target_layered :: (target: GLenum) -> bool {
         || target == GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
 }
 
+MAX_SLOTS :: 96;
 using GL_State: struct {
     main_window: Window_Type;
 
@@ -1834,6 +1849,8 @@ using GL_State: struct {
     fs_mappings: []Texture_Sampler_Mapping;
     cs_mappings: []Texture_Sampler_Mapping;
 
+    bound_textures: [MAX_SLOTS] GLuint;
+    bound_samplers: [MAX_SLOTS] GLuint;
 
     default_sampler: Sampler;
 }

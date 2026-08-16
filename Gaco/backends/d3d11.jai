@@ -74,7 +74,7 @@ is_valid :: (using render_target: Render_Target) -> bool {
     return color_views[0] || depth_stencil_view;
 }
 
-is_valid :: (timer: Timer) -> bool {
+is_valid :: (using timer: Timer) -> bool {
     return disjoint_query != null && start_query != null && end_query != null;
 }
 
