@@ -22,11 +22,14 @@ Texture :: struct {
     mip_levels: u32 = 1;
     format: Texture_Format;
     flags: Texture_Flags;
-    target: GLenum;
-    pixel_format: GLuint;
-    pixel_type: GLuint;
-    pbo_size: u32;
-    fence: GLsync;
+
+    union {
+        target: GLenum; // For sampled textures
+        struct { // For pbos (.Copy textures)
+            pbo_size: u32;
+            fence: GLsync;
+        }
+    }
 }
 
 Sampler :: struct {
@@ -118,10 +121,7 @@ init :: (window: WT.Window_Type) {
     #if DEBUG {
         renderer_name := glGetString(GL_RENDERER);
         log("[Gaco] OpenGL Renderer: %", to_string(renderer_name));
-    }
 
-
-    #if DEBUG {
         // D3D11 crashes on errors (because there is no way to register a callback...)
         // so we do the same thing here to be compatible.
         glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
@@ -338,6 +338,7 @@ update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 
     layer := subresource / texture.mip_levels;
 
     is_layered := is_target_layered(texture.target);
+    gl_info := GL_TEXTURE_MAP_ARRAY[texture.format];
 
     if is_block_compression(texture.format) {
         bw := (cast(u32)rect.width + 3) / 4;
@@ -347,22 +348,22 @@ update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 
         if is_layered {
             glCompressedTextureSubImage3D(texture.object, cast(s32)mip,
                 rect.x, rect.y, cast(s32)layer, cast(u32)rect.width, cast(u32)rect.height, 1,
-                texture.pixel_format, image_size, data);
+                gl_info.pixel_format, image_size, data);
         } else {
             glCompressedTextureSubImage2D(texture.object, cast(s32)mip,
                 rect.x, rect.y, cast(u32)rect.width, cast(u32)rect.height,
-                texture.pixel_format, image_size, data);
+                gl_info.pixel_format, image_size, data);
         }
     }
     else {
         if is_layered {
             glTextureSubImage3D(texture.object, cast(s32)mip,
                 rect.x, rect.y, cast(s32)layer, cast(u32)rect.width, cast(u32)rect.height, 1,
-                texture.pixel_format, texture.pixel_type, data);
+                gl_info.pixel_format, gl_info.pixel_type, data);
         } else {
             glTextureSubImage2D(texture.object, cast(s32)mip,
                 rect.x, rect.y, cast(u32)rect.width, cast(u32)rect.height,
-                texture.pixel_format, texture.pixel_type, data);
+                gl_info.pixel_format, gl_info.pixel_type, data);
         }
     }
 
@@ -371,6 +372,7 @@ update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 
 
 update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 0) {
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    gl_info := GL_TEXTURE_MAP_ARRAY[texture.format];
 
     if is_block_compression(texture.format) {
         bw := (cast(u32)box.width + 3) / 4;
@@ -381,7 +383,7 @@ update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 
             texture.object, cast(s32)subresource,
             box.x, box.y, box.z,
             cast(u32)box.width, cast(u32)box.height, cast(u32)box.depth,
-            texture.pixel_format, image_size, data
+            gl_info.pixel_format, image_size, data
         );
     }
     else {
@@ -389,7 +391,7 @@ update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 
             texture.object, cast(s32)subresource,
             box.x, box.y, box.z,
             cast(u32)box.width, cast(u32)box.height, cast(u32)box.depth,
-            texture.pixel_format, texture.pixel_type, data
+            gl_info.pixel_format, gl_info.pixel_type, data
         );
     }
 
@@ -429,12 +431,13 @@ destroy_buffer :: (buffer: *Buffer) {
 }
 
 destroy_texture :: (texture: *Texture) {
-    if texture.fence {
-        glDeleteSync(texture.fence);
-        texture.fence = 0;
-    }
-    if texture.flags & .Copy
+    if texture.flags & .Copy {
         glDeleteBuffers(1, *texture.object);
+        if texture.fence {
+            glDeleteSync(texture.fence);
+            texture.fence = 0;
+        }
+    }
     else
         glDeleteTextures(1, *texture.object);
     texture.object = 0;
@@ -986,7 +989,8 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
 
     if is_valid(depth_stencil_texture) {
         attachment : GLenum = GL_DEPTH_ATTACHMENT;
-        if depth_stencil_texture.pixel_format == GL_DEPTH_STENCIL {
+        gl_info := GL_TEXTURE_MAP_ARRAY[depth_stencil_texture.format];
+        if gl_info.pixel_format == GL_DEPTH_STENCIL {
             attachment = GL_DEPTH_STENCIL_ATTACHMENT;
         }
         glNamedFramebufferTexture(render_target.framebuffer, attachment, depth_stencil_texture.object, 0);
@@ -1042,7 +1046,7 @@ resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Forma
 
     glCreateRenderbuffers(1, *custom_rbo);
     depth_attachment : GLenum = GL_DEPTH_ATTACHMENT;
-    if depth_info.upload_format == GL_DEPTH_STENCIL {
+    if depth_info.pixel_format == GL_DEPTH_STENCIL {
         depth_attachment = GL_DEPTH_STENCIL_ATTACHMENT;
     }
     glNamedRenderbufferStorageMultisample(custom_rbo, msaa, depth_info.internal_format, xx width, xx height);
@@ -1093,8 +1097,6 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
         stride = bytes_per_block,
         depth = array_count_or_depth,
         flags = flags,
-        pixel_type = gl_info.upload_type,
-        pixel_format = gl_info.upload_format,
         format = format,
     };
 
@@ -1195,10 +1197,10 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
                 }
                 else {
                     if target == GL_TEXTURE_2D {
-                        glTextureSubImage2D(texture.object, cast(s32)mip, 0, 0, mip_width, mip_height, gl_info.upload_format, gl_info.upload_type, pixels);
+                        glTextureSubImage2D(texture.object, cast(s32)mip, 0, 0, mip_width, mip_height, gl_info.pixel_format, gl_info.pixel_type, pixels);
                     }
                     else {
-                        glTextureSubImage3D(texture.object, cast(s32)mip, 0, 0, cast(s32)zoffset, mip_width, mip_height, depth_arg, gl_info.upload_format, gl_info.upload_type, pixels);
+                        glTextureSubImage3D(texture.object, cast(s32)mip, 0, 0, cast(s32)zoffset, mip_width, mip_height, depth_arg, gl_info.pixel_format, gl_info.pixel_type, pixels);
                     }
                 }
             }
@@ -1237,8 +1239,10 @@ copy_texture :: inline (from: Texture, to: *Texture) {
 
 copy_texture :: (from: Texture, to: *Texture, source_rect: Rect) {
     if to.flags & .Copy {
+        gl_info := GL_TEXTURE_MAP_ARRAY[from.format];
+
         glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
-        glGetTextureSubImage(from.object, 0, source_rect.x, source_rect.y, 0, cast(u32)source_rect.width, cast(u32)source_rect.height, 1, from.pixel_format, from.pixel_type, to.pbo_size, null);
+        glGetTextureSubImage(from.object, 0, source_rect.x, source_rect.y, 0, cast(u32)source_rect.width, cast(u32)source_rect.height, 1, gl_info.pixel_format, gl_info.pixel_type, to.pbo_size, null);
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
         if to.fence glDeleteSync(to.fence);
@@ -1252,13 +1256,15 @@ copy_texture :: (from: Texture, to: *Texture, source_rect: Rect) {
 
 copy_texture :: (from: Texture, to: *Texture, source_box: Box) {
     if to.flags & .Copy {
+        gl_info := GL_TEXTURE_MAP_ARRAY[from.format];
+
         glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         glGetTextureSubImage(
             from.object, 0,
             source_box.x, source_box.y, source_box.z,
             cast(u32)source_box.width, cast(u32)source_box.height, cast(u32)source_box.depth,
-            from.pixel_format, from.pixel_type,
+            gl_info.pixel_format, gl_info.pixel_type,
             to.pbo_size, null
         );
         glPixelStorei(GL_PACK_ALIGNMENT, 4);
@@ -1322,6 +1328,8 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
     }
 
     if to.flags & .Copy {
+        gl_info := GL_TEXTURE_MAP_ARRAY[to.format];
+
         glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
@@ -1329,7 +1337,7 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
             final_tex, 0,
             0, 0, 0,
             to.width, to.height, 1,
-            to.pixel_format, to.pixel_type,
+            gl_info.pixel_format, gl_info.pixel_type,
             to.pbo_size, null
         );
 
@@ -1924,8 +1932,8 @@ using GL_State: struct {
 
 GL_Format_Info :: struct {
     internal_format : u32;
-    upload_format   : u32;
-    upload_type     : u32;
+    pixel_format   : u32;
+    pixel_type     : u32;
 }
 
 
@@ -1985,10 +1993,13 @@ GL_TEXTURE_MAP_ARRAY :: GL_Format_Info.[
     .{ GL_DEPTH32F_STENCIL8, GL_DEPTH_STENCIL,   GL_FLOAT_32_UNSIGNED_INT_24_8_REV } // D32FS8
 ];
 
+#assert GL_COMPARISON_MAP.count == enum_count(Compare_Op);
 GL_COMPARISON_MAP :: GLenum.[GL_NONE, GL_NEVER, GL_LESS, GL_EQUAL, GL_LEQUAL, GL_GREATER, GL_NOTEQUAL, GL_GEQUAL, GL_ALWAYS];
 
+#assert GL_STENCIL_OP_MAP.count == enum_count(Stencil_Op);
 GL_STENCIL_OP_MAP :: GLenum.[GL_NONE, GL_KEEP, GL_ZERO, GL_REPLACE, GL_INCR, GL_DECR, GL_INVERT, GL_INCR_WRAP, GL_DECR_WRAP];
 
+#assert GL_BLEND_MAP.count == enum_count(Blend);
 GL_BLEND_MAP :: GLenum.[
     GL_ZERO,
     GL_ONE,
@@ -2009,6 +2020,7 @@ GL_BLEND_MAP :: GLenum.[
     GL_ONE_MINUS_SRC1_ALPHA,
 ];
 
+#assert GL_BLEND_OP_MAP.count == enum_count(Blend_Op);
 GL_BLEND_OP_MAP :: GLenum.[
     GL_NONE,
     GL_FUNC_ADD,
@@ -2018,12 +2030,14 @@ GL_BLEND_OP_MAP :: GLenum.[
     GL_MAX,
 ];
 
+#assert GL_FILL_MODE_MAP.count == enum_count(Fill_Mode);
 GL_FILL_MODE_MAP :: GLenum.[
     0,0,
     GL_LINE,
     GL_FILL,
 ];
 
+#assert GL_CULL_MODE_MAP.count == enum_count(Cull_Mode);
 GL_CULL_MODE_MAP :: GLenum.[
     0,
     GL_NONE,

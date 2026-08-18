@@ -328,21 +328,9 @@ update_texture :: (using texture: *Texture, data: *void, subresource: u32 = 0) {
 }
 
 write_buffer :: (buffer: *Buffer, data: *void, size: int) {
-    write :: (buffer_to_write: *Buffer) #expand {
-        mapped_data := map_buffer(buffer_to_write, .Write);
-        memcpy(mapped_data, data, size);
-        unmap_buffer(buffer_to_write);
-    }
-
-    #if buffer.type == .Structured_RW {
-        buffer_to_write := * (create_buffer(null, buffer.size / buffer.stride, buffer.stride, .Copy, .Dynamic));
-        defer destroy_buffer(buffer_to_write);
-        write(buffer_to_write);
-        copy_buffer(buffer_to_write, buffer);
-    }
-    else {
-        write(buffer);
-    }
+    mapped_data := map_buffer(buffer, .Write);
+    memcpy(mapped_data, data, size);
+    unmap_buffer(buffer);
 }
 
 copy_buffer :: (from: Buffer, to: *Buffer) {
@@ -1323,11 +1311,11 @@ check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
 }
 
 d3d11_set_blend :: (descs: []Blend_Desc, alpha_to_coverage_enable: bool, blend_factor: Vector4, sample_mask: u32, independent_blend: bool) {
-
     blend_desc := D3D11_BLEND_DESC.{
         IndependentBlendEnable = xx independent_blend,
         AlphaToCoverageEnable = xx alpha_to_coverage_enable,
     };
+
     blend_map := D3D11_BLEND_MAP;
     for descs {
         blend_desc.RenderTarget[it_index] = .{
@@ -1408,6 +1396,7 @@ DXGI_FORMAT_MAP :: DXGI_FORMAT.[
     .D32_FLOAT_S8X24_UINT   // D32FS8
 ];
 
+#assert D3D11_BLEND_MAP.count == enum_count(Blend);
 D3D11_BLEND_MAP :: D3D11_BLEND.[
     .ZERO,
     .ONE,
