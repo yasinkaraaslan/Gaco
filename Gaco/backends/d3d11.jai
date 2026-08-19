@@ -47,6 +47,7 @@ Timer :: struct {
     disjoint_query: *ID3D11Query;
     start_query:    *ID3D11Query;
     end_query:      *ID3D11Query;
+    recording: bool;
 }
 
 is_valid :: (texture: Texture) -> bool {
@@ -1061,6 +1062,7 @@ create_timer :: (debug_name := "") -> Timer {
 start_timer :: (timer: *Timer) {
     ID3D11DeviceContext_Begin(device_context, timer.disjoint_query);
     ID3D11DeviceContext_End(device_context, timer.start_query);
+    timer.recording = true;
 }
 
 stop_timer :: (timer: *Timer) {
@@ -1069,19 +1071,22 @@ stop_timer :: (timer: *Timer) {
 }
 
 
-// NOTE(Yasin): We poll the gpu until it finishes processing. If you call this immediately after
-// stop_timer, you will force the cpu to stall. It's better to call this 2-3 frames later.
-timer_get_ms :: (timer: Timer) -> float {
+timer_get_ms :: (timer: *Timer) -> busy: bool, float {
+    if !timer.recording return false, 0.0;
+
     disjoint_data: D3D11_QUERY_DATA_TIMESTAMP_DISJOINT;
     start_timestamp: u64;
     end_timestamp: u64;
-    while ID3D11DeviceContext_GetData(device_context, timer.disjoint_query, *disjoint_data, size_of(D3D11_QUERY_DATA_TIMESTAMP_DISJOINT), 0) != S_OK {}
-    while ID3D11DeviceContext_GetData(device_context, timer.start_query, *start_timestamp, size_of(u64), 0) != S_OK {}
-    while ID3D11DeviceContext_GetData(device_context, timer.end_query, *end_timestamp, size_of(u64), 0) != S_OK {}
+
+    if ID3D11DeviceContext_GetData(device_context, timer.disjoint_query, *disjoint_data, size_of(D3D11_QUERY_DATA_TIMESTAMP_DISJOINT), 0) != S_OK return true, 0.0;
+    if ID3D11DeviceContext_GetData(device_context, timer.start_query, *start_timestamp, size_of(u64), 0) != S_OK return true, 0.0;
+    if ID3D11DeviceContext_GetData(device_context, timer.end_query, *end_timestamp, size_of(u64), 0) != S_OK return true, 0.0;
+
+    timer.recording = false;
 
     // If a disjoint event occurred, the reading is garbage
-    if disjoint_data.Disjoint return 0.0;
-    return cast(float)((end_timestamp - start_timestamp).(float64) * 1000.0 / disjoint_data.Frequency.(float64));
+    if disjoint_data.Disjoint return false, 0.0;
+    return false, cast(float)((end_timestamp - start_timestamp).(float64) * 1000.0 / disjoint_data.Frequency.(float64));
 }
 
 begin_debug_region :: (name: string) {

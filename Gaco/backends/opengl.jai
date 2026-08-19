@@ -45,6 +45,7 @@ Timer :: struct {
     start_query: GLuint;
     end_query: GLuint;
     #overlay(start_query) queries: [2]GLuint;
+    recording: bool;
 }
 
 is_valid :: (texture: Texture) -> bool {
@@ -1401,10 +1402,12 @@ create_timer :: (debug_name := "") -> Timer {
         gl_set_debug_name(timer.start_query, GL_QUERY, tprint("%_Start", debug_name));
         gl_set_debug_name(timer.end_query, GL_QUERY, tprint("%_End", debug_name));
     }
+
     return timer;
 }
 
 start_timer :: (timer: *Timer) {
+    timer.recording = true;
     glQueryCounter(timer.start_query, GL_TIMESTAMP);
 }
 
@@ -1412,21 +1415,22 @@ stop_timer :: (timer:  *Timer) {
     glQueryCounter(timer.end_query, GL_TIMESTAMP);
 }
 
-// NOTE(Yasin): We poll the gpu until it finishes processing. If you call this immediately after
-// stop_timer, you will force the cpu to stall. It's better to call this 2-3 frames later.
-timer_get_ms :: (timer: Timer) -> float {
+timer_get_ms :: (timer: *Timer) -> busy: bool, float {
+    if !timer.recording return false, 0.0;
+
     start_timestamp: u64;
     end_timestamp: u64;
 
     available: GLint = 0;
-    while !available {
-        glGetQueryObjectiv(timer.end_query, GL_QUERY_RESULT_AVAILABLE, *available);
-    }
+    glGetQueryObjectiv(timer.end_query, GL_QUERY_RESULT_AVAILABLE, *available);
 
-    glGetQueryObjectui64v(timer.start_query, GL_QUERY_RESULT, *start_timestamp);
-    glGetQueryObjectui64v(timer.end_query, GL_QUERY_RESULT, *end_timestamp);
+    if !available return true, 0.0;
 
-    return cast(float)((end_timestamp - start_timestamp).(float64) / 1000000.0);
+    timer.recording = false;
+    glGetQueryObjectui64v(timer.start_query, GL_QUERY_RESULT_NO_WAIT, *start_timestamp);
+    glGetQueryObjectui64v(timer.end_query, GL_QUERY_RESULT_NO_WAIT, *end_timestamp);
+
+    return false, cast(float)((end_timestamp - start_timestamp).(float64) / 1000000.0);
 }
 
 begin_debug_region :: (name: string) {
