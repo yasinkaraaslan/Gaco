@@ -637,29 +637,17 @@ clear :: inline (color: Vector4, depth := 1.0, stencil: u8 = 0, $flags: Clear_Fl
 }
 
 clear :: (render_target: Render_Target, color: Vector4, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
-    if render_target.framebuffer == 0 {
-        glClearColor(color.x, color.y, color.z, color.w);
-        glClearDepth(depth);
-        glClearStencil(cast(GLint)stencil);
-
-        mask: GLbitfield;
-        #if flags & .Color   mask |= GL_COLOR_BUFFER_BIT;
-        #if flags & .Depth   mask |= GL_DEPTH_BUFFER_BIT;
-        #if flags & .Stencil mask |= GL_STENCIL_BUFFER_BIT;
-        glClear(mask);
-    } else {
-        #if flags & .Color {
-            for 0..render_target.color_view_count - 1 {
-                glClearNamedFramebufferfv(render_target.framebuffer, GL_COLOR, cast(s32)it, color.component.data);
-            }
+    #if flags & .Color {
+        for 0..render_target.color_view_count - 1 {
+            glClearNamedFramebufferfv(render_target.framebuffer, GL_COLOR, cast(s32)it, color.component.data);
         }
-        #if flags & .Depth {
-            glClearNamedFramebufferfv(render_target.framebuffer, GL_DEPTH, 0, *depth);
-        }
-        #if flags & .Stencil {
-            val := cast(s32)stencil;
-            glClearNamedFramebufferiv(render_target.framebuffer, GL_STENCIL, 0, *val);
-        }
+    }
+    #if flags & .Depth {
+        glClearNamedFramebufferfv(render_target.framebuffer, GL_DEPTH, 0, *depth);
+    }
+    #if flags & .Stencil {
+        val := cast(s32)stencil;
+        glClearNamedFramebufferiv(render_target.framebuffer, GL_STENCIL, 0, *val);
     }
 }
 
@@ -1415,8 +1403,8 @@ stop_timer :: (timer:  *Timer) {
     glQueryCounter(timer.end_query, GL_TIMESTAMP);
 }
 
-timer_get_ms :: (timer: *Timer) -> busy: bool, float {
-    if !timer.recording return false, 0.0;
+timer_get_ms :: (timer: *Timer) -> ready: bool, float {
+    if !timer.recording return true, 0.0;
 
     start_timestamp: u64;
     end_timestamp: u64;
@@ -1424,13 +1412,13 @@ timer_get_ms :: (timer: *Timer) -> busy: bool, float {
     available: GLint = 0;
     glGetQueryObjectiv(timer.end_query, GL_QUERY_RESULT_AVAILABLE, *available);
 
-    if !available return true, 0.0;
+    if !available return false, 0.0;
 
     timer.recording = false;
     glGetQueryObjectui64v(timer.start_query, GL_QUERY_RESULT_NO_WAIT, *start_timestamp);
     glGetQueryObjectui64v(timer.end_query, GL_QUERY_RESULT_NO_WAIT, *end_timestamp);
 
-    return false, cast(float)((end_timestamp - start_timestamp).(float64) / 1000000.0);
+    return true, cast(float)((end_timestamp - start_timestamp).(float64) / 1000000.0);
 }
 
 begin_debug_region :: (name: string) {

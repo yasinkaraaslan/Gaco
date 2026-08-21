@@ -18,7 +18,7 @@
 }
 
 Shader_Bytecode :: struct {
-    mappings: []Texture_Sampler_Mapping;
+    mappings: []Texture_Sampler_Mapping; // Only used for OpenGL SPIR-V backend
     vs: string;
     fs: string;
     cs: string;
@@ -445,7 +445,7 @@ write_buffer :: inline (buffer: *Buffer, data: $T) {
     #if type_info(T).type == .ARRAY {
         ELEMENT_SIZE :: size_of(type_of(data[0]));
         if ELEMENT_SIZE != buffer.stride {
-            // This is probably an error most of the time, so maybe a warning will be in place
+            // This is probably an error most of the time, maybe a warning would be in place
             buffer.stride = ELEMENT_SIZE;
         }
         data_pointer = data.data;
@@ -470,8 +470,13 @@ read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *
         buffer_to_map = copy_buffer_to_use;
     }
     else {
-        temp_copy_buffer = create_buffer(null, buffer.size / buffer.stride, buffer.stride, .Copy);
-        buffer_to_map = *temp_copy_buffer;
+        #if buffer.type == .Copy {
+            buffer_to_map = buffer;
+        }
+        else {
+            temp_copy_buffer = create_buffer(null, buffer.size / buffer.stride, buffer.stride, .Copy);
+            buffer_to_map = *temp_copy_buffer;
+        }
     }
 
     copy_buffer(buffer, buffer_to_map);

@@ -1071,22 +1071,22 @@ stop_timer :: (timer: *Timer) {
 }
 
 
-timer_get_ms :: (timer: *Timer) -> busy: bool, float {
-    if !timer.recording return false, 0.0;
+timer_get_ms :: (timer: *Timer) -> ready: bool, float {
+    if !timer.recording return true, 0.0;
 
     disjoint_data: D3D11_QUERY_DATA_TIMESTAMP_DISJOINT;
     start_timestamp: u64;
     end_timestamp: u64;
 
-    if ID3D11DeviceContext_GetData(device_context, timer.disjoint_query, *disjoint_data, size_of(D3D11_QUERY_DATA_TIMESTAMP_DISJOINT), 0) != S_OK return true, 0.0;
-    if ID3D11DeviceContext_GetData(device_context, timer.start_query, *start_timestamp, size_of(u64), 0) != S_OK return true, 0.0;
-    if ID3D11DeviceContext_GetData(device_context, timer.end_query, *end_timestamp, size_of(u64), 0) != S_OK return true, 0.0;
+    if ID3D11DeviceContext_GetData(device_context, timer.disjoint_query, *disjoint_data, size_of(D3D11_QUERY_DATA_TIMESTAMP_DISJOINT), 0) != S_OK return false, 0.0;
+    if ID3D11DeviceContext_GetData(device_context, timer.start_query, *start_timestamp, size_of(u64), 0) != S_OK return false, 0.0;
+    if ID3D11DeviceContext_GetData(device_context, timer.end_query, *end_timestamp, size_of(u64), 0) != S_OK return false, 0.0;
 
     timer.recording = false;
 
     // If a disjoint event occurred, the reading is garbage
-    if disjoint_data.Disjoint return false, 0.0;
-    return false, cast(float)((end_timestamp - start_timestamp).(float64) * 1000.0 / disjoint_data.Frequency.(float64));
+    if disjoint_data.Disjoint return true, 0.0;
+    return true, cast(float)((end_timestamp - start_timestamp).(float64) * 1000.0 / disjoint_data.Frequency.(float64));
 }
 
 begin_debug_region :: (name: string) {
@@ -1209,7 +1209,6 @@ d3d11_map_resource :: (resource: *ID3D11Resource, flags: Map_Flags, $copy: bool,
     if hr == DXGI_ERROR_WAS_STILL_DRAWING {
         return null, true;
     }
-
 
     check_hr("ID3D11DeviceContext.Map", #code return null, false);
     return subresource.pData, false;
