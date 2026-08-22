@@ -2,14 +2,19 @@
 Graphics and Compute library for Jai in the style of [bgfx](https://github.com/bkaradzic/bgfx). Currently supports Windows and Linux through D3D11 and OpenGL.
 
 ## Features
-- No boilerplate
-- No need to specify input-layout for vertex/instance buffers, it's automatically created using reflection
-- Single source for shaders (HLSL)
+- No boilerplate.
+- No need to specify input-layout for vertex/instance buffers, it's automatically created using reflection.
+- Single source for shaders (HLSL).
 
 ## Getting Started
+Put `Gaco/` to your local modules directory.
 There are lots of examples included in the `examples/` folder. You can go through them to get an understanding of how the library works.
 
 ```jai
+#import "Window_Creation";
+#import "Input";
+Gaco :: #import "Gaco";
+
 main :: () {
     window := create_window(1280, 720, "My Beautiful Window");
     Gaco.init(window);
@@ -81,11 +86,10 @@ Two ways to get a `Shader`:
 2. **Gaco File**: `compile_shader` / `compile_shader_from_memory` and `load_shader` / `load_shader_from_memory`.
 We have a lightweight custom file format that combines several shader stages (and texture/sampler mappings for OpenGL) to one file and I think it's a lot easier to work with.
 
-Note that the compile output is backend-specific, a file built with `BACKEND = .D3D11` won't load under `.OpenGL` and vice versa, so select the right one per platform.
+Note that the compile output is backend-specific, a file built with one backend won't load under another backend so make sure to select the right one.
 
 ### Buffers
-
-Use `create_buffer` to create the buffer and initialize it. Buffer is a parameterized struct with the following types. You can use `bind_buffer` for each type.
+Use `create_buffer` to create a buffer and initialize it. Buffer is a parameterized struct with the following types. You can use `bind_buffer` for each type.
 
 ```jai
 Buffer_Type :: enum u32 { Vertex; Index; Constant; Copy; Indirect; Structured; Structured_RW; }
@@ -102,3 +106,35 @@ To upload data to an existing buffer, use:
 - **`update_buffer`**: for `.Default`-usage buffers.
 - **`write_buffer`**: for `.Dynamic`-usage buffers.
 - **`map_buffer/unmap_buffer`** for `.Dynamic`-usage or `Copy` buffers.
+
+### Textures
+```jai
+create_texture :: (data: []*u8, width: u32, height: u32,
+                    array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1,
+                    format := Texture_Format.RGBA8, flags := Texture_Flags.Sampled,
+                    debug_name := "") -> Texture
+```
+
+One function creates every texture shape, behavior is selected via `Texture_Flags`:
+
+```jai
+Texture_Flags :: enum_flags u32 {
+    Cubemap; Sampled; Generate_Mips; Is_3D; Multisample; Render_Target; Copy; Compute_RW;
+}
+```
+
+- 2D Texture: Default (`array_count_or_depth = 1`).
+- 2D Array: Set `array_count_or_depth = N`.
+- Cubemap: `.Cubemap`, with `array_count_or_depth = 6` (or `6 * N` for cube arrays).
+- 3D Volume: `.Is_3D`, with `array_count_or_depth = depth`.
+- MSAA render target: `.Multisample`, `mip_levels_or_msaa = sample count`.
+- UAV / Storage Image: `.Compute_RW` (`RWTexture2D` in HLSL).
+- Staging / Readback: `.Copy`.
+
+`data` is a flat array of subresource pointers, laid out as `[array/face index][mip level]` (all mips of element 0, then all mips of element 1, and so on).
+
+Convenience loaders:
+- `create_texture_from_file` / `create_texture_from_memory`: single image.
+- `create_texture_array_from_files`: builds a texture array from N same-sized images.
+
+Update an existing texture's contents with `update_texture` (whole texture, a `Rect`, or a `Box` for 3D/array subregions), or `map_texture`/`unmap_texture` for `.Copy` textures. `copy_texture` and `copy_from_render_target` do GPU-side blits/copies without a CPU round-trip.

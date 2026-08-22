@@ -991,7 +991,7 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
 
     status := glCheckNamedFramebufferStatus(render_target.framebuffer, GL_FRAMEBUFFER);
     if status != GL_FRAMEBUFFER_COMPLETE {
-        log_error("Unable to create render target! Status: 0x%", formatInt(status, 16));
+        log_error("[Gaco] Unable to create render target! Status: 0x%", formatInt(status, 16));
         return .{};
     }
 

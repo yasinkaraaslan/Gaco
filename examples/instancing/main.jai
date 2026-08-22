@@ -73,7 +73,7 @@ main :: () {
             WindowWidth, WindowHeight = it.width, it.height;
             Gaco.resize(it.width, it.height);
             unclip_cursor();
-            Camera.proj = make_projection_matrix(PI * FOV / 180.0, cast(float)it.width/cast(float)it.height, 0.001, 1000, depth_range_01 = true);
+            Camera.proj = make_projection_matrix(PI * FOV / 180.0, cast(float)it.width/cast(float)it.height, 0.01, 1000, depth_range_01 = true);
             success, view := inverse(Camera.transform);
             if !success {
                 log_error("Couldn't inverse camera transform");

@@ -647,12 +647,10 @@ present :: (interval: u32 = 1) {
 // write to them you need geometry shaders, which we don't support anyways.
 create_render_target :: (color_textures: []Texture, depth_stencil_texture: Texture, debug_name := "") -> Render_Target {
     render_target: Render_Target;
-    if color_textures {
-        for color_textures {
-            hr := ID3D11Device_CreateRenderTargetView(device, it.texture2d, null, *render_target.color_views[it_index]);
-            check_hr("ID3D11Device.CreateRenderTargetView", #code return .{});
-            if debug_name  d3d11_set_debug_name(render_target.color_views[it_index], debug_name);
-        }
+    for color_textures {
+        hr := ID3D11Device_CreateRenderTargetView(device, it.texture2d, null, *render_target.color_views[it_index]);
+        check_hr("ID3D11Device.CreateRenderTargetView", #code return .{});
+        if debug_name  d3d11_set_debug_name(render_target.color_views[it_index], debug_name);
     }
 
     if is_valid(depth_stencil_texture) {
