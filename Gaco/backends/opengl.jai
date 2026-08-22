@@ -218,20 +218,18 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
 
     glCreateBuffers(1, *buffer.object);
 
-    if usage == .Dynamic {
-        glNamedBufferData(buffer.object, buffer.size, data, GL_DYNAMIC_DRAW);
-    } else {
-        storage_flags: GLbitfield;
-
-        #if type == .Copy {
-            storage_flags |= GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_CLIENT_STORAGE_BIT;
-        }
-        else #if type != .Structured_RW if usage == .Default {
-            storage_flags |= GL_DYNAMIC_STORAGE_BIT;
-        }
-
-        glNamedBufferStorage(buffer.object, buffer.size, data, storage_flags);
+    storage_flags: GLbitfield;
+    #if type == .Copy {
+        storage_flags |= GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_CLIENT_STORAGE_BIT;
     }
+    else if usage == .Default {
+        storage_flags |= GL_DYNAMIC_STORAGE_BIT;
+    }
+    else if usage == .Dynamic {
+        storage_flags |= GL_MAP_WRITE_BIT;
+    }
+
+    glNamedBufferStorage(buffer.object, buffer.size, data, storage_flags);
     if debug_name  gl_set_debug_name(buffer.object, GL_BUFFER, debug_name);
 
     return buffer;
@@ -408,9 +406,9 @@ update_texture :: inline (using texture: *Texture, data: *void, subresource: u32
 }
 
 write_buffer :: (buffer: *Buffer, data: *void, size: int) {
-    // Orphan the buffer
-    glNamedBufferData(buffer.object, size, null, GL_DYNAMIC_DRAW);
-    glNamedBufferSubData(buffer.object, 0, size, data);
+    mapped := glMapNamedBufferRange(buffer.object, 0, size, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
+    memcpy(mapped, data, size);
+    glUnmapNamedBuffer(buffer.object);
 }
 
 copy_buffer :: (from: Buffer, to: *Buffer) {
@@ -1837,7 +1835,7 @@ flush_compute_bindings :: () {
     if cs_mappings flush_resource_bindings(cs_mappings, .Compute);
 }
 
-gl_map_buffer :: (object: GLuint, size: u32, flags: Map_Flags, $copy: bool, fence: GLsync) -> *void, busy: bool {
+gl_map_buffer :: inline (object: GLuint, size: u32, flags: Map_Flags, $copy: bool, fence: GLsync) -> *void, busy: bool {
     if flags & .Non_Blocking && fence {
         status := glClientWaitSync(fence, 0, 0);
         if status == GL_TIMEOUT_EXPIRED {
@@ -1853,6 +1851,7 @@ gl_map_buffer :: (object: GLuint, size: u32, flags: Map_Flags, $copy: bool, fenc
     if flags & .Read  access |= GL_MAP_READ_BIT;
     if flags & .Write {
         access |= GL_MAP_WRITE_BIT;
+        if flags & .Non_Blocking access |= GL_MAP_UNSYNCHRONIZED_BIT;
         #if !copy access |= GL_MAP_INVALIDATE_BUFFER_BIT;
     }
 

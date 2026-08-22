@@ -329,9 +329,11 @@ update_texture :: (using texture: *Texture, data: *void, subresource: u32 = 0) {
 }
 
 write_buffer :: (buffer: *Buffer, data: *void, size: int) {
-    mapped_data := map_buffer(buffer, .Write);
-    memcpy(mapped_data, data, size);
-    unmap_buffer(buffer);
+    subresource: D3D11_MAPPED_SUBRESOURCE;
+    hr := ID3D11DeviceContext_Map(device_context, buffer.buffer, 0, .WRITE_DISCARD, 0, *subresource);
+    check_hr("ID3D11DeviceContext.Map", #code return);
+    memcpy(subresource.pData, data, size);
+    ID3D11DeviceContext_Unmap(device_context, buffer.buffer, 0);
 }
 
 copy_buffer :: (from: Buffer, to: *Buffer) {
@@ -1180,7 +1182,7 @@ get_depth_format_variants :: (format: Texture_Format) -> texture_format: DXGI_FO
     return .UNKNOWN, .UNKNOWN; // Unreachable but to shut the compiler
 }
 
-d3d11_map_resource :: (resource: *ID3D11Resource, flags: Map_Flags, $copy: bool, subresource_index: u32) -> *void, busy: bool {
+d3d11_map_resource :: inline (resource: *ID3D11Resource, flags: Map_Flags, $copy: bool, subresource_index: u32) -> *void, busy: bool {
     subresource: D3D11_MAPPED_SUBRESOURCE;
     map_type: D3D11_MAP;
     map_flags: u32 = 0;
@@ -1192,10 +1194,10 @@ d3d11_map_resource :: (resource: *ID3D11Resource, flags: Map_Flags, $copy: bool,
         map_type = .READ;
     }
     else if flags & .Write {
-        #if copy {
-            map_type = .WRITE;
-        } else {
+        if !copy && !(flags & .Non_Blocking) {
             map_type = .WRITE_DISCARD;
+        } else {
+            map_type = .WRITE;
         }
     }
 
