@@ -1,5 +1,5 @@
 *.exp
-*.obj
+# *.obj
 *.pdb
 *.exe
 *.rdi

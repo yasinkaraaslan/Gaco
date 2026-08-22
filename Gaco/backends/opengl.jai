@@ -125,6 +125,7 @@ init :: (window: WT.Window_Type) {
 
         // D3D11 crashes on errors (because there is no way to register a callback...)
         // so we do the same thing here to be compatible.
+        glEnable(GL_DEBUG_OUTPUT);
         glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
         glDebugMessageCallback(gl_debug_callback, null);
     }
@@ -220,12 +221,13 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
 
     storage_flags: GLbitfield;
     #if type == .Copy {
-        storage_flags |= GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_CLIENT_STORAGE_BIT;
+        storage_flags |= GL_MAP_READ_BIT | GL_CLIENT_STORAGE_BIT;
     }
     else if usage == .Default {
         storage_flags |= GL_DYNAMIC_STORAGE_BIT;
     }
-    else if usage == .Dynamic {
+
+    if usage == .Dynamic {
         storage_flags |= GL_MAP_WRITE_BIT;
     }
 
@@ -681,6 +683,7 @@ set_shader :: (shader: Shader) {
 
     #if DEBUG {
         glValidateProgramPipeline(global_pipeline);
+
         is_valid: GLint;
         glGetProgramPipelineiv(global_pipeline, GL_VALIDATE_STATUS, *is_valid);
         if is_valid == 0 {
@@ -1090,7 +1093,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     if flags & .Copy {
         size := width * height * bytes_per_block * array_count_or_depth;
         glCreateBuffers(1, *texture.object);
-        glNamedBufferStorage(texture.object, size, null, GL_MAP_READ_BIT | GL_CLIENT_STORAGE_BIT);
+        glNamedBufferStorage(texture.object, size, null, GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_CLIENT_STORAGE_BIT);
         texture.pbo_size = size;
         return texture;
     }
@@ -1151,9 +1154,9 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
         mips_to_upload := ifx generate_mips 1 else mip_levels;
         array_count    := ifx is_3d 1 else array_count_or_depth;
 
-        expected_count := array_count * mip_levels_or_msaa;
+        expected_count := array_count * mips_to_upload;
         if data.count < expected_count {
-            log_error("[Gaco] Incomplete data array. Expected count %, got %.", expected_count, data.count);
+            log_error("[Gaco] Error while creating texture: Incomplete data array. Expected count %, got %.", expected_count, data.count);
             return .{};
         }
 

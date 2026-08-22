@@ -731,7 +731,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     if flags & .Copy {
         // Do not set any bind_flags for staging
         usage = .STAGING;
-        access_flags |= .READ;
+        access_flags |= .READ | .WRITE;
     } else {
         if flags & .Compute_RW {
             bind_flags |= .UNORDERED_ACCESS;
@@ -965,7 +965,7 @@ copy_texture :: (from: Texture, to: *Texture, source_box: Box) {
     ID3D11DeviceContext_CopySubresourceRegion(device_context, to.texture3d, 0, 0, 0, 0, from.texture3d, 0, *box);
 }
 
-// NOTE(Yasin): This doesn't support copying the depth stencil buffer.
+// NOTE(Yasin): This doesn't support copying the depth stencil texture.
 copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u32 = 0) {
     resource: *ID3D11Resource;
     ID3D11View_GetResource(render_target.color_views[index], *resource);
