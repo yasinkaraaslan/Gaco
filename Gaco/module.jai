@@ -144,6 +144,7 @@ Sampler_Edge_Handling :: enum u32 {
 }
 
 Compare_Op :: enum u8 {
+    None  :: 0;
     Never :: 1;
     Less;
     Equal;
@@ -487,6 +488,10 @@ read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *
     memcpy(data, mapped_data, buffer.size);
     unmap_buffer(buffer_to_map);
     return data;
+}
+
+create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, border_color := Vector4.{0,0,0,0}, max_anisotropy: u32 = 1, compare_op := Compare_Op.None, debug_name := "") -> Sampler {
+    return create_sampler(filtering, filtering, filtering, edge_handling, edge_handling, edge_handling, border_color, max_anisotropy, compare_op, debug_name);
 }
 
 free :: (bytecode: Shader_Bytecode) {

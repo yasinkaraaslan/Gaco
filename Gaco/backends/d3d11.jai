@@ -993,29 +993,36 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
     }
 }
 
-create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, max_anisotropy: u32 = 1, compare_op := Compare_Op.Never, debug_name := "") -> Sampler {
-    d3d11_filter: D3D11_FILTER;
+create_sampler :: (min_filtering: Sampler_Filtering, mag_filtering: Sampler_Filtering, mip_filtering: Sampler_Filtering,
+                   u_handling: Sampler_Edge_Handling, v_handling: Sampler_Edge_Handling, w_handling: Sampler_Edge_Handling,
+                   border_color := Vector4.{0,0,0,0}, max_anisotropy: u32 = 1, compare_op := Compare_Op.None, debug_name := "") -> Sampler {
+    filter := D3D11_FILTER.MIN_MAG_MIP_POINT;
+
     if max_anisotropy > 1 {
         // We override the filter, there is no such requirement in OpenGL.
-        d3d11_filter = .ANISOTROPIC;
+        filter = .ANISOTROPIC;
     }
     else {
-        FILTER_TABLE :: D3D11_FILTER.[.MIN_MAG_MIP_LINEAR, .MIN_MAG_MIP_POINT];
-        d3d11_filter = FILTER_TABLE[filtering];
-    }
-    ADDRESS_MODE_TABLE :: D3D11_TEXTURE_ADDRESS_MODE.[.WRAP, .MIRROR, .CLAMP, .BORDER];
-    address_mode := ADDRESS_MODE_TABLE[edge_handling];
-
-    if compare_op != .Never {
-        // Comparison and non-comparison filters are 0x80 apart.
-        d3d11_filter += 0x80;
+        // https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ne-d3d11-d3d11_filter
+        if min_filtering == .Linear filter |= .MIN_LINEAR_MAG_MIP_POINT;
+        if mag_filtering == .Linear filter |= .MIN_POINT_MAG_LINEAR_MIP_POINT;
+        if mip_filtering == .Linear filter |= .MIN_MAG_POINT_MIP_LINEAR;
     }
 
+    if compare_op != .None {
+         // Comparison and non-comparison filters are 0x80 apart
+        filter |= 0x80;
+    }
+
+    ADDRESS_TABLE :: D3D11_TEXTURE_ADDRESS_MODE.[.WRAP, .MIRROR, .CLAMP, .BORDER];
     sampler_desc := D3D11_SAMPLER_DESC.{
-        Filter = d3d11_filter,
-        AddressU = address_mode, AddressV = address_mode, AddressW = address_mode,
+        Filter = filter,
+        AddressU = ADDRESS_TABLE[u_handling],
+        AddressV = ADDRESS_TABLE[v_handling],
+        AddressW = ADDRESS_TABLE[w_handling],
         MaxAnisotropy = max_anisotropy,
-        ComparisonFunc = xx compare_op, // Maps to the same enum
+        ComparisonFunc = ifx compare_op == .None then .NEVER else xx compare_op, // Maps to the same enum
+        BorderColor = border_color.component,
         MinLOD = 0,
         MaxLOD = cast(float32)D3D11_FLOAT32_MAX,
     };

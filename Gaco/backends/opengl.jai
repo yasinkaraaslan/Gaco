@@ -1346,27 +1346,45 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
     }
 }
 
-create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, max_anisotropy: u32 = 1, compare_op := Compare_Op.Never, debug_name := "") -> Sampler {
+create_sampler :: (min_filtering: Sampler_Filtering, mag_filtering: Sampler_Filtering, mip_filtering: Sampler_Filtering,
+                   u_handling: Sampler_Edge_Handling, v_handling: Sampler_Edge_Handling, w_handling: Sampler_Edge_Handling,
+                   border_color := Vector4.{0,0,0,0}, max_anisotropy: u32 = 1, compare_op := Compare_Op.None, debug_name := "") -> Sampler {
     sampler: Sampler;
     glCreateSamplers(1, *sampler.object);
-    FILTER_TABLE :: GLint.[GL_LINEAR, GL_NEAREST];
-    EDGE_TABLE :: GLint.[GL_REPEAT, GL_MIRRORED_REPEAT, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_BORDER];
 
-    gl_filtering := FILTER_TABLE[filtering];
-    gl_edge := EDGE_TABLE[edge_handling];
-
-    if compare_op != .Never {
+    if compare_op != .None {
         glSamplerParameteri(sampler.object, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
         glSamplerParameteri(sampler.object, GL_TEXTURE_COMPARE_FUNC, xx GL_COMPARISON_MAP[compare_op]);
     }
 
-    glSamplerParameteri(sampler.object, GL_TEXTURE_MIN_FILTER, gl_filtering);
-    glSamplerParameteri(sampler.object, GL_TEXTURE_MAG_FILTER, gl_filtering);
+    /*
+      GL_NEAREST                :: 0x2600;
+      GL_LINEAR                 :: 0x2601;
+
+      GL_NEAREST_MIPMAP_NEAREST :: 0x2700;
+      GL_LINEAR_MIPMAP_NEAREST  :: 0x2701;
+      GL_NEAREST_MIPMAP_LINEAR  :: 0x2702;
+      GL_LINEAR_MIPMAP_LINEAR   :: 0x2703;
+    */
+
+    gl_min := cast(GLint) GL_NEAREST_MIPMAP_NEAREST;
+    gl_mag := cast(GLint) GL_NEAREST;
+
+    if min_filtering == .Linear gl_min += 1;
+    if mag_filtering == .Linear gl_mag += 1;
+
+    if mip_filtering == .Linear gl_min += 2;
+
+    glSamplerParameteri(sampler.object, GL_TEXTURE_MIN_FILTER, gl_min);
+    glSamplerParameteri(sampler.object, GL_TEXTURE_MAG_FILTER, gl_mag);
     glSamplerParameterf(sampler.object, GL_TEXTURE_MAX_ANISOTROPY, cast(float) max_anisotropy);
 
-    glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_S, gl_edge);
-    glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_T, gl_edge);
-    glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_R, gl_edge);
+    WRAP_TABLE :: GLint.[GL_REPEAT, GL_MIRRORED_REPEAT, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_BORDER];
+    glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_S, WRAP_TABLE[u_handling]);
+    glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_T, WRAP_TABLE[v_handling]);
+    glSamplerParameteri(sampler.object, GL_TEXTURE_WRAP_R, WRAP_TABLE[w_handling]);
+
+    glSamplerParameterfv(sampler.object, GL_TEXTURE_BORDER_COLOR, border_color.component.data);
 
     if debug_name  gl_set_debug_name(sampler.object, GL_SAMPLER, debug_name);
 
