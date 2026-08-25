@@ -36,6 +36,7 @@ main :: () {
     transform_buffer := Gaco.create_buffer(Matrix4_Identity, .Constant, .Dynamic);
 
     Gaco.set_shader(skybox_shader);
+    Gaco.set_rasterizer_state(.{cull_mode=.Front});
 
     Gaco.bind_buffer(skybox_vertex_buffer);
     Gaco.bind_buffer(skybox_index_buffer);
@@ -72,11 +73,10 @@ main :: () {
         }
 
         update_camera(transform_buffer);
+
         Gaco.clear(.{0.5, 0.3, 0.3, 1.0});
 
-        Gaco.set_rasterizer_state(.{cull_mode=.Front});
         Gaco.draw(true, indices.count);
-        Gaco.set_rasterizer_state(.{});
 
         Gaco.present();
     }

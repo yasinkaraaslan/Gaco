@@ -70,8 +70,7 @@ is_valid :: (using shader: Shader) -> bool {
 }
 
 is_valid :: (render_target: Render_Target) -> bool {
-    status := glCheckNamedFramebufferStatus(render_target.framebuffer, GL_FRAMEBUFFER);
-    return status == GL_FRAMEBUFFER_COMPLETE;
+    return glIsFramebuffer(render_target.framebuffer);
 }
 
 is_valid :: (timer: Timer) -> bool {
@@ -123,8 +122,6 @@ init :: (window: WT.Window_Type) {
         renderer_name := glGetString(GL_RENDERER);
         log("[Gaco] OpenGL Renderer: %", to_string(renderer_name));
 
-        // D3D11 crashes on errors (because there is no way to register a callback...)
-        // so we do the same thing here to be compatible.
         glEnable(GL_DEBUG_OUTPUT);
         glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
         glDebugMessageCallback(gl_debug_callback, null);
@@ -163,8 +160,8 @@ init :: (window: WT.Window_Type) {
 
     set_depth_stencil_state(.{});
     set_rasterizer_state(.{});
-    set_blend_state(.{blend_enable=false});
-
+    set_blend_state(.{});
+    set_primitive_type(.Triangle_List);
 
     set_swap_interval(0);
     _, _, window_width, window_height = get_dimensions(main_window, false);
@@ -349,11 +346,11 @@ update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 
         if is_layered {
             glCompressedTextureSubImage3D(texture.object, cast(s32)mip,
                 rect.x, rect.y, cast(s32)layer, cast(u32)rect.width, cast(u32)rect.height, 1,
-                gl_info.pixel_format, image_size, data);
+                gl_info.internal_format, image_size, data);
         } else {
             glCompressedTextureSubImage2D(texture.object, cast(s32)mip,
                 rect.x, rect.y, cast(u32)rect.width, cast(u32)rect.height,
-                gl_info.pixel_format, image_size, data);
+                gl_info.internal_format, image_size, data);
         }
     }
     else {
@@ -699,171 +696,6 @@ set_shader :: (shader: Shader) {
 
 }
 
-set_primitive_type :: (primitive_type: Primitive_Type) {
-    if #complete primitive_type == {
-    case .Line_List;
-        current_primitive_mode = GL_LINES;
-    case .Line_Strip;
-        current_primitive_mode = GL_LINE_STRIP;
-    case .Triangle_List;
-        current_primitive_mode = GL_TRIANGLES;
-    case .Triangle_Strip;
-        current_primitive_mode = GL_TRIANGLE_STRIP;
-    }
-}
-
-set_scissor :: (using rect: Rect) {
-    glScissor(x, y, cast(u32)width, cast(u32)height);
-}
-
-set_viewport :: (using info: Viewport_Desc) {
-    glViewportIndexedf(0, x, y, width, height);
-    glDepthRangef(near_depth, far_depth);
-}
-
-get_viewport :: () -> Viewport_Desc {
-    info: Viewport_Desc;
-
-    glGetFloatv(GL_VIEWPORT, *info.x);
-    glGetFloatv(GL_DEPTH_RANGE, *info.near_depth);
-
-    return info;
-}
-
-set_rasterizer_state :: (desc: Rasterizer_Desc) {
-    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL_MODE_MAP[desc.fill_mode]);
-
-    if desc.cull_mode == .None {
-        glDisable(GL_CULL_FACE);
-    } else {
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_CULL_MODE_MAP[desc.cull_mode]);
-    }
-
-    front_face := ifx desc.front_counter_clockwise then cast(u32)GL_CCW else GL_CW;
-    glFrontFace(front_face);
-
-    if desc.depth_bias != 0 || desc.slope_scaled_depth_bias != 0.0 {
-        glEnable(GL_POLYGON_OFFSET_FILL);
-        glEnable(GL_POLYGON_OFFSET_LINE);
-
-        glPolygonOffsetClamp(desc.slope_scaled_depth_bias, cast(float) desc.depth_bias, desc.depth_bias_clamp);
-    } else {
-        glDisable(GL_POLYGON_OFFSET_FILL);
-        glDisable(GL_POLYGON_OFFSET_LINE);
-    }
-
-    if desc.depth_clip_enable {
-        glDisable(GL_DEPTH_CLAMP);
-    } else {
-        glEnable(GL_DEPTH_CLAMP);
-    }
-
-    if desc.scissor_enable {
-        glEnable(GL_SCISSOR_TEST);
-    } else {
-        glDisable(GL_SCISSOR_TEST);
-    }
-
-    if desc.antialiased_line_enable {
-        glEnable(GL_LINE_SMOOTH);
-    } else {
-        glDisable(GL_LINE_SMOOTH);
-    }
-}
-
-set_blend_state :: (desc: Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
-    if desc.blend_enable {
-        glEnable(GL_BLEND);
-
-        glBlendFuncSeparate(
-            GL_BLEND_MAP[desc.src_blend], GL_BLEND_MAP[desc.dest_blend],
-            GL_BLEND_MAP[desc.src_blend_alpha], GL_BLEND_MAP[desc.dest_blend_alpha]
-        );
-
-        glBlendEquationSeparate(
-            GL_BLEND_OP_MAP[desc.blend_op], GL_BLEND_OP_MAP[desc.blend_op_alpha]
-        );
-    } else {
-        glDisable(GL_BLEND);
-    }
-
-    glBlendColor(blend_factor.x, blend_factor.y, blend_factor.z, blend_factor.w);
-
-    r := cast(GLboolean) ((desc.write_mask & .Red)   != 0);
-    g := cast(GLboolean) ((desc.write_mask & .Green) != 0);
-    b := cast(GLboolean) ((desc.write_mask & .Blue)  != 0);
-    a := cast(GLboolean) ((desc.write_mask & .Alpha) != 0);
-    glColorMask(r, g, b, a);
-
-    glSampleMaski(0, sample_mask);
-    if alpha_to_coverage_enable glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
-    else glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
-}
-
-set_blend_state :: (descs: []Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
-    for descs {
-        i := cast(GLuint) it_index;
-
-        if it.blend_enable {
-            glEnablei(GL_BLEND, i);
-
-            glBlendFuncSeparatei(i,
-                GL_BLEND_MAP[it.src_blend], GL_BLEND_MAP[it.dest_blend],
-                GL_BLEND_MAP[it.src_blend_alpha], GL_BLEND_MAP[it.dest_blend_alpha]
-            );
-
-            glBlendEquationSeparatei(i,
-                GL_BLEND_OP_MAP[it.blend_op], GL_BLEND_OP_MAP[it.blend_op_alpha]
-            );
-        } else {
-            glDisablei(GL_BLEND, i);
-        }
-
-        r := cast(GLboolean) ((it.write_mask & .Red)   != 0);
-        g := cast(GLboolean) ((it.write_mask & .Green) != 0);
-        b := cast(GLboolean) ((it.write_mask & .Blue)  != 0);
-        a := cast(GLboolean) ((it.write_mask & .Alpha) != 0);
-        glColorMaski(i, r, g, b, a);
-    }
-
-    glBlendColor(blend_factor.x, blend_factor.y, blend_factor.z, blend_factor.w);
-    glSampleMaski(0, sample_mask);
-
-    if alpha_to_coverage_enable glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
-    else glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
-}
-
-set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
-    if desc.depth_enable {
-        glEnable(GL_DEPTH_TEST);
-        glDepthFunc(GL_COMPARISON_MAP[desc.depth_func]);
-    }
-    else {
-        glDisable(GL_DEPTH_TEST);
-    }
-
-    glDepthMask(desc.depth_write);
-
-    if desc.stencil_enable {
-        glEnable(GL_STENCIL_TEST);
-
-        func_and_op :: (using face_desc: Stencil_Face_Desc, front: bool) #expand {
-            face := ifx front GL_FRONT.(u32) else GL_BACK;
-            glStencilFuncSeparate(face, GL_COMPARISON_MAP[compare_op], stencil_ref, desc.stencil_read_mask);
-            glStencilOpSeparate(face, GL_STENCIL_OP_MAP[fail_op], GL_STENCIL_OP_MAP[depth_fail_op], GL_STENCIL_OP_MAP[pass_op]);
-        }
-
-        func_and_op(desc.front_face, true);
-        func_and_op(desc.back_face, false);
-    }
-    else {
-        glDisable(GL_STENCIL_TEST);
-    }
-
-    glStencilMask(desc.stencil_write_mask);
-}
-
 draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex: s32 = 0) {
     flush_graphics_bindings();
     #if indexed {
@@ -1000,10 +832,6 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
     return render_target;
 }
 
-set_render_target :: (render_target: Render_Target) {
-    glBindFramebuffer(GL_FRAMEBUFFER, render_target.framebuffer);
-}
-
 destroy_render_target :: (render_target: *Render_Target) {
     glDeleteFramebuffers(1, *render_target.framebuffer);
 }
@@ -1053,7 +881,14 @@ resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Forma
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, custom_fbo);
-    glViewport(0, 0, cast(GLuint)width, cast(GLuint)height);
+
+    gaco_state.render_target = .{custom_fbo, 1};
+    set_viewport(.{
+        width = cast(float)width,
+        height = cast(float)height,
+        near_depth = 0.0,
+        far_depth = 1.0
+    });
 
     internal_width = xx width;
     internal_height = xx height;
@@ -1456,6 +1291,167 @@ insert_debug_marker :: (name: string) {
     #if DEBUG {
         glDebugMessageInsert(GL_DEBUG_SOURCE_APPLICATION, GL_DEBUG_TYPE_MARKER, 0, GL_DEBUG_SEVERITY_NOTIFICATION, cast(GLsizei)name.count, name.data);
     }
+}
+
+#scope_module
+backend_set_primitive_type :: (primitive_type: Primitive_Type) {
+    if #complete primitive_type == {
+    case .Line_List;
+        current_primitive_mode = GL_LINES;
+    case .Line_Strip;
+        current_primitive_mode = GL_LINE_STRIP;
+    case .Triangle_List;
+        current_primitive_mode = GL_TRIANGLES;
+    case .Triangle_Strip;
+        current_primitive_mode = GL_TRIANGLE_STRIP;
+    }
+}
+
+backend_set_scissor :: (using rect: Rect) {
+    glScissor(x, y, cast(u32)width, cast(u32)height);
+}
+
+backend_set_viewport :: (using desc: Viewport_Desc) {
+    glViewportIndexedf(0, x, y, width, height);
+    glDepthRangef(near_depth, far_depth);
+}
+
+backend_set_rasterizer_state :: (desc: Rasterizer_Desc) {
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL_MODE_MAP[desc.fill_mode]);
+
+    if desc.cull_mode == .None {
+        glDisable(GL_CULL_FACE);
+    } else {
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_CULL_MODE_MAP[desc.cull_mode]);
+    }
+
+    front_face := ifx desc.front_counter_clockwise then cast(u32)GL_CCW else GL_CW;
+    glFrontFace(front_face);
+
+    if desc.depth_bias != 0 || desc.slope_scaled_depth_bias != 0.0 {
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glEnable(GL_POLYGON_OFFSET_LINE);
+
+        glPolygonOffsetClamp(desc.slope_scaled_depth_bias, cast(float) desc.depth_bias, desc.depth_bias_clamp);
+    } else {
+        glDisable(GL_POLYGON_OFFSET_FILL);
+        glDisable(GL_POLYGON_OFFSET_LINE);
+    }
+
+    if desc.depth_clip_enable {
+        glDisable(GL_DEPTH_CLAMP);
+    } else {
+        glEnable(GL_DEPTH_CLAMP);
+    }
+
+    if desc.scissor_enable {
+        glEnable(GL_SCISSOR_TEST);
+    } else {
+        glDisable(GL_SCISSOR_TEST);
+    }
+
+    if desc.antialiased_line_enable {
+        glEnable(GL_LINE_SMOOTH);
+    } else {
+        glDisable(GL_LINE_SMOOTH);
+    }
+}
+
+backend_set_blend_state :: (desc: Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
+    if desc.blend_enable {
+        glEnable(GL_BLEND);
+
+        glBlendFuncSeparate(
+            GL_BLEND_MAP[desc.src_blend], GL_BLEND_MAP[desc.dest_blend],
+            GL_BLEND_MAP[desc.src_blend_alpha], GL_BLEND_MAP[desc.dest_blend_alpha]
+        );
+
+        glBlendEquationSeparate(
+            GL_BLEND_OP_MAP[desc.blend_op], GL_BLEND_OP_MAP[desc.blend_op_alpha]
+        );
+    } else {
+        glDisable(GL_BLEND);
+    }
+
+    glBlendColor(blend_factor.x, blend_factor.y, blend_factor.z, blend_factor.w);
+
+    r := cast(GLboolean) ((desc.write_mask & .Red)   != 0);
+    g := cast(GLboolean) ((desc.write_mask & .Green) != 0);
+    b := cast(GLboolean) ((desc.write_mask & .Blue)  != 0);
+    a := cast(GLboolean) ((desc.write_mask & .Alpha) != 0);
+    glColorMask(r, g, b, a);
+
+    glSampleMaski(0, sample_mask);
+    if alpha_to_coverage_enable glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    else glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+}
+
+backend_set_blend_states :: (descs: []Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
+    for descs {
+        i := cast(GLuint) it_index;
+
+        if it.blend_enable {
+            glEnablei(GL_BLEND, i);
+
+            glBlendFuncSeparatei(i,
+                GL_BLEND_MAP[it.src_blend], GL_BLEND_MAP[it.dest_blend],
+                GL_BLEND_MAP[it.src_blend_alpha], GL_BLEND_MAP[it.dest_blend_alpha]
+            );
+
+            glBlendEquationSeparatei(i,
+                GL_BLEND_OP_MAP[it.blend_op], GL_BLEND_OP_MAP[it.blend_op_alpha]
+            );
+        } else {
+            glDisablei(GL_BLEND, i);
+        }
+
+        r := cast(GLboolean) ((it.write_mask & .Red)   != 0);
+        g := cast(GLboolean) ((it.write_mask & .Green) != 0);
+        b := cast(GLboolean) ((it.write_mask & .Blue)  != 0);
+        a := cast(GLboolean) ((it.write_mask & .Alpha) != 0);
+        glColorMaski(i, r, g, b, a);
+    }
+
+    glBlendColor(blend_factor.x, blend_factor.y, blend_factor.z, blend_factor.w);
+    glSampleMaski(0, sample_mask);
+
+    if alpha_to_coverage_enable glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    else glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+}
+
+backend_set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
+    if desc.depth_enable {
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_COMPARISON_MAP[desc.depth_func]);
+    }
+    else {
+        glDisable(GL_DEPTH_TEST);
+    }
+
+    glDepthMask(desc.depth_write);
+
+    if desc.stencil_enable {
+        glEnable(GL_STENCIL_TEST);
+
+        func_and_op :: (using face_desc: Stencil_Face_Desc, front: bool) #expand {
+            face := ifx front GL_FRONT.(u32) else GL_BACK;
+            glStencilFuncSeparate(face, GL_COMPARISON_MAP[compare_op], stencil_ref, desc.stencil_read_mask);
+            glStencilOpSeparate(face, GL_STENCIL_OP_MAP[fail_op], GL_STENCIL_OP_MAP[depth_fail_op], GL_STENCIL_OP_MAP[pass_op]);
+        }
+
+        func_and_op(desc.front_face, true);
+        func_and_op(desc.back_face, false);
+    }
+    else {
+        glDisable(GL_STENCIL_TEST);
+    }
+
+    glStencilMask(desc.stencil_write_mask);
+}
+
+backend_set_render_target :: (render_target: Render_Target) {
+    glBindFramebuffer(GL_FRAMEBUFFER, render_target.framebuffer);
 }
 
 #scope_file
@@ -1929,7 +1925,7 @@ using GL_State: struct {
     bound_instance_buffer: Bound_Buffer;
     bound_index_buffer: GLuint;
 
-    current_primitive_mode: GLuint = GL_TRIANGLES;
+    current_primitive_mode: GLenum;
     current_index_stride: u32;
 
     vs_mappings: []Texture_Sampler_Mapping;
@@ -2068,6 +2064,8 @@ gl_debug_callback :: (source: GLenum, type: GLenum, id: GLuint, severity: GLenum
 
         log("[Gaco] %", message_str, flags=flags);
         if error {
+            // D3D11 crashes on errors (because there is no way to register a callback...)
+            // so we do the same thing here to be compatible.
             debug_break();
         }
     }

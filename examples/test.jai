@@ -17,6 +17,7 @@ run_example_tests :: () {
         "colored_cube",
         "camera",
         "jon_cube",
+        "instancing",
     ];
 
     log("Starting compilation tests for % examples...", examples.count);
@@ -33,8 +34,9 @@ run_example_tests :: () {
         w := compiler_create_workspace(example_name);
 
         options := get_build_options(w);
+        options.text_output_flags = 0;
         options.output_executable_name = example_name;
-        options.output_type = .NO_OUTPUT;
+        // options.output_type = .NO_OUTPUT;
         set_build_options(options, w);
 
         compiler_begin_intercept(w);

@@ -140,6 +140,7 @@ init :: (window: Window_Type) {
     safe_release(dxgi_factory);
 
     set_primitive_type(.Triangle_List);
+    set_blend_state(.{});
     set_depth_stencil_state(.{});
 
     // NOTE(Yasin): It's safe if this fails on older systems,
@@ -478,115 +479,6 @@ set_shader :: (shader: Shader) {
     }
 }
 
-set_primitive_type :: (primitive_type: Primitive_Type) {
-    topology: D3D11_PRIMITIVE_TOPOLOGY;
-    if #complete primitive_type == {
-    case .Line_List;
-        topology = .LINELIST;
-    case .Line_Strip;
-        topology = .LINESTRIP;
-    case .Triangle_List;
-        topology = .TRIANGLELIST;
-    case .Triangle_Strip;
-        topology = .TRIANGLESTRIP;
-    }
-    ID3D11DeviceContext_IASetPrimitiveTopology(device_context, topology);
-}
-
-set_scissor :: (rect: Rect) {
-    d3d11_rect := D3D11_RECT.{
-        left = rect.x,
-        top = rect.y,
-        right = rect.x + rect.width,
-        bottom = rect.y + rect.height
-    };
-
-    ID3D11DeviceContext_RSSetScissorRects(device_context, 1, *d3d11_rect);
-}
-
-
-// HLSL doesn't have a way to specify a viewport index (except for geometry shaders, which we don't support).
-// So there is no reason for a 'set_viewports'.
-set_viewport :: (info: Viewport_Desc) {
-    viewport := cast,force(D3D11_VIEWPORT)info;
-    ID3D11DeviceContext_RSSetViewports(device_context, 1, *viewport);
-}
-
-get_viewport :: () -> Viewport_Desc {
-    info: Viewport_Desc;
-    count : u32 = 1;
-    ID3D11DeviceContext_RSGetViewports(device_context, *count, *cast,force(D3D11_VIEWPORT)info);
-    return info;
-}
-
-set_rasterizer_state :: (desc: Rasterizer_Desc) {
-    found, state := table_find(*rasterizer_table, desc);
-
-    if !found {
-        rasterizer_desc := D3D11_RASTERIZER_DESC.{
-            FillMode              = cast(D3D11_FILL_MODE) desc.fill_mode,
-            CullMode              = cast(D3D11_CULL_MODE) desc.cull_mode,
-            FrontCounterClockwise = xx desc.front_counter_clockwise,
-            DepthBias             = desc.depth_bias,
-            DepthBiasClamp        = desc.depth_bias_clamp,
-            SlopeScaledDepthBias  = desc.slope_scaled_depth_bias,
-            DepthClipEnable       = xx desc.depth_clip_enable,
-            ScissorEnable         = xx desc.scissor_enable,
-            MultisampleEnable     = .TRUE, // https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ns-d3d11-d3d11_rasterizer_desc
-            AntialiasedLineEnable = xx desc.antialiased_line_enable,
-        };
-
-        hr := ID3D11Device_CreateRasterizerState(device, *rasterizer_desc, *state);
-        table_add(*rasterizer_table, desc, state);
-    }
-
-    // 'device_context' is your ID3D11DeviceContext
-    ID3D11DeviceContext_RSSetState(device_context, state);
-}
-
-// More info about alpha to coverage
-// https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-blend-state#alpha-to-coverage
-set_blend_state :: (desc: Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
-    d3d11_set_blend(.[desc], alpha_to_coverage_enable, blend_factor, sample_mask, false);
-}
-
-// If you want to set them independently
-set_blend_state :: (descs: []Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
-    d3d11_set_blend(descs, alpha_to_coverage_enable, blend_factor, sample_mask, true);
-}
-
-set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
-    found, state := table_find(*depth_stencil_table, desc);
-    if !found {
-        front := desc.front_face;
-        back := desc.back_face;
-
-        // Same enum values for all
-        d3d11_desc := D3D11_DEPTH_STENCIL_DESC.{
-            DepthEnable                  = xx desc.depth_enable,
-            DepthWriteMask               = xx desc.depth_write,
-            DepthFunc                    = xx desc.depth_func,
-            StencilEnable                = xx desc.stencil_enable,
-
-            StencilReadMask              = desc.stencil_read_mask,
-            StencilWriteMask             = desc.stencil_write_mask,
-
-            FrontFace.StencilFunc        = xx front.compare_op,
-            FrontFace.StencilFailOp      = xx front.fail_op,
-            FrontFace.StencilDepthFailOp = xx front.depth_fail_op,
-            FrontFace.StencilPassOp      = xx front.pass_op,
-
-            BackFace.StencilFunc         = xx back.compare_op,
-            BackFace.StencilFailOp       = xx back.fail_op,
-            BackFace.StencilDepthFailOp  = xx back.depth_fail_op,
-            BackFace.StencilPassOp       = xx back.pass_op,
-        };
-        ID3D11Device_CreateDepthStencilState(device, *d3d11_desc, *state);
-        table_add(*depth_stencil_table, desc, state);
-    }
-    ID3D11DeviceContext_OMSetDepthStencilState(device_context, state, stencil_ref);
-}
-
 // base_vertex only makes sense in indexed drawing.
 draw :: ($indexed: bool, count: u32, first: u32 = 0, base_vertex: s32 = 0) {
     #if indexed {
@@ -626,6 +518,7 @@ dispatch_compute_indirect :: (buffer: Buffer(.Indirect), byte_offset: u32 = 0) {
 present :: (interval: u32 = 1) {
     back_buffer: *ID3D11Texture2D;
     ID3D11View_GetResource(window_render_target.color_views[0], xx *back_buffer);
+
     ID3D11DeviceContext_ResolveSubresource(
         device_context,
         back_buffer, 0,
@@ -671,10 +564,6 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
     return render_target;
 }
 
-set_render_target :: (using render_target: Render_Target) {
-    ID3D11DeviceContext_OMSetRenderTargets(device_context, xx color_views.count, color_views.data, depth_stencil_view);
-}
-
 destroy_render_target :: (render_target: *Render_Target) {
     for * render_target.color_views {
         safe_release_and_reset(it);
@@ -683,6 +572,8 @@ destroy_render_target :: (render_target: *Render_Target) {
 }
 
 resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Format.RGBA8, depth_format := Texture_Format.D24S8) -> render_target: Render_Target {
+    backend_set_render_target(.{});
+    
     destroy_render_target(*window_render_target);
     destroy_render_target(*custom_render_target);
     destroy_texture(*custom_color_texture);
@@ -1010,7 +901,7 @@ create_sampler :: (min_filtering: Sampler_Filtering, mag_filtering: Sampler_Filt
     }
 
     if compare_op != .None {
-         // Comparison and non-comparison filters are 0x80 apart
+        // Comparison and non-comparison filters are 0x80 apart.
         filter |= 0x80;
     }
 
@@ -1126,6 +1017,115 @@ get_d3d_device :: () -> *ID3D11Device {
 
 get_d3d_device_context :: () -> *ID3D11DeviceContext {
     return device_context;
+}
+
+#scope_module
+
+
+backend_set_primitive_type :: (primitive_type: Primitive_Type) {
+    topology: D3D11_PRIMITIVE_TOPOLOGY;
+    if #complete primitive_type == {
+    case .Line_List;
+        topology = .LINELIST;
+    case .Line_Strip;
+        topology = .LINESTRIP;
+    case .Triangle_List;
+        topology = .TRIANGLELIST;
+    case .Triangle_Strip;
+        topology = .TRIANGLESTRIP;
+    }
+    ID3D11DeviceContext_IASetPrimitiveTopology(device_context, topology);
+}
+
+backend_set_scissor :: (rect: Rect) {
+    d3d11_rect := D3D11_RECT.{
+        left = rect.x,
+        top = rect.y,
+        right = rect.x + rect.width,
+        bottom = rect.y + rect.height
+    };
+
+    ID3D11DeviceContext_RSSetScissorRects(device_context, 1, *d3d11_rect);
+}
+
+
+// HLSL doesn't have a way to specify a viewport index (except for geometry shaders, which we don't support).
+// So there is no reason for a 'set_viewports'.
+backend_set_viewport :: (info: Viewport_Desc) {
+    viewport := cast,force(D3D11_VIEWPORT)info;
+    ID3D11DeviceContext_RSSetViewports(device_context, 1, *viewport);
+}
+
+backend_set_rasterizer_state :: (desc: Rasterizer_Desc) {
+    found, state := table_find(*rasterizer_table, desc);
+
+    if !found {
+        rasterizer_desc := D3D11_RASTERIZER_DESC.{
+            FillMode              = cast(D3D11_FILL_MODE) desc.fill_mode,
+            CullMode              = cast(D3D11_CULL_MODE) desc.cull_mode,
+            FrontCounterClockwise = xx desc.front_counter_clockwise,
+            DepthBias             = desc.depth_bias,
+            DepthBiasClamp        = desc.depth_bias_clamp,
+            SlopeScaledDepthBias  = desc.slope_scaled_depth_bias,
+            DepthClipEnable       = xx desc.depth_clip_enable,
+            ScissorEnable         = xx desc.scissor_enable,
+            MultisampleEnable     = .TRUE, // https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ns-d3d11-d3d11_rasterizer_desc
+            AntialiasedLineEnable = xx desc.antialiased_line_enable,
+        };
+
+        hr := ID3D11Device_CreateRasterizerState(device, *rasterizer_desc, *state);
+        table_add(*rasterizer_table, desc, state);
+    }
+
+    // 'device_context' is your ID3D11DeviceContext
+    ID3D11DeviceContext_RSSetState(device_context, state);
+}
+
+// More info about alpha to coverage
+// https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-blend-state#alpha-to-coverage
+backend_set_blend_state :: (desc: Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
+    d3d11_set_blend(.[desc], alpha_to_coverage_enable, blend_factor, sample_mask, false);
+}
+
+// If you want to set them independently
+backend_set_blend_states :: (descs: []Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
+    d3d11_set_blend(descs, alpha_to_coverage_enable, blend_factor, sample_mask, true);
+}
+
+backend_set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
+    found, state := table_find(*depth_stencil_table, desc);
+    if !found {
+        front := desc.front_face;
+        back := desc.back_face;
+
+        // Same enum values for all
+        d3d11_desc := D3D11_DEPTH_STENCIL_DESC.{
+            DepthEnable                  = xx desc.depth_enable,
+            DepthWriteMask               = xx desc.depth_write,
+            DepthFunc                    = xx desc.depth_func,
+            StencilEnable                = xx desc.stencil_enable,
+
+            StencilReadMask              = desc.stencil_read_mask,
+            StencilWriteMask             = desc.stencil_write_mask,
+
+            FrontFace.StencilFunc        = xx front.compare_op,
+            FrontFace.StencilFailOp      = xx front.fail_op,
+            FrontFace.StencilDepthFailOp = xx front.depth_fail_op,
+            FrontFace.StencilPassOp      = xx front.pass_op,
+
+            BackFace.StencilFunc         = xx back.compare_op,
+            BackFace.StencilFailOp       = xx back.fail_op,
+            BackFace.StencilDepthFailOp  = xx back.depth_fail_op,
+            BackFace.StencilPassOp       = xx back.pass_op,
+        };
+        ID3D11Device_CreateDepthStencilState(device, *d3d11_desc, *state);
+        table_add(*depth_stencil_table, desc, state);
+    }
+    ID3D11DeviceContext_OMSetDepthStencilState(device_context, state, stencil_ref);
+}
+
+backend_set_render_target :: (using render_target: Render_Target) {
+    ID3D11DeviceContext_OMSetRenderTargets(device_context, xx color_views.count, color_views.data, depth_stencil_view);
 }
 
 #scope_file

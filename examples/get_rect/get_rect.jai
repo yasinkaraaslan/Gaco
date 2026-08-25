@@ -70,11 +70,8 @@ gr_immediate_quad :: (p0: Vector2, p1: Vector2, p2: Vector2, p3: Vector2, color 
 
 gr_immediate_flush :: () {
     if VerticesToDraw {
-        Gaco.set_blend_state(Blend_Alpha);
-        defer Gaco.set_blend_state(.{blend_enable=false});
-
-        Gaco.set_rasterizer_state(.{cull_mode=.None});
-        defer Gaco.set_rasterizer_state(.{});
+        Gaco.push_blend_state(Blend_Alpha);
+        Gaco.push_rasterizer_state(.{cull_mode=.None});
 
         Gaco.write_buffer(*VerticesBuffer, VerticesToDraw);
         Gaco.bind_buffer(VerticesBuffer);

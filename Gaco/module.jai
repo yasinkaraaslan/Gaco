@@ -268,6 +268,12 @@ Blend_Desc :: struct {
     alpha_to_coverage_enable := false;
 }
 
+Viewport_Desc :: struct {
+    x, y, width, height: float;
+    near_depth := 0.0;
+    far_depth := 1.0;
+}
+
 Clear_Flags :: enum_flags u32 {
     None :: 0;
     Color :: 1;
@@ -282,6 +288,29 @@ Rect :: struct {
 Box :: struct {
     x, y, z: s32;
     width, height, depth: s32;
+}
+
+// This is used for SPIR-V files because the sampler and texture indices
+// are the same in OpenGL so we have to have a system to map our seperate
+// sampler and texture indices.
+Texture_Sampler_Mapping :: struct {
+    mapped_index: u8;
+    texture_index: u8;
+    sampler_index: u8;
+    stage: Shader_Type;
+
+    NO_SAMPLER :: 0xFF;
+}
+
+Shader_Header :: struct {
+    magic: u32;
+    version: u32;
+    backend: Shader_Backend;
+    type: Shader_Type;
+    mapping_count: u16; // Only used for SPIR-V
+    vs_size: u32;
+    fs_size: u32;
+    cs_size: u32;
 }
 
 compile_shader_from_memory :: (source: string, type: Shader_Type, debug_file_name: string, defines := string.[]) -> string, bool {
@@ -490,8 +519,127 @@ read_buffer :: (buffer: *Buffer, copy_buffer_to_use: *Buffer(.Copy) = null) -> *
     return data;
 }
 
-create_sampler :: (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, border_color := Vector4.{0,0,0,0}, max_anisotropy: u32 = 1, compare_op := Compare_Op.None, debug_name := "") -> Sampler {
+create_sampler :: inline (filtering := Sampler_Filtering.Linear, edge_handling := Sampler_Edge_Handling.Clamp, border_color := Vector4.{0,0,0,0}, max_anisotropy: u32 = 1, compare_op := Compare_Op.None, debug_name := "") -> Sampler {
     return create_sampler(filtering, filtering, filtering, edge_handling, edge_handling, edge_handling, border_color, max_anisotropy, compare_op, debug_name);
+}
+
+set_rasterizer_state :: (desc: Rasterizer_Desc) {
+    gaco_state.rasterizer = desc;
+    backend_set_rasterizer_state(desc);
+}
+set_blend_state :: (desc: Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
+    gaco_state.independent_blend = false;
+    gaco_state.blend_count = 1;
+    gaco_state.blends[0] = desc;
+    gaco_state.alpha_to_coverage = alpha_to_coverage_enable;
+    gaco_state.blend_factor = blend_factor;
+    gaco_state.sample_mask = sample_mask;
+
+    backend_set_blend_state(desc, alpha_to_coverage_enable, blend_factor, sample_mask);
+}
+
+set_blend_states :: (descs: []Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
+    assert(descs.count <= 8);
+
+    gaco_state.independent_blend = true;
+    gaco_state.blend_count = descs.count;
+    memcpy(gaco_state.blends.data, descs.data, size_of(Blend_Desc) * descs.count);
+    gaco_state.alpha_to_coverage = alpha_to_coverage_enable;
+    gaco_state.blend_factor = blend_factor;
+    gaco_state.sample_mask = sample_mask;
+
+    backend_set_blend_states(descs, alpha_to_coverage_enable, blend_factor, sample_mask);
+}
+
+set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
+    gaco_state.depth_stencil = desc;
+    gaco_state.stencil_ref = stencil_ref;
+
+    backend_set_depth_stencil_state(desc, stencil_ref);
+}
+
+set_viewport :: (desc: Viewport_Desc) {
+    gaco_state.viewport = desc;
+    backend_set_viewport(desc);
+}
+
+set_scissor :: (desc: Rect) {
+    gaco_state.scissor = desc;
+    backend_set_scissor(desc);
+}
+
+set_render_target :: (render_target: Render_Target) {
+    gaco_state.render_target = render_target;
+    backend_set_render_target(render_target);
+}
+
+set_primitive_type :: (primitive_type: Primitive_Type) {
+    gaco_state.primitive_type = primitive_type;
+    backend_set_primitive_type(primitive_type);
+}
+
+push_rasterizer_state :: (desc: Rasterizer_Desc) #expand {
+    saved_rs := gaco_state.rasterizer;
+    set_rasterizer_state(desc);
+    `defer set_rasterizer_state(saved_rs);
+}
+
+push_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) #expand {
+    saved_ds  := gaco_state.depth_stencil;
+    saved_ref := gaco_state.stencil_ref;
+    set_depth_stencil_state(desc, stencil_ref);
+    `defer set_depth_stencil_state(saved_ds, saved_ref);
+}
+
+push_blend_state :: (desc: Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) #expand {
+    saved_independent := gaco_state.independent_blend;
+    saved_count       := gaco_state.blend_count;
+    saved_blends      := gaco_state.blends;
+    saved_a2c         := gaco_state.alpha_to_coverage;
+    saved_factor      := gaco_state.blend_factor;
+    saved_mask        := gaco_state.sample_mask;
+
+    set_blend_state(desc, alpha_to_coverage_enable, blend_factor, sample_mask);
+
+    `defer {
+        if saved_independent {
+            slice: []Blend_Desc;
+            slice.data = saved_blends.data;
+            slice.count = saved_count;
+            set_blend_states(slice, saved_a2c, saved_factor, saved_mask);
+        } else {
+            set_blend_state(saved_blends[0], saved_a2c, saved_factor, saved_mask);
+        }
+    }
+}
+
+push_viewport :: (desc: Viewport_Desc) #expand {
+    saved_viewport := gaco_state.viewport;
+    set_viewport(desc);
+    `defer set_viewport(saved_viewport);
+}
+
+push_scissor :: (desc: Rect) #expand {
+    saved_scissor := gaco_state.scissor;
+    set_scissor(desc);
+    `defer set_scissor(saved_scissor);
+}
+
+push_render_target :: (render_target: Render_Target) #expand {
+    saved_rt := gaco_state.render_target;
+    set_render_target(render_target);
+    `defer set_render_target(saved_rt);
+}
+
+push_primitive_type :: (primitive_type: Primitive_Type) #expand {
+    saved_pt := gaco_state.primitive_type;
+    set_primitive_type(primitive_type);
+    `defer set_primitive_type(saved_pt);
+}
+
+debug_region :: (name: string) #expand {
+    begin_debug_region(name);
+    `defer end_debug_region();
 }
 
 free :: (bytecode: Shader_Bytecode) {
@@ -501,15 +649,23 @@ free :: (bytecode: Shader_Bytecode) {
     if bytecode.cs  free(bytecode.cs);
 }
 
-debug_region :: (name: string) #expand {
-    begin_debug_region(name);
-    `defer end_debug_region();
-}
+gaco_state : struct {
+    viewport: Viewport_Desc;
+    scissor: Rect;
+    rasterizer: Rasterizer_Desc;
 
-push_viewport :: (x: float, y: float, width: float, height: float, near_depth := 0.0, far_depth := 1.0) #expand {
-    viewport := get_viewport();
-    set_viewport(.{x,y,width,height,near_depth,far_depth});
-    `defer set_viewport(viewport);
+    independent_blend: bool;
+    blends: [8]Blend_Desc;
+    blend_count: int = 1;
+    alpha_to_coverage: bool;
+    blend_factor: Vector4;
+    sample_mask: u32;
+
+    depth_stencil: Depth_Stencil_Desc;
+    stencil_ref: u8 = 0xFF;
+
+    render_target: Render_Target;
+    primitive_type: Primitive_Type;
 }
 
 #if BACKEND == {
@@ -517,34 +673,16 @@ case .D3D11;
 #load "backends/d3d11.jai";
 case .OpenGL;
 #load "backends/opengl.jai";
+
 #import,dir "modules/spirv_reflect";
 DXC :: #import,dir "modules/dxc_compiler";
 #if OS == .LINUX {
     #import,dir "modules/EGL";
 }
-
 case .Metal;
 #load "backends/metal.jai";
 }
 
-// This is used for SPIR-V files because the sampler and texture indices
-// are the same in OpenGL so we have to have a system to map our seperate
-// sampler and texture indices.
-Texture_Sampler_Mapping :: struct {
-    mapped_index: u8;
-    texture_index: u8;
-    sampler_index: u8;
-    stage: Shader_Type;
-
-    NO_SAMPLER :: 0xFF;
-}
-
-
-Viewport_Desc :: struct {
-    x, y, width, height: float;
-    near_depth := 0.0;
-    far_depth := 1.0;
-}
 
 #scope_module
 
@@ -559,17 +697,6 @@ Shader_Backend :: enum u8 {
     Unspecified :: 0;
     DXBC :: 1;
     SPIR_V;
-}
-
-Shader_Header :: struct {
-    magic: u32;
-    version: u32;
-    backend: Shader_Backend;
-    type: Shader_Type;
-    mapping_count: u16; // Only used for SPIR-V
-    vs_size: u32;
-    fs_size: u32;
-    cs_size: u32;
 }
 
 GACO_MAGIC :: 0x4F434147; // "GACO"

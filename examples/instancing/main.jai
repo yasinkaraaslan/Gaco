@@ -154,14 +154,10 @@ draw_skybox :: () {
 
     Gaco.bind_buffer(transform_buffer, 0, .Vertex);
 
-    Gaco.set_rasterizer_state(.{cull_mode=.Front});
-    Gaco.set_depth_stencil_state(.{depth_write=false});
+    Gaco.push_rasterizer_state(.{cull_mode=.Front});
+    Gaco.push_depth_stencil_state(.{depth_write=false});
 
     Gaco.draw(true, Skybox.mesh.index_count);
-
-    Gaco.set_depth_stencil_state(.{});
-    Gaco.set_rasterizer_state(.{});
-
 }
 
 draw_model :: (using model: Obj_Model) {

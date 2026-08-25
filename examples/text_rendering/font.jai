@@ -168,8 +168,8 @@ fonts_window_resize :: (width: int, height: int) {
 draw_text :: (using font: *Font, text: string, position: Vector2, color := Vector4.{1,1,1,1}) {
     num_chars := prepare_quads_for_text(font, text, position);
 
-    Gaco.set_blend_state(Blend_Alpha);
-    Gaco.set_rasterizer_state(.{cull_mode=.None});
+    Gaco.push_blend_state(Blend_Alpha);
+    Gaco.push_rasterizer_state(.{cull_mode=.None});
 
     Gaco.set_shader(Shader);
     Gaco.bind_buffer(VertexBuffer);
@@ -184,7 +184,6 @@ draw_text :: (using font: *Font, text: string, position: Vector2, color := Vecto
     }
 
     Gaco.draw(true, num_chars * 6);
-    Gaco.set_blend_state(.{blend_enable=false});
 }
 
 // NOTE(Yasin): Can only do ASCII
