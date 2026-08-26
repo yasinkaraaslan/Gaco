@@ -77,10 +77,11 @@ is_valid :: (timer: Timer) -> bool {
     return glIsQuery(timer.start_query) && glIsQuery(timer.end_query);
 }
 
-init :: (window: WT.Window_Type) {
-    MAJOR :: 4;
-    MINOR :: 5;
+init :: (window: WT.Window_Type) -> bool {
+    TARGET_MAJOR :: 4;
+    TARGET_MINOR :: 5;
 
+    // If we were to use GLX, this wouldn't work since it'd have to be called before 'create_window'
     #if REQUEST_HIGH_PERFORMANCE_GPU && OS == .LINUX {
         #import "POSIX";
         #import "File_Utilities";
@@ -99,23 +100,31 @@ init :: (window: WT.Window_Type) {
 
     #if OS == .WINDOWS {
         if window == WT.INVALID_WINDOW {
-            wgl_create_compute_context(MAJOR, MINOR, DEBUG);
+            wgl_create_compute_context(TARGET_MAJOR, TARGET_MINOR, DEBUG);
         }
         else {
-            wgl_create_context(window, major_version=MAJOR, minor_version=MINOR, debug=DEBUG, wanted_msaa=0);
+            wgl_create_context(window, major_version=TARGET_MAJOR, minor_version=TARGET_MINOR, debug=DEBUG, wanted_msaa=0);
         }
     }
     else {
         // Mesa has a bug. We can't enable debug it until it's fixed.
         // https://gitlab.freedesktop.org/mesa/mesa/-/work_items/16043
-        egl_create_context(window, MAJOR, MINOR, debug=false);
+        egl_create_context(window, TARGET_MAJOR, TARGET_MINOR, debug=false);
     }
 
     gl_load(*gl);
     major, minor := gl_get_version();
 
-    if major < 4 || minor < 5 { // We support 4.5 and require SPIR-V extension.
-        log_error("[Gaco] Unsupported GL version: %.%, need at least 4.5", major, minor);
+    // We support 4.5 and require SPIR-V extension.
+    if major < TARGET_MAJOR || (major == TARGET_MAJOR && minor < TARGET_MINOR) {
+        log_error("[Gaco] Unsupported GL version: %.%, need at least %.%", major, minor, TARGET_MAJOR, TARGET_MINOR);
+        return false;
+    }
+
+    SPIRV_EXT_NAME :: "GL_ARB_gl_spirv";
+    if !gl_supports_extension(SPIRV_EXT_NAME) {
+        log_error("[Gaco] Required OpenGL extension '%' is not supported by this machine.", SPIRV_EXT_NAME);
+        return false;
     }
 
     #if DEBUG {
@@ -130,7 +139,8 @@ init :: (window: WT.Window_Type) {
     glCreateProgramPipelines(1, *global_pipeline);
     glBindProgramPipeline(global_pipeline);
 
-    if window == WT.INVALID_WINDOW return;
+    // Compute-only program
+    if window == WT.INVALID_WINDOW return true;
 
     main_window = window;
 
@@ -167,6 +177,7 @@ init :: (window: WT.Window_Type) {
     _, _, window_width, window_height = get_dimensions(main_window, false);
 
     default_sampler = create_sampler();
+    return true;
 }
 
 deinit :: () {
@@ -1383,8 +1394,10 @@ backend_set_blend_state :: (desc: Blend_Desc, alpha_to_coverage_enable := false,
     glColorMask(r, g, b, a);
 
     glSampleMaski(0, sample_mask);
-    if alpha_to_coverage_enable glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
-    else glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    if alpha_to_coverage_enable
+        glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    else
+        glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
 }
 
 backend_set_blend_states :: (descs: []Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
@@ -1416,8 +1429,10 @@ backend_set_blend_states :: (descs: []Blend_Desc, alpha_to_coverage_enable := fa
     glBlendColor(blend_factor.x, blend_factor.y, blend_factor.z, blend_factor.w);
     glSampleMaski(0, sample_mask);
 
-    if alpha_to_coverage_enable glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
-    else glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    if alpha_to_coverage_enable
+        glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    else
+        glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
 }
 
 backend_set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {

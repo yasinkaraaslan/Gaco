@@ -79,13 +79,11 @@ is_valid :: (using timer: Timer) -> bool {
     return disjoint_query != null && start_query != null && end_query != null;
 }
 
-init :: (window: Window_Type) {
+init :: (window: Window_Type) -> bool {
     flags: D3D11_CREATE_DEVICE_FLAG;
     #if DEBUG flags |= .DEBUG;
     feature_levels := D3D_FEATURE_LEVEL.[._11_1];
 
-    // @@ Explain why this is here.
-    flags |= .SINGLETHREADED;
     hr := D3D11CreateDevice(null, .HARDWARE, null, xx flags, feature_levels.data, feature_levels.count, D3D11_SDK_VERSION, *device, null, *device_context);
     check_hr("D3D11CreateDevice");
 
@@ -96,8 +94,10 @@ init :: (window: Window_Type) {
     }
 
     // We might be trying to create a compute only application.
-    if window == null return;
+    if window == null return true;
 
+
+    // TODO(Yasin): Check tearing support
     swap_chain_desc := DXGI_SWAP_CHAIN_DESC1.{
         Width = 0, Height = 0, // Get from the window.
         Format = .R8G8B8A8_UNORM,
@@ -145,6 +145,7 @@ init :: (window: Window_Type) {
 
     // NOTE(Yasin): It's safe if this fails on older systems,
     hr = IUnknown_QueryInterface(device_context, *uid(ID3DUserDefinedAnnotation_UUID), xx *annotation);
+    return true;
 }
 
 deinit :: () {
@@ -522,7 +523,7 @@ present :: (interval: u32 = 1) {
     ID3D11DeviceContext_ResolveSubresource(
         device_context,
         back_buffer, 0,
-        custom_color_texture.texture2d, 0,  // Source (multisampled offscreen target)
+        custom_color_texture.texture2d, 0,
         DXGI_FORMAT_MAP[custom_color_texture.format]
     );
     IUnknown_Release(back_buffer);
@@ -573,13 +574,11 @@ destroy_render_target :: (render_target: *Render_Target) {
 
 resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Format.RGBA8, depth_format := Texture_Format.D24S8) -> render_target: Render_Target {
     backend_set_render_target(.{});
-    
+
     destroy_render_target(*window_render_target);
     destroy_render_target(*custom_render_target);
     destroy_texture(*custom_color_texture);
     destroy_texture(*custom_depth_texture);
-
-    set_render_target(.{});
 
     hr := IDXGISwapChain_ResizeBuffers(swap_chain, 0, cast(u32)width, cast(u32)height, .UNKNOWN, xx DXGI_SWAP_CHAIN_FLAG.ALLOW_TEARING);
     check_hr("IDXGISwapChain.ResizeBuffers", #code `return .{});
@@ -968,7 +967,6 @@ stop_timer :: (timer: *Timer) {
     ID3D11DeviceContext_End(device_context, timer.disjoint_query);
 }
 
-
 timer_get_ms :: (timer: *Timer) -> ready: bool, float {
     if !timer.recording return true, 0.0;
 
@@ -1077,7 +1075,6 @@ backend_set_rasterizer_state :: (desc: Rasterizer_Desc) {
         table_add(*rasterizer_table, desc, state);
     }
 
-    // 'device_context' is your ID3D11DeviceContext
     ID3D11DeviceContext_RSSetState(device_context, state);
 }
 
@@ -1306,7 +1303,7 @@ get_input_layout_from_bytecode :: (bytecode: string) -> *ID3D11InputLayout {
 }
 
 
-check_hr :: (from: string, code_to_insert_after_fail := #code `return) #expand {
+check_hr :: (from: string, code_to_insert_after_fail := #code `return false) #expand {
     if FAILED(`hr) {
         System :: #import "System";
         error_code := cast,no_check(OS_Error_Code)`hr; // We know that it is less than 0 if it's a failure. OS_Error_Code is a u32
