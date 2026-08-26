@@ -861,7 +861,7 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
 
     tex: *ID3D11Texture2D;
     hr := IUnknown_QueryInterface(resource, *uid(ID3D11Texture2D_UUID), cast(**void)*tex);
-    check_hr("IUnknown.QueryInterface");
+    check_hr("IUnknown.QueryInterface", #code `return);
     defer IUnknown_Release(tex);
 
 

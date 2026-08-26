@@ -77,7 +77,7 @@ is_valid :: (timer: Timer) -> bool {
     return glIsQuery(timer.start_query) && glIsQuery(timer.end_query);
 }
 
-init :: (window: WT.Window_Type) -> bool {
+init :: (window: Window_Type) -> bool {
     TARGET_MAJOR :: 4;
     TARGET_MINOR :: 5;
 
@@ -650,10 +650,14 @@ clear :: (render_target: Render_Target, color: Vector4, depth := 1.0, stencil: u
             glClearNamedFramebufferfv(render_target.framebuffer, GL_COLOR, cast(s32)it, color.component.data);
         }
     }
-    #if flags & .Depth {
+
+    #if (flags & .Depth) && (flags & .Stencil) {
+        glClearNamedFramebufferfi(render_target.framebuffer, GL_DEPTH_STENCIL, 0, depth, cast(s32)stencil);
+    }
+    else #if flags & .Depth {
         glClearNamedFramebufferfv(render_target.framebuffer, GL_DEPTH, 0, *depth);
     }
-    #if flags & .Stencil {
+    else #if flags & .Stencil {
         val := cast(s32)stencil;
         glClearNamedFramebufferiv(render_target.framebuffer, GL_STENCIL, 0, *val);
     }
