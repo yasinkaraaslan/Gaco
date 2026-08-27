@@ -55,7 +55,7 @@ main :: () {
 
 ### Module parameters
 ```jai
-#module_parameters (BACKEND := DEFAULT_BACKEND, DEBUG := false, REQUEST_HIGH_PERFORMANCE_GPU := true);
+#module_parameters (BACKEND := DEFAULT_BACKEND, DEBUG := false, REQUEST_HIGH_PERFORMANCE_GPU := true, GRAPHICAL_ERRORS := true);
 ```
 
 - **`BACKEND`**: `.D3D11`, `.OpenGL`. Default is selected automatically per OS.
@@ -65,6 +65,7 @@ main :: () {
     #import "d3d11"()(INCLUDE_DEBUG_BINDINGS=true);
     ```
 - **`REQUEST_HIGH_PERFORMANCE_GPU`**: useful for hybrid-graphics laptops.
+- **`GRAPHICAL_ERRORS`**: display message box for backend errors.
 
 ### Initialization
 `init(window=)`: initializes the library. You can pass an invalid window if you don't need to render anything (compute-only application).

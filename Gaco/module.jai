@@ -1,4 +1,4 @@
-#module_parameters (BACKEND := DEFAULT_BACKEND, DEBUG := false, REQUEST_HIGH_PERFORMANCE_GPU := true) {
+#module_parameters (BACKEND := DEFAULT_BACKEND, DEBUG := false, REQUEST_HIGH_PERFORMANCE_GPU := true, GRAPHICAL_ERRORS := true) {
     Backend_Type :: enum u32 {
         OpenGL :: 0;
         D3D11  :: 1;
@@ -393,8 +393,7 @@ create_buffer :: (data: $T, $type: Buffer_Type, usage := Buffer_Usage.Default) -
 
     #if DATA_INFO.type == .ARRAY {
         #if type == .Index {
-            ARRAY_INFO :: (cast(*Type_Info_Array)DATA_INFO);
-            #assert ARRAY_INFO.element_type == type_info(u32) || ARRAY_INFO.element_type == type_info(u16) "Index buffers can only be created with u16 or u32 arrays.";
+            #assert DATA_INFO.element_type == type_info(u32) || DATA_INFO.element_type == type_info(u16) "Index buffers can only be created with u16 or u32 arrays.";
         }
 
         stride = cast(u32)size_of(type_of(data[0]));

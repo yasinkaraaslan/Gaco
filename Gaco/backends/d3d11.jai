@@ -1443,7 +1443,7 @@ init_exception_handler :: () {
 handle_exception :: (pExceptionInfo: *Crash_Handler.EXCEPTION_POINTERS) -> s32 #c_call {
     push_context {
         msg, found := log_messages_and_get_last();
-        if found {
+        #if GRAPHICAL_ERRORS if found {
             MessageBoxA(null, msg.data, "D3D11 Error", MB_OK | MB_ICONERROR);
         }
     }

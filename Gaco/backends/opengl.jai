@@ -117,7 +117,7 @@ init :: (window: Window_Type) -> bool {
 
     // We support 4.5 and require SPIR-V extension.
     if major < TARGET_MAJOR || (major == TARGET_MAJOR && minor < TARGET_MINOR) {
-        log_error("[Gaco] Unsupported GL version: %.%, need at least %.%", major, minor, TARGET_MAJOR, TARGET_MINOR);
+        log_error("[Gaco] Unsupported OpenGL version: %.%, need at least %.%", major, minor, TARGET_MAJOR, TARGET_MINOR);
         return false;
     }
 
@@ -260,8 +260,6 @@ bind_buffer :: (buffer: Buffer(.Vertex), slot: u32 = 0, offset: u32 = 0) {
 }
 
 bind_buffer :: (buffer: Buffer(.Index)) {
-    assert(buffer.stride == 2 || buffer.stride == 4);
-
     current_index_stride = buffer.stride;
     bound_index_buffer = buffer.object;
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer.object);
@@ -2083,6 +2081,14 @@ gl_debug_callback :: (source: GLenum, type: GLenum, id: GLuint, severity: GLenum
 
         log("[Gaco] %", message_str, flags=flags);
         if error {
+            #if GRAPHICAL_ERRORS {
+                #if OS == .WINDOWS
+                    MessageBoxA(null, message_str.data, "OpenGL Error", MB_OK | MB_ICONERROR);
+                else #if OS == .LINUX {
+                    message_str.count += 1; // Seems to be a problem with x_message_box?
+                    x_message_box(None, message_str, "OpenGL Error", .ST_OK);
+                }
+            }
             // D3D11 crashes on errors (because there is no way to register a callback...)
             // so we do the same thing here to be compatible.
             debug_break();
