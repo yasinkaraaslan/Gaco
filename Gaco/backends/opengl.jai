@@ -2223,7 +2223,7 @@ egl_create_context :: (window: Window_Type, major: s32, minor: s32, debug: bool)
 
         swa: XSetWindowAttributes;
         swa.colormap = XCreateColormap(x_global_display, target_window, vinfo.visual, AllocNone);
-        swa.event_mask = StructureNotifyMask;
+        swa.event_mask = NoEventMask;
 
         // We have to create a child window because the window created with create_window isn't compatible with EGL
         // on certain GPUs.
