@@ -25,13 +25,12 @@ window_proc :: (hwnd: HWND, message: u32, wParam: WPARAM, lParam: LPARAM) -> s64
     case WM_PAINT;
         BeginPaint(hwnd, null);
         lock(*shared_mutex);
+
         shared.frame_requested = true;
         wake(*shared_cv);                 // In case the render thread is idle-waiting
-        while shared.frame_requested {    // Guard against spurious wakeups
-            wait(*shared_cv, *shared_mutex);
-        }
-        unlock(*shared_mutex);
+        wait(*shared_cv, *shared_mutex);
 
+        unlock(*shared_mutex);
         EndPaint(hwnd, null);
         return 0;
     }
@@ -112,7 +111,7 @@ render_thread_proc :: (thread: *Thread) -> s64 {
         Gaco.clear(.{1.0, 0.5, 0.3, 1.0});
         Gaco.bind_buffer(transform_buffer, 0, .Vertex);
         Gaco.draw(false, 3);
-        Gaco.present(0);
+        Gaco.present(1);
 
         if local.frame_requested {
             lock(*shared_mutex);
@@ -172,6 +171,9 @@ main :: () {
         unlock(*shared_mutex);
     }
 
+    while !thread_is_done(*thread) {
+        sleep_milliseconds(1);
+    }
 }
 
 Gaco :: #import,dir "../../Gaco";
@@ -180,8 +182,8 @@ Gaco :: #import,dir "../../Gaco";
 #if OS == .WINDOWS {
     #import "Windows";
 
-    BeginPaint :: (hWnd: *void, lpPaint: *void) -> *void #foreign user32;
-    EndPaint :: (hWnd: *void, lpPaint: *void) -> s32 #foreign user32;
+    BeginPaint :: (hWnd: HWND, lpPaint: *void) -> *void #foreign user32;
+    EndPaint :: (hWnd: HWND, lpPaint: *void) -> s32 #foreign user32;
 
     user32 :: #library,system "user32";
 }

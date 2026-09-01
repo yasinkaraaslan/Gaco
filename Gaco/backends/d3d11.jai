@@ -96,16 +96,16 @@ init :: (window: Window_Type) -> bool {
     // We might be trying to create a compute only application.
     if window == null return true;
 
-
-    // TODO(Yasin): Check tearing support
+    // Microsoft strongly defends the dxgi flip model but
+    // regular .DISCARD seems to behave better for smooth-resizing in my experience.
+    // You can test render_thread example in both ways and decide for yourself if you want.
     swap_chain_desc := DXGI_SWAP_CHAIN_DESC1.{
         Width = 0, Height = 0, // Get from the window.
         Format = .R8G8B8A8_UNORM,
-        BufferCount = 2,
+        BufferCount = 1,
         BufferUsage = .RENDER_TARGET_OUTPUT,
         SampleDesc = .{Count = 1, Quality = 0},
-        SwapEffect = .FLIP_DISCARD,
-        Flags = xx DXGI_SWAP_CHAIN_FLAG.ALLOW_TEARING
+        SwapEffect = .DISCARD,
     };
 
     dxgi_factory: *IDXGIFactory2;
@@ -528,12 +528,7 @@ present :: (interval: u32 = 1) {
     );
     IUnknown_Release(back_buffer);
 
-    present_flags: DXGI_PRESENT;
-    if interval == 0 {
-        present_flags |= .ALLOW_TEARING;
-    }
-
-    hr := IDXGISwapChain_Present(swap_chain, interval, xx present_flags);
+    hr := IDXGISwapChain_Present(swap_chain, interval, 0);
     check_hr("IDXGISwapChain_Present", #code {});
 }
 
@@ -580,7 +575,7 @@ resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Forma
     destroy_texture(*custom_color_texture);
     destroy_texture(*custom_depth_texture);
 
-    hr := IDXGISwapChain_ResizeBuffers(swap_chain, 0, cast(u32)width, cast(u32)height, .UNKNOWN, xx DXGI_SWAP_CHAIN_FLAG.ALLOW_TEARING);
+    hr := IDXGISwapChain_ResizeBuffers(swap_chain, 0, cast(u32)width, cast(u32)height, .UNKNOWN, 0);
     check_hr("IDXGISwapChain.ResizeBuffers", #code `return .{});
 
     back_buffer: Texture;
