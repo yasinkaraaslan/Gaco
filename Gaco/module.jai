@@ -291,7 +291,7 @@ Box :: struct {
 }
 
 // This is used for SPIR-V files because the sampler and texture indices
-// are the same in OpenGL so we have to have a system to map our seperate
+// are the same in OpenGL so we have to have a system to map our separate
 // sampler and texture indices.
 Texture_Sampler_Mapping :: struct {
     mapped_index: u8;

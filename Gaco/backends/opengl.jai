@@ -88,7 +88,6 @@ init :: (window: Window_Type) -> bool {
 
         // Request dGPU from Mesa
         setenv("DRI_PRIME", "1", 1);
-
         // Request dGPU from Nvidia proprietary drivers
         if file_exists("/sys/module/nvidia") {
             setenv("__NV_PRIME_RENDER_OFFLOAD", "1", 1);
@@ -99,17 +98,18 @@ init :: (window: Window_Type) -> bool {
     }
 
     #if OS == .WINDOWS {
-        if window == WT.INVALID_WINDOW {
-            wgl_create_compute_context(TARGET_MAJOR, TARGET_MINOR, DEBUG);
+        if window == INVALID_WINDOW {
+            if !wgl_create_compute_context(TARGET_MAJOR, TARGET_MINOR, DEBUG) return false;
         }
         else {
-            wgl_create_context(window, major_version=TARGET_MAJOR, minor_version=TARGET_MINOR, debug=DEBUG, wanted_msaa=0);
+            hglrc, hdc := wgl_create_context(window, major_version=TARGET_MAJOR, minor_version=TARGET_MINOR, debug=DEBUG, wanted_msaa=0);
+            if !hglrc || !hdc return false;
         }
     }
     else {
         // Mesa has a bug. We can't enable debug it until it's fixed.
         // https://gitlab.freedesktop.org/mesa/mesa/-/work_items/16043
-        egl_create_context(window, TARGET_MAJOR, TARGET_MINOR, debug=false);
+        if !egl_create_context(window, TARGET_MAJOR, TARGET_MINOR, debug=false) return false;
     }
 
     gl_load(*gl);
@@ -128,9 +128,6 @@ init :: (window: Window_Type) -> bool {
     }
 
     #if DEBUG {
-        renderer_name := glGetString(GL_RENDERER);
-        log("[Gaco] OpenGL Renderer: %", to_string(renderer_name));
-
         glEnable(GL_DEBUG_OUTPUT);
         glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
         glDebugMessageCallback(gl_debug_callback, null);
@@ -140,7 +137,12 @@ init :: (window: Window_Type) -> bool {
     glBindProgramPipeline(global_pipeline);
 
     // Compute-only program
-    if window == WT.INVALID_WINDOW return true;
+    if window == INVALID_WINDOW return true;
+
+    #if DEBUG {
+        renderer_name := glGetString(GL_RENDERER);
+        log("[Gaco] OpenGL Renderer: %", to_string(renderer_name));
+    }
 
     main_window = window;
 
@@ -174,7 +176,7 @@ init :: (window: Window_Type) -> bool {
     set_primitive_type(.Triangle_List);
 
     set_swap_interval(0);
-    _, _, window_width, window_height = get_dimensions(main_window, false);
+    _, _, window_width, window_height = get_dimensions(main_window);
 
     default_sampler = create_sampler();
     return true;
@@ -191,7 +193,7 @@ deinit :: () {
             hdc := wglGetCurrentDC();
 
             wglMakeCurrent(null, null) ;
-            ReleaseDC (main_window, hdc) ;
+            ReleaseDC(main_window, hdc) ;
             wglDeleteContext(hglrc);
         }
     }
@@ -390,7 +392,7 @@ update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 
             texture.object, cast(s32)subresource,
             box.x, box.y, box.z,
             cast(u32)box.width, cast(u32)box.height, cast(u32)box.depth,
-            gl_info.pixel_format, image_size, data
+            gl_info.internal_format, image_size, data
         );
     }
     else {
@@ -887,10 +889,15 @@ resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Forma
     glCreateTextures(GL_TEXTURE_2D, 1, *resolve_color_texture);
     glTextureStorage2D(resolve_color_texture, 1, color_info.internal_format, xx width, xx height);
     glNamedFramebufferTexture(resolve_fbo, GL_COLOR_ATTACHMENT0, resolve_color_texture, 0);
-
-    status := glCheckNamedFramebufferStatus(custom_fbo, GL_FRAMEBUFFER);
-    if status != GL_FRAMEBUFFER_COMPLETE {
-        log_error("[Gaco] FBO is incomplete! Status: %", status);
+    #if DEBUG {
+        status := glCheckNamedFramebufferStatus(custom_fbo, GL_FRAMEBUFFER);
+        if status != GL_FRAMEBUFFER_COMPLETE {
+            log_error("[Gaco] Custom FBO is incomplete! Status: 0x%", formatInt(status, 16));
+        }
+        status = glCheckNamedFramebufferStatus(resolve_fbo, GL_FRAMEBUFFER);
+        if status != GL_FRAMEBUFFER_COMPLETE {
+            log_error("[Gaco] Resolve FBO is incomplete! Status: 0x%", formatInt(status, 16));
+        }
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, custom_fbo);
@@ -905,7 +912,7 @@ resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Forma
 
     internal_width = xx width;
     internal_height = xx height;
-    _, _, window_width, window_height = get_dimensions(main_window, false);
+    _, _, window_width, window_height = get_dimensions(main_window);
 
     #if OS == .LINUX {
         if egl_child_window != 0 {
@@ -1098,6 +1105,7 @@ copy_texture :: (from: Texture, to: *Texture, source_box: Box) {
 
         glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
+
         glGetTextureSubImage(
             from.object, 0,
             source_box.x, source_box.y, source_box.z,
@@ -1105,6 +1113,7 @@ copy_texture :: (from: Texture, to: *Texture, source_box: Box) {
             gl_info.pixel_format, gl_info.pixel_type,
             to.pbo_size, null
         );
+
         glPixelStorei(GL_PACK_ALIGNMENT, 4);
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
@@ -2107,7 +2116,7 @@ gl_set_debug_name :: (id: GLuint, type: GLenum, name: string) {
 
 #if OS == .WINDOWS {
 
-wgl_create_compute_context :: (major: s32, minor: s32, debug: bool) {
+wgl_create_compute_context :: (major: s32, minor: s32, debug: bool) -> bool {
     #import "Windows_Utf8";
     hInstance := GetModuleHandleW(null);
 
@@ -2134,10 +2143,12 @@ wgl_create_compute_context :: (major: s32, minor: s32, debug: bool) {
     pfd.cColorBits = 32;
 
     pf := ChoosePixelFormat(hdc, *pfd);
-    SetPixelFormat(hdc, pf, *pfd);
+    if !pf return false;
+
+    if !SetPixelFormat(hdc, pf, *pfd) return false;
 
     dummy_ctx := wglCreateContext(hdc);
-    wglMakeCurrent(hdc, dummy_ctx);
+    if !wglMakeCurrent(hdc, dummy_ctx) return false;
 
     wglCreateContextAttribsARB: (hdc: HDC, hShareContext : HGLRC, attribList : *s32)->HGLRC #c_call;
     wglCreateContextAttribsARB = xx wglGetProcAddress("wglCreateContextAttribsARB");
@@ -2158,30 +2169,46 @@ wgl_create_compute_context :: (major: s32, minor: s32, debug: bool) {
     attribs[idx] = 0;
 
     compute_ctx := wglCreateContextAttribsARB(hdc, null, attribs.data);
-    wglMakeCurrent(hdc, compute_ctx);
+    if !wglMakeCurrent(hdc, compute_ctx) return false;
     wglDeleteContext(dummy_ctx);
+
+    return true;
+}
+
+get_dimensions :: (hwnd: HWND) -> (x: s32, y: s32, width: s32, height: s32) {
+    local\_rect: RECT;
+    screen_rect: RECT;
+
+    GetWindowRect(hwnd, *screen_rect);
+    GetClientRect(hwnd, *local_rect);
+
+    dx := local_rect.right  - local_rect.left;
+    dy := local_rect.bottom - local_rect.top;
+    x0 := screen_rect.left;
+    return x0 + local_rect.left, screen_rect.top + local_rect.top, dx, dy;
 }
 
 }
 else #if OS == .LINUX {
 
-egl_create_context :: (window: Window_Type, major: s32, minor: s32, debug: bool) {
-    assert(x_global_display != null);
+egl_create_context :: (window: Window_Type, major: s32, minor: s32, debug: bool) -> bool {
+    if !x_global_display init_global_display();
+
     egl_display = eglGetDisplay(cast(EGLNativeDisplayType) x_global_display);
 
     if egl_display == EGL_NO_DISPLAY {
         log_error("[Gaco] Failed to get EGL display. Error: 0x%", formatInt(eglGetError(), 16));
-        return;
+        return false;
     }
 
     if !eglInitialize(egl_display, null, null) {
         log_error("[Gaco] Failed to initialize EGL. Error: 0x%", formatInt(eglGetError(), 16));
-        return;
+        return false;
     }
 
     if !eglBindAPI(EGL_OPENGL_API) {
         log_error("[Gaco] Failed to bind OpenGL API. Error: 0x%", formatInt(eglGetError(), 16));
-        return;
+        return false;
     }
 
     attribs := EGLint.[
@@ -2198,12 +2225,12 @@ egl_create_context :: (window: Window_Type, major: s32, minor: s32, debug: bool)
     num_configs: EGLint;
     if !eglChooseConfig(egl_display, attribs.data, *chosen_config, 1, *num_configs) || num_configs == 0 {
         log_error("[Gaco] Failed to choose EGLConfig.");
-        return;
+        return false;
     }
 
     target_window := cast(Window) window;
 
-    if window != WT.INVALID_WINDOW {
+    if window != INVALID_WINDOW {
         egl_visual_id: EGLint;
         eglGetConfigAttrib(egl_display, chosen_config, EGL_NATIVE_VISUAL_ID, *egl_visual_id);
 
@@ -2215,7 +2242,7 @@ egl_create_context :: (window: Window_Type, major: s32, minor: s32, debug: bool)
 
         if !vinfo {
             log_error("[Gaco] Failed to get XVisualInfo for EGL Visual ID 0x%.", formatInt(egl_visual_id, 16));
-            return;
+            return false;
         }
 
         win_attrs: XWindowAttributes;
@@ -2268,22 +2295,30 @@ egl_create_context :: (window: Window_Type, major: s32, minor: s32, debug: bool)
     egl_context := eglCreateContext(egl_display, chosen_config, EGL_NO_CONTEXT, context_attribs.data);
     if !egl_context {
         log_error("[Gaco] Failed to create EGL context. Error: 0x%", formatInt(eglGetError(), 16));
-        return;
+        return false;
     }
 
     egl_surface = EGL_NO_SURFACE;
-    if window != WT.INVALID_WINDOW {
+    if window != INVALID_WINDOW {
         egl_surface = eglCreateWindowSurface(egl_display, chosen_config, cast(EGLNativeWindowType) target_window, null);
         if !egl_surface {
             log_error("[Gaco] Failed to create window egl_surface. Error: 0x%", formatInt(eglGetError(), 16));
-            return;
+            return false;
         }
     }
 
     if !eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context) {
         log_error("[Gaco] Failed to make EGL context current. Error: 0x%", formatInt(eglGetError(), 16));
-        return;
+        return false;
     }
+    return true;
+}
+
+get_dimensions :: (win: Window) -> (x: s32, y: s32, width: s32, height: s32) {
+    xwa: XWindowAttributes;
+    XGetWindowAttributes(x_global_display, win, *xwa);
+
+    return xwa.x, xwa.y, xwa.width, xwa.height;
 }
 
 }
@@ -2297,4 +2332,4 @@ else #if OS == .LINUX {
     #import "X11";
 }
 
-#import "Window_Creation";
+#import "Window_Type";

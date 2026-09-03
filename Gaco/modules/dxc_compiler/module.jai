@@ -3,42 +3,6 @@
 //
 #module_parameters () (NINTENDO_SUPPORT := false);
 
-dxc_get_version_string :: () -> string {
-    compiler: *IDxcCompiler3;
-    defer safe_release(compiler);
-
-    CheckCom(DxcCreateInstance(*CLSID_DxcCompiler, *IDxcCompiler3_UID, xx *compiler));
-
-    version_info: *IDxcVersionInfo;
-    CheckCom(IUnknown_QueryInterface(compiler, *IDxcVersionInfo_UID, xx *version_info));
-    defer  IUnknown_Release(version_info);
-
-    major, minor: u32;
-    CheckCom(IDxcVersionInfo_GetVersion(version_info, *major, *minor));
-
-    // There are two additional version interfaces... "2" gives us the commit count and hash, not very useful.
-    // "3" gives a "custom" string that is more useful, but the returned string has to be freed with CoTaskMemFree, gross.
-
-    #if USE_WIN32 {
-        ole32 :: #library,system "ole32";
-        CoTaskMemFree :: (microsoft_is_not_good: *void) #foreign ole32;
-
-        version_info3: *IDxcVersionInfo3;
-        CheckCom(IUnknown_QueryInterface(compiler, *IDxcVersionInfo3_UID, xx *version_info3));
-        defer  IUnknown_Release(version_info3);
-
-        custom_string: *u8;
-        CheckCom(IDxcVersionInfo3_GetCustomVersionString(version_info3, *custom_string));
-        defer  CoTaskMemFree(custom_string);
-
-        result := sprint("v%.% [%]", major, minor, to_string(custom_string));
-    } else {
-        result := sprint("v%.%", major, minor);
-    }
-
-    return result;
-}
-
 Shader_Type :: enum {
     Vertex;
     Fragment;
@@ -225,25 +189,6 @@ DXC_Compile :: (args: Dxc_Shader_Compiler_Args) -> [..]u8 {
     return binary_result;
 }
 
-DXC_Reflect :: (dxil: []u8) -> *ID3D12ShaderReflection, bool {
-    utils: *IDxcUtils;
-    CheckCom(DxcCreateInstance(*CLSID_DxcUtils, *IDxcUtils_UID, xx *utils));
-
-    buffer: DxcBuffer;
-    buffer.Ptr = dxil.data;
-    buffer.Size = xx dxil.count;
-
-    reflection: *ID3D12ShaderReflection;
-    desc: D3D12_SHADER_DESC;
-
-    result := IDxcUtils_CreateReflection(utils, *buffer, *uid(ID3D12ShaderReflection_UUID), xx *reflection);
-    if FAILED(result)  return null, false;
-
-    IUnknown_Release(utils);
-
-    return reflection, true;
-}
-
 #if NINTENDO_SUPPORT {
     #load "nintendo/bindings.jai";
 } else {
@@ -331,8 +276,6 @@ else #if OS == .LINUX {
 }
 
 #scope_file
-
-USE_WIN32 :: true; // Won't be true for all non windows platforms, eg Android.
 
 CheckCom :: (result: HRESULT, $call := #caller_code, loc := #caller_location) -> HRESULT #expand {
     #import "Compiler";

@@ -4,6 +4,7 @@ main :: () {
     random_seed(420);
 
     Gaco.init(INVALID_WINDOW); // We can pass this here if we do not plan to render anything.
+    defer Gaco.deinit();
 
     shader := Gaco.load_shader("compute.gaco");
     Gaco.set_shader(shader);

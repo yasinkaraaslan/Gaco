@@ -102,7 +102,7 @@ init :: (window: Window_Type) -> bool {
     swap_chain_desc := DXGI_SWAP_CHAIN_DESC1.{
         Width = 0, Height = 0, // Get from the window.
         Format = .R8G8B8A8_UNORM,
-        BufferCount = 1,
+        BufferCount = 1, // This refers to the number of back buffers if we are not doing flip model
         BufferUsage = .RENDER_TARGET_OUTPUT,
         SampleDesc = .{Count = 1, Quality = 0},
         SwapEffect = .DISCARD,
@@ -124,7 +124,7 @@ init :: (window: Window_Type) -> bool {
         #if DEBUG {
             desc: DXGI_ADAPTER_DESC ;
             IDXGIAdapter_GetDesc(dxgi_adapter, *desc);
-            renderer_name, success := wide_to_utf8(cast(*u16)desc.Description.data);
+            renderer_name, success := wide_to_utf8(cast(*u16)desc.Description.data,, temp);
             log("[Gaco] D3D11 Renderer: %", renderer_name);
         }
 
@@ -632,7 +632,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
             }
         }
         if generate_mips {
-            // @Speed: We would probably want to create a seperate render target texture
+            // @Speed: We would probably want to create a separate render target texture
             // and copy it to our newly generated texture.
             bind_flags |= .RENDER_TARGET;
             misc_flags |= .GENERATE_MIPS;
