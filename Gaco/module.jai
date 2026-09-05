@@ -6,6 +6,9 @@
     };
 
     DEFAULT_BACKEND :: #run -> Backend_Type {
+        // TODO(Yasin): GLES backend for Android
+        // TODO(Yasin): Metal backend if I can get my hands on a mac
+
         #if      OS == .WINDOWS || OS == .XBOX    return .D3D11;
         else #if OS == .LINUX   || OS == .ANDROID return .OpenGL;
         else #if OS == .MACOS   || OS == .IOS     return .Metal;
@@ -313,6 +316,17 @@ Shader_Header :: struct {
     cs_size: u32;
 }
 
+compile_shader :: inline (file_name: string, output_file_name: string, type: Shader_Type, defines := string.[]) -> bool {
+    push_allocator(temp);
+    source, ok := read_entire_file(file_name, zero_terminated=true);
+    if !ok return false;
+
+    file_data:, ok = compile_shader_from_memory(source, type, file_name, defines);
+    if !ok return false;
+
+    return write_entire_file(output_file_name, file_data);
+}
+
 compile_shader_from_memory :: (source: string, type: Shader_Type, debug_file_name: string, defines := string.[]) -> string, bool {
     bytecode, ok := compile_shader_to_bytecode(source, type, debug_file_name, defines,, temp);
     if !ok return "", false;
@@ -339,18 +353,7 @@ compile_shader_from_memory :: (source: string, type: Shader_Type, debug_file_nam
     return builder_to_string(*sb), true;
 }
 
-compile_shader :: (file_name: string, output_file_name: string, type: Shader_Type, defines := string.[]) -> bool {
-    push_allocator(temp);
-    source, ok := read_entire_file(file_name, zero_terminated=true);
-    if !ok return false;
-
-    file_data:, ok = compile_shader_from_memory(source, type, file_name, defines);
-    if !ok return false;
-
-    return write_entire_file(output_file_name, file_data);
-}
-
-load_shader :: (file_name: string) -> Shader {
+load_shader :: inline (file_name: string) -> Shader {
     source, ok := read_entire_file(file_name,, temp);
     if !ok  return .{};
     return load_shader_from_memory(source, file_name);
@@ -386,7 +389,11 @@ load_shader_from_memory :: (source: string, debug_name := "") -> Shader {
     return load_shader_from_bytecode(bytecode, header.type, debug_name);
 }
 
-create_buffer :: (data: $T, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {
+set_shader :: inline (shader: Shader) {
+    set_shader(shader, shader.type);
+}
+
+create_buffer :: inline (data: $T, $type: Buffer_Type, usage := Buffer_Usage.Default) -> Buffer(type) {
     data_pointer : *void = ---;
     DATA_INFO :: type_info(T);
     count, stride: u32;
@@ -410,7 +417,7 @@ create_buffer :: (data: $T, $type: Buffer_Type, usage := Buffer_Usage.Default) -
     return create_buffer(data_pointer, count, stride, type, usage);
 }
 
-create_texture_from_file :: (file_name: string, mip_levels: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.Sampled) -> Texture {
+create_texture_from_file :: inline (file_name: string, mip_levels: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.Sampled) -> Texture {
     bytes, ok := read_entire_file(file_name,, temp);
     if !ok return .{};
 
@@ -474,7 +481,6 @@ write_buffer :: inline (buffer: *Buffer, data: $T) {
     #if type_info(T).type == .ARRAY {
         ELEMENT_SIZE :: size_of(type_of(data[0]));
         if ELEMENT_SIZE != buffer.stride {
-            // This is probably an error most of the time, maybe a warning would be in place
             buffer.stride = ELEMENT_SIZE;
         }
         data_pointer = data.data;
@@ -522,11 +528,11 @@ create_sampler :: inline (filtering := Sampler_Filtering.Linear, edge_handling :
     return create_sampler(filtering, filtering, filtering, edge_handling, edge_handling, edge_handling, border_color, max_anisotropy, compare_op, debug_name);
 }
 
-set_rasterizer_state :: (desc: Rasterizer_Desc) {
+set_rasterizer_state :: inline (desc: Rasterizer_Desc) {
     gaco_state.rasterizer = desc;
     backend_set_rasterizer_state(desc);
 }
-set_blend_state :: (desc: Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
+set_blend_state :: inline (desc: Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
     gaco_state.independent_blend = false;
     gaco_state.blend_count = 1;
     gaco_state.blends[0] = desc;
@@ -537,7 +543,7 @@ set_blend_state :: (desc: Blend_Desc, alpha_to_coverage_enable := false, blend_f
     backend_set_blend_state(desc, alpha_to_coverage_enable, blend_factor, sample_mask);
 }
 
-set_blend_states :: (descs: []Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
+set_blend_states :: inline (descs: []Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
     assert(descs.count <= 8);
 
     gaco_state.independent_blend = true;
@@ -550,29 +556,29 @@ set_blend_states :: (descs: []Blend_Desc, alpha_to_coverage_enable := false, ble
     backend_set_blend_states(descs, alpha_to_coverage_enable, blend_factor, sample_mask);
 }
 
-set_depth_stencil_state :: (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
+set_depth_stencil_state :: inline (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
     gaco_state.depth_stencil = desc;
     gaco_state.stencil_ref = stencil_ref;
 
     backend_set_depth_stencil_state(desc, stencil_ref);
 }
 
-set_viewport :: (desc: Viewport_Desc) {
+set_viewport :: inline (desc: Viewport_Desc) {
     gaco_state.viewport = desc;
     backend_set_viewport(desc);
 }
 
-set_scissor :: (desc: Rect) {
+set_scissor :: inline (desc: Rect) {
     gaco_state.scissor = desc;
     backend_set_scissor(desc);
 }
 
-set_render_target :: (render_target: Render_Target) {
+set_render_target :: inline (render_target: Render_Target) {
     gaco_state.render_target = render_target;
     backend_set_render_target(render_target);
 }
 
-set_primitive_type :: (primitive_type: Primitive_Type) {
+set_primitive_type :: inline (primitive_type: Primitive_Type) {
     gaco_state.primitive_type = primitive_type;
     backend_set_primitive_type(primitive_type);
 }
@@ -725,6 +731,17 @@ enum_count :: ($T: Type) -> s64 {
 
 is_block_compression :: inline (format: Texture_Format) -> bool {
     return format >= .BC6U && format <= .BC7_SRGB;
+}
+
+block_size :: inline (texture: Texture) -> block_width: u32, block_height: u32 {
+    block_width, block_height := block_size(texture.width, texture.height, texture.format);
+    return block_width, block_height;
+}
+
+block_size :: inline (width: u32, height: u32, format: Texture_Format) -> block_width: u32, block_height: u32 {
+    if !is_block_compression(format)
+        return width, height;
+    return (width + 3) / 4, (height + 3) / 4;
 }
 
 max_mip_levels :: inline (width: u32, height: u32) -> u32 {

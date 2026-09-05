@@ -197,10 +197,13 @@ deinit :: () {
             wglDeleteContext(hglrc);
         }
     }
-    else #if OS == .LINUX {
+    else #if OS == .LINUX || OS == .ANDROID {
         gl_context := eglGetCurrentContext();
         if gl_context {
             eglDestroyContext(egl_display, gl_context);
+        }
+        #if OS == .LINUX {
+            XDestroyWindow(x_global_display, egl_child_window);
         }
     }
 }
@@ -248,6 +251,8 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
 }
 
 bind_buffer :: (buffer: Buffer(.Vertex), slot: u32 = 0, offset: u32 = 0) {
+    // We only save slots 0 and 1 because those are the only ones that are supported right now.
+    // We'd have to update this if any other use of 'slot' comes to mind.
     if slot == 0 {
         bound_vertex_buffer.object = buffer.object;
         bound_vertex_buffer.stride = buffer.stride;
@@ -663,9 +668,9 @@ clear :: (render_target: Render_Target, color: Vector4, depth := 1.0, stencil: u
     }
 }
 
-set_shader :: (shader: Shader) {
+set_shader :: (shader: Shader, stages_to_set: Shader_Type) {
     stages: GLbitfield;
-    if shader.type & .Vertex {
+    if stages_to_set & .Vertex {
         stages |= GL_VERTEX_SHADER_BIT;
 
         // We have to rebind the vertex, index and instance buffer because we can't just change
@@ -684,11 +689,11 @@ set_shader :: (shader: Shader) {
         vs_mappings = shader.mappings;
         glUseProgramStages(global_pipeline, GL_VERTEX_SHADER_BIT, shader.vs_program);
     }
-    if shader.type & .Fragment {
+    if stages_to_set & .Fragment {
         fs_mappings = shader.mappings;
         glUseProgramStages(global_pipeline, GL_FRAGMENT_SHADER_BIT, shader.fs_program);
     }
-    if shader.type & .Compute {
+    if stages_to_set & .Compute {
         cs_mappings = shader.mappings;
         glUseProgramStages(global_pipeline, GL_COMPUTE_SHADER_BIT, shader.cs_program);
     }
@@ -705,6 +710,9 @@ set_shader :: (shader: Shader) {
                 info_log := alloc(info_len,, temp);
                 glGetProgramPipelineInfoLog(global_pipeline, cast(GLsizei)info_len, null, info_log);
                 log_error("[Gaco] Pipeline validation failed: %", to_string(info_log));
+            }
+            else {
+                log_error("[Gaco] Pipeline validation failed with no info.");
             }
         }
     }
@@ -987,7 +995,6 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     texture.target = target;
     glCreateTextures(target, 1, *texture.object);
 
-    texture.depth = array_count_or_depth;
     if is_msaa {
         if is_array {
             glTextureStorage3DMultisample(texture.object, mip_levels_or_msaa, gl_info.internal_format, width, height, array_count_or_depth, GL_TRUE);
@@ -1297,6 +1304,12 @@ timer_get_ms :: (timer: *Timer) -> ready: bool, float {
     return true, cast(float)((end_timestamp - start_timestamp).(float64) / 1000000.0);
 }
 
+destroy_timer :: (timer: *Timer) {
+    glDeleteQueries(timer.queries.count, timer.queries.data);
+    timer.start_query = 0;
+    timer.end_query = 0;
+}
+
 begin_debug_region :: (name: string) {
     #if DEBUG {
         glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, cast(GLsizei)name.count, name.data);
@@ -1486,7 +1499,7 @@ set_swap_interval :: (interval: s32) {
     #if OS == .WINDOWS {
         wglSwapIntervalEXT(interval);
     }
-    else #if OS == .LINUX {
+    else #if OS == .LINUX || OS == .ANDROID {
         eglSwapInterval(egl_display, interval);
     }
     current_swap_interval = interval;
@@ -1935,10 +1948,12 @@ using GL_State: struct {
     global_pipeline: GLuint;
     empty_stupid_vao: GLuint; // Because we cannot bind a vertex buffer without a vao
 
-    #if OS == .LINUX {
+    #if OS == .LINUX || OS == .ANDROID {
         egl_display: EGLDisplay;
         egl_surface: EGLSurface;
-        egl_child_window: Window;
+        #if OS == .LINUX {
+            egl_child_window: Window;
+        }
     }
 
     Bound_Buffer :: struct {
@@ -2107,7 +2122,7 @@ gl_debug_callback :: (source: GLenum, type: GLenum, id: GLuint, severity: GLenum
 
 }
 
-gl_set_debug_name :: (id: GLuint, type: GLenum, name: string) {
+gl_set_debug_name :: inline (id: GLuint, type: GLenum, name: string) {
     #if DEBUG {
         if id == 0 return;
         glObjectLabel(type, id, cast(GLsizei) name.count, name.data);

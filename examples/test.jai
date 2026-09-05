@@ -18,6 +18,7 @@ run_example_tests :: () {
         "camera",
         "jon_cube",
         "instancing",
+        "render_thread",
     ];
 
     log("Starting compilation tests for % examples...", examples.count);

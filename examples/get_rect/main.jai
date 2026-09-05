@@ -41,8 +41,8 @@ main :: () {
         Gaco.clear(.{0.3, 0.4, 0.4, 1.0});
 
 
-        k := WindowHeight * .1;
-        r := get_rect(k*.5, 2.1*k, 4*k, k);
+        k := WindowWidth * .05;
+        r := get_rect(k*.5, 2.1*k, 400, 100);
         button_theme := current_theme.button_theme;
         button_theme.font = font;
         button_theme.enable_variable_frame_thickness = true;
@@ -50,16 +50,16 @@ main :: () {
         button_theme.label_theme.alignment = .Left;
         pressed := button(r, "What do you do", *button_theme);
 
-        r.y += k;
+        r.y += r.h;
         button_theme.label_theme.alignment = .Center;
         pressed  = button(r, "With a", *button_theme);
 
-        r.y += k;
+        r.y += r.h;
         button_theme.label_theme.alignment = .Right;
         pressed  = button(r, "Drunken sailor?", *button_theme);
 
 
-        r = get_rect(10*k, 1.8*k, 2*k, xx font.character_height);
+        r = get_rect(10*k, 1.8*k, k * 5, xx font.character_height);
 
         vertical_pad := r.h * .35;
         changed := base_checkbox(r, "Checkbox", checkbox_selected);

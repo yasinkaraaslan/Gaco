@@ -82,7 +82,7 @@ is_valid :: (using timer: Timer) -> bool {
 init :: (window: Window_Type) -> bool {
     flags: D3D11_CREATE_DEVICE_FLAG;
     #if DEBUG flags |= .DEBUG;
-    feature_levels := D3D_FEATURE_LEVEL.[._11_1];
+    feature_levels := D3D_FEATURE_LEVEL.[._11_1, ._11_0];
 
     hr := D3D11CreateDevice(null, .HARDWARE, null, xx flags, feature_levels.data, feature_levels.count, D3D11_SDK_VERSION, *device, null, *device_context);
     check_hr("D3D11CreateDevice");
@@ -313,20 +313,26 @@ update_buffer :: (buffer: *Buffer, data: *void) {
 }
 
 update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 = 0) {
-    row := cast(u32)rect.width * texture.stride;
     box := box_from_rect(rect);
+    block_width, block_height := block_size(xx rect.width, xx rect.height, texture.format);
+
+    row := cast(u32)rect.width * texture.stride;
     ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture2d, subresource, *box, data, row, 0);
 }
 
 update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 0) {
-    row := cast(u32)box.width * texture.stride;
     d_box := box_from_box(box);
+
+    block_width, block_height := block_size(xx box.width, xx box.height, texture.format);
+
+    row := block_width * texture.stride;
     ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture3d, subresource, *d_box, data, row, row * box.height.(u32));
 
 }
 
 update_texture :: (using texture: *Texture, data: *void, subresource: u32 = 0) {
-    row := width * stride;
+    block_width, block_height := block_size(texture);
+    row := block_width * stride;
     ID3D11DeviceContext_UpdateSubresource(device_context, texture2d, subresource, null, data, row, row * height);
 }
 
@@ -467,15 +473,15 @@ clear :: inline (color: Vector4, depth := 1.0, stencil: u8 = 0, $flags: Clear_Fl
     clear(custom_render_target, color, depth, stencil, flags);
 }
 
-set_shader :: (shader: Shader) {
-    if shader.type & .Vertex {
+set_shader :: (shader: Shader, stages_to_set: Shader_Type) {
+    if stages_to_set & .Vertex {
         ID3D11DeviceContext_IASetInputLayout(device_context, shader.input_layout);
         ID3D11DeviceContext_VSSetShader(device_context, shader.vertex_shader, null, 0);
     }
-    if shader.type & .Fragment {
+    if stages_to_set & .Fragment {
         ID3D11DeviceContext_PSSetShader(device_context, shader.fragment_shader, null, 0);
     }
-    if shader.type & .Compute {
+    if stages_to_set & .Compute {
         ID3D11DeviceContext_CSSetShader(device_context, shader.compute_shader, null, 0);
     }
 }
@@ -684,14 +690,8 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
             for j: 0..texture.mip_levels-1 {
                 // D3D11CalcSubresource
                 index := j + i * texture.mip_levels;
-                block_width := cast(u32)max(1, width >> j);
-                block_height:= cast(u32)max(1, height >> j);
 
-                if is_block_compression(format) {
-                    block_width  = (block_width + 3) / 4;
-                    block_height = (block_height + 3) / 4;
-                }
-
+                block_width, block_height := block_size(width >> j, height >> j, format);
                 pitch := block_width * bytes_per_block;
                 init_data[index] = D3D11_SUBRESOURCE_DATA.{
                     pSysMem = data[index],
@@ -749,14 +749,8 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
         for data {
             // D3D11CalcSubresource
             index := mip_levels * cast(u32)it_index;
-            block_width := width;
-            block_height := height;
 
-            if is_block_compression(format) {
-                block_width  = cast(u32)max(1, (block_width + 3) / 4);
-                block_height = cast(u32)max(1, (block_height + 3) / 4);
-            }
-
+            block_width, block_height := block_size(texture);
             pitch := block_width * bytes_per_block;
             ID3D11DeviceContext_UpdateSubresource(device_context, resource, index, null, it, pitch, pitch * block_height);
         }
@@ -839,13 +833,13 @@ copy_texture :: (from: Texture, to: *Texture) {
 
 // @Incomplete: subresource
 copy_texture :: (from: Texture, to: *Texture, source_rect: Rect) {
-    box := box_from_rect(source_rect);
-    ID3D11DeviceContext_CopySubresourceRegion(device_context, to.texture2d, 0, 0, 0, 0, from.texture2d, 0, *box);
+    d_box := box_from_rect(source_rect);
+    ID3D11DeviceContext_CopySubresourceRegion(device_context, to.texture3d, 0, 0, 0, 0, from.texture3d, 0, *d_box);
 }
 
 copy_texture :: (from: Texture, to: *Texture, source_box: Box) {
-    box := box_from_box(source_box);
-    ID3D11DeviceContext_CopySubresourceRegion(device_context, to.texture3d, 0, 0, 0, 0, from.texture3d, 0, *box);
+    d_box := box_from_box(source_box);
+    ID3D11DeviceContext_CopySubresourceRegion(device_context, to.texture3d, 0, 0, 0, 0, from.texture3d, 0, *d_box);
 }
 
 // NOTE(Yasin): This doesn't support copying the depth stencil texture.
@@ -978,6 +972,12 @@ timer_get_ms :: (timer: *Timer) -> ready: bool, float {
     // If a disjoint event occurred, the reading is garbage
     if disjoint_data.Disjoint return true, 0.0;
     return true, cast(float)((end_timestamp - start_timestamp).(float64) * 1000.0 / disjoint_data.Frequency.(float64));
+}
+
+destroy_timer :: (timer: *Timer) {
+    safe_release_and_reset(*timer.start_query);
+    safe_release_and_reset(*timer.end_query);
+    safe_release_and_reset(*timer.disjoint_query);
 }
 
 begin_debug_region :: (name: string) {
@@ -1164,7 +1164,7 @@ box_from_box :: inline (box: Box) -> D3D11_BOX {
     return d_box;
 }
 
-get_depth_format_variants :: (format: Texture_Format) -> texture_format: DXGI_FORMAT, srv_format: DXGI_FORMAT {
+get_depth_format_variants :: inline (format: Texture_Format) -> texture_format: DXGI_FORMAT, srv_format: DXGI_FORMAT {
    if format == {
     case .D16;
         return .R16_TYPELESS, .R16_UNORM;
@@ -1313,7 +1313,7 @@ check_hr :: (from: string, code_to_insert_after_fail := #code `return false) #ex
     }
 }
 
-d3d11_set_blend :: (descs: []Blend_Desc, alpha_to_coverage_enable: bool, blend_factor: Vector4, sample_mask: u32, independent_blend: bool) {
+d3d11_set_blend :: inline (descs: []Blend_Desc, alpha_to_coverage_enable: bool, blend_factor: Vector4, sample_mask: u32, independent_blend: bool) {
     blend_desc := D3D11_BLEND_DESC.{
         IndependentBlendEnable = xx independent_blend,
         AlphaToCoverageEnable = xx alpha_to_coverage_enable,
@@ -1481,7 +1481,7 @@ log_messages_and_get_last :: () -> string, bool {
 
 }
 
-d3d11_set_debug_name :: (resource: *ID3D11DeviceChild, name: string) {
+d3d11_set_debug_name :: inline (resource: *ID3D11DeviceChild, name: string) {
     #if DEBUG {
         if !resource return;
         ID3D11DeviceChild_SetPrivateData(
