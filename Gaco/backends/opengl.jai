@@ -347,9 +347,7 @@ update_buffer :: (buffer: *Buffer, data: *void) {
 
 update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 = 0) {
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-
-    mip   := subresource % texture.mip_levels;
-    layer := subresource / texture.mip_levels;
+    mip, layer := gl_unpack_subresource(subresource, texture.mip_levels);
 
     is_layered := is_target_layered(texture.target);
     gl_info := GL_TEXTURE_MAP_ARRAY[texture.format];
@@ -360,22 +358,22 @@ update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 
         image_size := cast(u32)(bw * bh * texture.stride);
 
         if is_layered {
-            glCompressedTextureSubImage3D(texture.object, cast(s32)mip,
-                rect.x, rect.y, cast(s32)layer, cast(u32)rect.width, cast(u32)rect.height, 1,
+            glCompressedTextureSubImage3D(texture.object, mip,
+                rect.x, rect.y, layer, cast(u32)rect.width, cast(u32)rect.height, 1,
                 gl_info.internal_format, image_size, data);
         } else {
-            glCompressedTextureSubImage2D(texture.object, cast(s32)mip,
+            glCompressedTextureSubImage2D(texture.object, mip,
                 rect.x, rect.y, cast(u32)rect.width, cast(u32)rect.height,
                 gl_info.internal_format, image_size, data);
         }
     }
     else {
         if is_layered {
-            glTextureSubImage3D(texture.object, cast(s32)mip,
-                rect.x, rect.y, cast(s32)layer, cast(u32)rect.width, cast(u32)rect.height, 1,
+            glTextureSubImage3D(texture.object, mip,
+                rect.x, rect.y, layer, cast(u32)rect.width, cast(u32)rect.height, 1,
                 gl_info.pixel_format, gl_info.pixel_type, data);
         } else {
-            glTextureSubImage2D(texture.object, cast(s32)mip,
+            glTextureSubImage2D(texture.object, mip,
                 rect.x, rect.y, cast(u32)rect.width, cast(u32)rect.height,
                 gl_info.pixel_format, gl_info.pixel_type, data);
         }
@@ -1085,28 +1083,59 @@ bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
     if bind_to & .Compute  bound_textures[slot + CS_SHIFT] = texture.object;
 }
 
-copy_texture :: inline (from: Texture, to: *Texture) {
-    copy_texture(from, to, .{0, 0, cast(s32)from.width, cast(s32)from.height});
+
+// @Incomplete: Compressed textures
+copy_texture :: (from: Texture, to: *Texture) {
+    assert(from.width == to.width && from.height == to.height && from.depth == to.depth);
+    assert(from.mip_levels == to.mip_levels);
+
+    for mip: 0..from.mip_levels - 1 {
+        mip_width := max(1, cast(u32)(from.width  >> mip)).(u32);
+        mip_height := max(1, cast(u32)(from.height >> mip)).(u32);
+
+        // For 3D textures, depth halves with mips.
+        // For array textures (2D Array, Cubemap), depth is array_size/slices and remains constant.
+        mip_depth := ifx from.flags & .Is_3D max(1, cast(u32)(from.depth >> mip)).(u32) else from.depth.(u32);
+
+        glCopyImageSubData(
+            from.object, from.target, cast(s32)mip, 0, 0, 0,
+            to.object,   to.target,   cast(s32)mip, 0, 0, 0,
+            mip_width, mip_height, mip_depth
+        );
+    }
 }
 
-copy_texture :: (from: Texture, to: *Texture, source_rect: Rect) {
+copy_texture :: (from: Texture, to: *Texture, source_rect: Rect, source_subresource: u32 = 0) {
+    source_mip, source_layer := gl_unpack_subresource(source_subresource, from.mip_levels);
     if to.flags & .Copy {
         gl_info := GL_TEXTURE_MAP_ARRAY[from.format];
 
         glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
-        glGetTextureSubImage(from.object, 0, source_rect.x, source_rect.y, 0, cast(u32)source_rect.width, cast(u32)source_rect.height, 1, gl_info.pixel_format, gl_info.pixel_type, to.pbo_size, null);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+
+        glGetTextureSubImage(from.object, source_mip,
+            source_rect.x, source_rect.y, source_layer,
+            cast(u32)source_rect.width, cast(u32)source_rect.height, 1,
+            gl_info.pixel_format, gl_info.pixel_type,
+            to.pbo_size, null
+        );
+
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        glPixelStorei(GL_PACK_ALIGNMENT, 4);
 
         if to.fence glDeleteSync(to.fence);
         to.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     }
     else {
-        // @Incomplete: Only 2D textures.
-        glCopyImageSubData(from.object, from.target, 0, source_rect.x, source_rect.y, 0, to.object, to.target, 0, 0, 0, 0, cast(u32)source_rect.width, cast(u32)source_rect.height, 1);
+        glCopyImageSubData(from.object, from.target, source_mip,
+            source_rect.x, source_rect.y, source_layer,
+            to.object, to.target, 0,
+            0, 0, 0,
+            cast(u32)source_rect.width, cast(u32)source_rect.height, 1);
     }
 }
 
-copy_texture :: (from: Texture, to: *Texture, source_box: Box) {
+copy_texture :: (from: Texture, to: *Texture, source_box: Box, source_subresource: u32 = 0) {
     if to.flags & .Copy {
         gl_info := GL_TEXTURE_MAP_ARRAY[from.format];
 
@@ -1114,7 +1143,7 @@ copy_texture :: (from: Texture, to: *Texture, source_box: Box) {
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
         glGetTextureSubImage(
-            from.object, 0,
+            from.object, cast(s32)source_subresource,
             source_box.x, source_box.y, source_box.z,
             cast(u32)source_box.width, cast(u32)source_box.height, cast(u32)source_box.depth,
             gl_info.pixel_format, gl_info.pixel_type,
@@ -1129,7 +1158,7 @@ copy_texture :: (from: Texture, to: *Texture, source_box: Box) {
     }
     else {
         glCopyImageSubData(
-            from.object, from.target, 0,
+            from.object, from.target, cast(s32)source_subresource,
             source_box.x, source_box.y, source_box.z,
             to.object, to.target, 0,
             0, 0, 0,
@@ -2120,6 +2149,13 @@ gl_debug_callback :: (source: GLenum, type: GLenum, id: GLuint, severity: GLenum
     }
 }
 
+}
+
+gl_unpack_subresource :: inline (subresource: u32, mip_levels: u32) -> (mip: s32, layer: s32) {
+    if mip_levels <= 1 return 0, cast(s32)subresource;
+    mip   := cast(s32)(subresource % mip_levels);
+    layer := cast(s32)(subresource / mip_levels);
+    return mip, layer;
 }
 
 gl_set_debug_name :: inline (id: GLuint, type: GLenum, name: string) {

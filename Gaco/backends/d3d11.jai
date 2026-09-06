@@ -316,7 +316,7 @@ update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 
     box := box_from_rect(rect);
     block_width, block_height := block_size(xx rect.width, xx rect.height, texture.format);
 
-    row := cast(u32)rect.width * texture.stride;
+    row := block_width * texture.stride;
     ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture2d, subresource, *box, data, row, 0);
 }
 
@@ -831,15 +831,15 @@ copy_texture :: (from: Texture, to: *Texture) {
     ID3D11DeviceContext_CopyResource(device_context, to.texture2d, from.texture2d);
 }
 
-// @Incomplete: subresource
-copy_texture :: (from: Texture, to: *Texture, source_rect: Rect) {
+// @Incomplete: Dest point and dest subresource
+copy_texture :: (from: Texture, to: *Texture, source_rect: Rect, source_subresource: u32 = 0) {
     d_box := box_from_rect(source_rect);
-    ID3D11DeviceContext_CopySubresourceRegion(device_context, to.texture3d, 0, 0, 0, 0, from.texture3d, 0, *d_box);
+    ID3D11DeviceContext_CopySubresourceRegion(device_context, to.texture2d, 0, 0, 0, 0, from.texture2d, source_subresource, *d_box);
 }
 
-copy_texture :: (from: Texture, to: *Texture, source_box: Box) {
+copy_texture :: (from: Texture, to: *Texture, source_box: Box, source_subresource: u32 = 0) {
     d_box := box_from_box(source_box);
-    ID3D11DeviceContext_CopySubresourceRegion(device_context, to.texture3d, 0, 0, 0, 0, from.texture3d, 0, *d_box);
+    ID3D11DeviceContext_CopySubresourceRegion(device_context, to.texture3d, 0, 0, 0, 0, from.texture3d, source_subresource, *d_box);
 }
 
 // NOTE(Yasin): This doesn't support copying the depth stencil texture.
