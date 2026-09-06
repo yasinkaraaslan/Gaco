@@ -1087,21 +1087,32 @@ bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
 // @Incomplete: Compressed textures
 copy_texture :: (from: Texture, to: *Texture) {
     assert(from.width == to.width && from.height == to.height && from.depth == to.depth);
-    assert(from.mip_levels == to.mip_levels);
 
-    for mip: 0..from.mip_levels - 1 {
-        mip_width := max(1, cast(u32)(from.width  >> mip)).(u32);
-        mip_height := max(1, cast(u32)(from.height >> mip)).(u32);
+    // Copy textures are single mip most of the time
+    // (We don't even support creating multi-mip PBOs for GL, should we?)
+    if to.flags & .Copy {
+        box := Box.{
+            0, 0, 0,
+            xx from.width, xx from.height, xx from.depth
+        };
+        inline copy_texture(from, to, box, 0);
+    }
+    else {
+        assert(from.mip_levels == to.mip_levels);
+        for mip: 0..from.mip_levels - 1 {
+            mip_width := max(1, cast(u32)(from.width  >> mip)).(u32);
+            mip_height := max(1, cast(u32)(from.height >> mip)).(u32);
 
-        // For 3D textures, depth halves with mips.
-        // For array textures (2D Array, Cubemap), depth is array_size/slices and remains constant.
-        mip_depth := ifx from.flags & .Is_3D max(1, cast(u32)(from.depth >> mip)).(u32) else from.depth.(u32);
+            // For 3D textures, depth halves with mips.
+            // For array textures (2D Array, Cubemap), depth is array_size/slices and remains constant.
+            mip_depth := ifx from.flags & .Is_3D max(1, cast(u32)(from.depth >> mip)).(u32) else from.depth.(u32);
 
-        glCopyImageSubData(
-            from.object, from.target, cast(s32)mip, 0, 0, 0,
-            to.object,   to.target,   cast(s32)mip, 0, 0, 0,
-            mip_width, mip_height, mip_depth
-        );
+            glCopyImageSubData(
+                from.object, from.target, cast(s32)mip, 0, 0, 0,
+                to.object,   to.target,   cast(s32)mip, 0, 0, 0,
+                mip_width, mip_height, mip_depth
+            );
+        }
     }
 }
 
