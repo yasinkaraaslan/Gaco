@@ -505,10 +505,9 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, file_name: str
 
 
         // array_add(*extra_args, "-fspv-flatten-resource-arrays");
-        if shader_type == .Vertex {
-            array_add(*extra_args, "-fspv-preserve-interface");
-            // array_add(*extra_args, "-fvk-invert-y");
-        }
+        // array_add(*extra_args, "-fvk-auto-shift-bindings");
+
+        array_add(*extra_args, "-fspv-preserve-interface");
 
         t_shift := "0";
         b_shift := "0";
@@ -1755,7 +1754,6 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type, mappings
         array_add(*new_inst, 0);
         array_add(*new_inst, type_id);
 
-        // Inject before the first Variable or Function definition
         insert_idx := insts.count;
         for idx: 0..insts.count-1 {
             op := cast(SpvOp) (insts.*[idx][0] & 0xFFFF);
@@ -1768,78 +1766,86 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type, mappings
         return new_id;
     }
 
-    // Look for where a separate Texture and Sampler are merged (OpSampledImage).
-    // We rewrite the original Texture variable to be a combined SampledImage instead,
-    // and delete the separate Sampler.
-    for inst: instructions {
-        op := cast(SpvOp) (inst[0] & 0xFFFF);
-
-        if op == .SampledImage {
-            sampled_img_type := inst[1];
-            sampled_img_id   := inst[2];
-            image_load_id    := inst[3];
-            sampler_load_id  := inst[4];
-
-            image_var_id   := loads[image_load_id];
-            sampler_var_id := loads[sampler_load_id];
-
-            img_binding  := bindings[image_var_id];
-            samp_binding := bindings[sampler_var_id];
-
-            // If we found a valid pairing, record it and update the SPIR-V binding literal
-            if img_binding != 0xFFFF_FFFF && samp_binding != 0xFFFF_FFFF {
-                mapped_idx: u8;
-                found := false;
-                for m: mappings.* {
-                    if m.texture_index == cast(u8)img_binding && m.sampler_index == cast(u8)samp_binding {
-                        mapped_idx = m.mapped_index;
-                        found = true;
-                        break;
-                    }
-                }
-
-                if !found {
-                    mapped_idx = cast(u8) mappings.count;
-                    mapping: Texture_Sampler_Mapping;
-                    mapping.mapped_index  = mapped_idx;
-                    mapping.texture_index = cast(u8) img_binding;
-                    mapping.sampler_index = cast(u8) samp_binding;
-                    mapping.stage         = stage;
-                    array_add(mappings, mapping);
-                }
-
-                // Overwrite the original Texture's SPIR-V OpDecorate Binding with the new mapped binding slot
-                decorate_inst := binding_insts[image_var_id];
-                if decorate_inst {
-                    decorate_inst[3] = cast(u32) mapped_idx;
-                }
-            }
-
-            // Route all future usages of this combined image back to the texture's load ID
-            id_remap[sampled_img_id] = image_load_id;
-
-            // Change the Texture Variable's type to pointer-to-SampledImage
-            ptr_type := get_or_create_ptr_type(sampled_img_type, *instructions, *id_bound);
-            var_inst := inst_ptrs[image_var_id];
-            if var_inst var_inst[1] = ptr_type;
-
-            // Change all OpLoads of this texture variable to return a SampledImage
-            for ptr: instructions {
-                if cast(SpvOp) (ptr[0] & 0xFFFF) == .Load {
-                    if ptr[3] == image_var_id ptr[1] = sampled_img_type;
-                }
-            }
-
-            // Mark the Sampler definitions and the OpSampledImage itself for deletion (.Nop)
-            inst[0] = 0;
-            if sampler_var_id && inst_ptrs[sampler_var_id]   inst_ptrs[sampler_var_id][0] = 0;
-            if sampler_load_id && inst_ptrs[sampler_load_id] inst_ptrs[sampler_load_id][0] = 0;
-
-            deleted_ids[sampler_var_id] = true;
-            deleted_ids[sampler_load_id] = true;
-        }
+    Combine_Op :: struct {
+        inst:             [..]u32;
+        sampled_img_type: u32;
+        sampled_img_id:   u32;
+        image_var_id:     u32;
+        sampler_var_id:   u32;
+        image_load_id:    u32;
+        sampler_load_id:  u32;
     }
 
+    combines: [..]Combine_Op;
+    combines.allocator = temp;
+
+    for inst: instructions {
+        op := cast(SpvOp) (inst[0] & 0xFFFF);
+        if op != .SampledImage continue;
+
+        c: Combine_Op;
+        c.inst             = inst;
+        c.sampled_img_type = inst[1];
+        c.sampled_img_id   = inst[2];
+        c.image_load_id    = inst[3];
+        c.sampler_load_id  = inst[4];
+        c.image_var_id     = loads[c.image_load_id];
+        c.sampler_var_id   = loads[c.sampler_load_id];
+        array_add(*combines, c);
+    }
+
+    for c: combines {
+        img_binding  := bindings[c.image_var_id];
+        samp_binding := bindings[c.sampler_var_id];
+
+        assert(img_binding != 0xFFFF_FFFF && samp_binding != 0xFFFF_FFFF,
+            "[Gaco] build_combined_image_samplers: couldn't resolve texture/sampler variable behind OpSampledImage (id %, stage %)",
+            c.sampled_img_id, stage);
+
+        mapped_idx: u8;
+        found := false;
+        for m: mappings.* {
+            if m.texture_index == cast(u8)img_binding && m.sampler_index == cast(u8)samp_binding {
+                mapped_idx = m.mapped_index;
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            mapped_idx = cast(u8) mappings.count;
+            mapping: Texture_Sampler_Mapping;
+            mapping.mapped_index  = mapped_idx;
+            mapping.texture_index = cast(u8) img_binding;
+            mapping.sampler_index = cast(u8) samp_binding;
+            mapping.stage         = stage;
+            array_add(mappings, mapping);
+        }
+
+        decorate_inst := binding_insts[c.image_var_id];
+        if decorate_inst {
+            decorate_inst[3] = cast(u32) mapped_idx;
+        }
+
+        id_remap[c.sampled_img_id] = c.image_load_id;
+
+        ptr_type := get_or_create_ptr_type(c.sampled_img_type, *instructions, *id_bound);
+        var_inst := inst_ptrs[c.image_var_id];
+        if var_inst var_inst[1] = ptr_type;
+
+        for ptr: instructions {
+            if cast(SpvOp) (ptr[0] & 0xFFFF) == .Load {
+                if ptr[3] == c.image_var_id ptr[1] = c.sampled_img_type;
+            }
+        }
+
+        c.inst[0] = 0;
+        if c.sampler_var_id   && inst_ptrs[c.sampler_var_id]   inst_ptrs[c.sampler_var_id][0] = 0;
+        if c.sampler_load_id  && inst_ptrs[c.sampler_load_id]  inst_ptrs[c.sampler_load_id][0] = 0;
+
+        deleted_ids[c.sampler_var_id]  = true;
+        deleted_ids[c.sampler_load_id] = true;
+    }
 
     // If we leave OpNames or OpDecorates pointing to deleted samplers, validation will fail.
     for inst: instructions {
@@ -1878,7 +1884,6 @@ build_combined_image_samplers :: (bytecode: string, stage: Shader_Type, mappings
 
         for w: 0..inst.count-1 array_add(*out, inst[w]);
     }
-
 
     new_bytecode: string;
     new_bytecode.data  = cast(*u8) out.data;
