@@ -1446,7 +1446,8 @@ handle_exception :: (pExceptionInfo: *Crash_Handler.EXCEPTION_POINTERS) -> s32 #
 }
 log_messages_and_get_last :: () -> string, bool {
     info: *ID3D11InfoQueue;
-    IUnknown_QueryInterface(device, *uid(ID3D11InfoQueue_UUID), cast(**void) *info);
+    hr := IUnknown_QueryInterface(device, *uid(ID3D11InfoQueue_UUID), cast(**void) *info);
+    check_hr("ID3D11Device.QueryInterface(ID3D11InfoQueue_UUID)", #code return "", false);
 
     message_count := ID3D11InfoQueue_GetNumStoredMessages(info);
     if message_count == 0 return .{}, false;
