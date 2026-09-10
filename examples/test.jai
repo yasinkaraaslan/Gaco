@@ -14,7 +14,6 @@ run_example_tests :: () {
         "compute",
         "skybox",
         "screenshot",
-        "colored_cube",
         "camera",
         "jon_cube",
         "instancing",

@@ -305,17 +305,6 @@ Texture_Sampler_Mapping :: struct {
     NO_SAMPLER :: 0xFF;
 }
 
-Shader_Header :: struct {
-    magic: u32;
-    version: u32;
-    backend: Shader_Backend;
-    type: Shader_Type;
-    mapping_count: u16; // Only used for SPIR-V
-    vs_size: u32;
-    fs_size: u32;
-    cs_size: u32;
-}
-
 compile_shader :: inline (file_name: string, output_file_name: string, type: Shader_Type, defines := string.[]) -> bool {
     push_allocator(temp);
     source, ok := read_entire_file(file_name, zero_terminated=true);
@@ -529,10 +518,20 @@ create_sampler :: inline (filtering := Sampler_Filtering.Linear, edge_handling :
 }
 
 set_rasterizer_state :: inline (desc: Rasterizer_Desc) {
+    if gaco_state.rasterizer == desc return;
+
     gaco_state.rasterizer = desc;
     backend_set_rasterizer_state(desc);
 }
+
 set_blend_state :: inline (desc: Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
+    if !gaco_state.independent_blend
+        && gaco_state.blend_count == 1
+        && gaco_state.blends[0] == desc
+        && gaco_state.alpha_to_coverage == alpha_to_coverage_enable
+        && gaco_state.blend_factor == blend_factor
+        && gaco_state.sample_mask == sample_mask return;
+
     gaco_state.independent_blend = false;
     gaco_state.blend_count = 1;
     gaco_state.blends[0] = desc;
@@ -546,6 +545,13 @@ set_blend_state :: inline (desc: Blend_Desc, alpha_to_coverage_enable := false, 
 set_blend_states :: inline (descs: []Blend_Desc, alpha_to_coverage_enable := false, blend_factor := Vector4.{}, sample_mask: u32 = 0xFFFF_FFFF) {
     assert(descs.count <= 8);
 
+    if gaco_state.independent_blend
+        && gaco_state.blend_count == descs.count
+        && gaco_state.alpha_to_coverage == alpha_to_coverage_enable
+        && gaco_state.blend_factor == blend_factor
+        && gaco_state.sample_mask == sample_mask
+        && memcmp(gaco_state.blends.data, descs.data, size_of(Blend_Desc) * descs.count) == 0 return;
+
     gaco_state.independent_blend = true;
     gaco_state.blend_count = descs.count;
     memcpy(gaco_state.blends.data, descs.data, size_of(Blend_Desc) * descs.count);
@@ -557,6 +563,8 @@ set_blend_states :: inline (descs: []Blend_Desc, alpha_to_coverage_enable := fal
 }
 
 set_depth_stencil_state :: inline (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0xFF) {
+    if gaco_state.depth_stencil == desc && gaco_state.stencil_ref == stencil_ref return;
+
     gaco_state.depth_stencil = desc;
     gaco_state.stencil_ref = stencil_ref;
 
@@ -564,21 +572,29 @@ set_depth_stencil_state :: inline (desc: Depth_Stencil_Desc, stencil_ref: u8 = 0
 }
 
 set_viewport :: inline (desc: Viewport_Desc) {
+    if gaco_state.viewport == desc return;
+
     gaco_state.viewport = desc;
     backend_set_viewport(desc);
 }
 
 set_scissor :: inline (desc: Rect) {
+    if gaco_state.scissor == desc return;
+
     gaco_state.scissor = desc;
     backend_set_scissor(desc);
 }
 
 set_render_target :: inline (render_target: Render_Target) {
+    if gaco_state.render_target == render_target return;
+
     gaco_state.render_target = render_target;
     backend_set_render_target(render_target);
 }
 
 set_primitive_type :: inline (primitive_type: Primitive_Type) {
+    if gaco_state.primitive_type == primitive_type return;
+
     gaco_state.primitive_type = primitive_type;
     backend_set_primitive_type(primitive_type);
 }
@@ -673,6 +689,17 @@ gaco_state : struct {
     primitive_type: Primitive_Type;
 }
 
+Shader_Header :: struct {
+    magic: u32;
+    version: u32;
+    backend: Shader_Backend;
+    type: Shader_Type;
+    mapping_count: u16; // Only used for SPIR-V
+    vs_size: u32;
+    fs_size: u32;
+    cs_size: u32;
+}
+
 #if BACKEND == {
 case .D3D11;
 #load "backends/d3d11.jai";
@@ -688,6 +715,73 @@ case .Metal;
 #load "backends/metal.jai";
 }
 
+
+operator == :: (a: Rasterizer_Desc, b: Rasterizer_Desc) -> bool {
+    return a.fill_mode == b.fill_mode
+        && a.cull_mode == b.cull_mode
+        && a.front_counter_clockwise == b.front_counter_clockwise
+        && a.depth_bias == b.depth_bias
+        && a.depth_bias_clamp == b.depth_bias_clamp
+        && a.slope_scaled_depth_bias == b.slope_scaled_depth_bias
+        && a.depth_clip_enable == b.depth_clip_enable
+        && a.scissor_enable == b.scissor_enable
+        && a.antialiased_line_enable == b.antialiased_line_enable;
+}
+
+operator == :: (a: Stencil_Face_Desc, b: Stencil_Face_Desc) -> bool {
+    return a.fail_op == b.fail_op
+        && a.depth_fail_op == b.depth_fail_op
+        && a.pass_op == b.pass_op
+        && a.compare_op == b.compare_op;
+}
+
+operator == :: (a: Depth_Stencil_Desc, b: Depth_Stencil_Desc) -> bool {
+    return a.depth_enable == b.depth_enable
+        && a.depth_write == b.depth_write
+        && a.depth_func == b.depth_func
+        && a.stencil_enable == b.stencil_enable
+        && a.stencil_read_mask == b.stencil_read_mask
+        && a.stencil_write_mask == b.stencil_write_mask
+        && a.front_face == b.front_face
+        && a.back_face == b.back_face;
+}
+
+operator == :: (a: Blend_Desc, b: Blend_Desc) -> bool {
+    return a.blend_enable == b.blend_enable
+        && a.src_blend == b.src_blend
+        && a.dest_blend == b.dest_blend
+        && a.blend_op == b.blend_op
+        && a.src_blend_alpha == b.src_blend_alpha
+        && a.dest_blend_alpha == b.dest_blend_alpha
+        && a.blend_op_alpha == b.blend_op_alpha
+        && a.write_mask == b.write_mask
+        && a.alpha_to_coverage_enable == b.alpha_to_coverage_enable;
+}
+
+operator == :: (a: Viewport_Desc, b: Viewport_Desc) -> bool {
+    return a.x == b.x
+        && a.y == b.y
+        && a.width == b.width
+        && a.height == b.height
+        && a.near_depth == b.near_depth
+        && a.far_depth == b.far_depth;
+}
+
+operator == :: (a: Rect, b: Rect) -> bool {
+    return a.x == b.x
+        && a.y == b.y
+        && a.width == b.width
+        && a.height == b.height;
+}
+
+operator == :: (a: Box, b: Box) -> bool {
+    return a.x == b.x
+        && a.y == b.y
+        && a.z == b.z
+        && a.width == b.width
+        && a.height == b.height
+        && a.depth == b.depth;
+}
 
 #scope_module
 

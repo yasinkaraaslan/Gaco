@@ -43,6 +43,14 @@ Render_Target :: struct {
     depth_stencil_view: *ID3D11DepthStencilView;
 }
 
+operator == :: (a: Render_Target, b: Render_Target) -> bool {
+    if a.depth_stencil_view != b.depth_stencil_view return false;
+    for i: 0..7 {
+        if a.color_views[i] != b.color_views[i] return false;
+    }
+    return true;
+}
+
 Timer :: struct {
     disjoint_query: *ID3D11Query;
     start_query:    *ID3D11Query;

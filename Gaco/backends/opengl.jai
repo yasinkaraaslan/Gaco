@@ -41,6 +41,10 @@ Render_Target :: struct {
     color_view_count: u32;
 }
 
+operator == :: (a: Render_Target, b: Render_Target) -> bool {
+    return a.framebuffer == b.framebuffer && a.color_view_count == b.color_view_count;
+}
+
 Timer :: struct {
     start_query: GLuint;
     end_query: GLuint;
