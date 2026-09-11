@@ -7,7 +7,7 @@ struct Vertex_Input {
     float3 pos: POSITION;
     float4 color: COLOR;
     float3 normal: NORMAL;
-    float2 uv: TEXCOORD0;
+    float2 uv: TEXCOORD;
 };
 
 struct Instance_Input {
@@ -16,7 +16,7 @@ struct Instance_Input {
 
 struct Fragment_Input {
     float4 pos: SV_Position;
-    float2 tex: TEXCOORD0;
+    float2 tex: TEXCOORD;
 };
 
 Fragment_Input vertex_main(Vertex_Input vertex, Instance_Input instance) {

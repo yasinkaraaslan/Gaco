@@ -868,20 +868,9 @@ get_semantic_info :: (semantic: string) -> is_instance: bool, step_rate: u32 {
     return false, 0;
 }
 
-// FNV-1a
 get_plain_old_data_hash :: (my_struct_with_no_pointers: $T) -> u32 {
-    data: []u8;
-    data.data = cast(*u8)*my_struct_with_no_pointers;
-    data.count = size_of(T);
-
-    hash: u32 = 0x811c9dc5;
-    prime :: 0x01000193;
-
-    for data {
-        hash ^= cast(u32)it;
-        hash *= prime;
-    }
-    return hash;
+    #import "Hash";
+    return cast,trunc(u32) inline fnv1a_hash(*my_struct_with_no_pointers, size_of(T));
 }
 
 compare_plain_old_data :: (d0: $T, d1: T) -> bool{

@@ -18,6 +18,7 @@ run_example_tests :: () {
         "jon_cube",
         "instancing",
         "render_thread",
+        "compressed_texture",
     ];
 
     log("Starting compilation tests for % examples...", examples.count);

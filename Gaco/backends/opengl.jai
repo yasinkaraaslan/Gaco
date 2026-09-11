@@ -102,7 +102,7 @@ init :: (window: Window_Type) -> bool {
     }
 
     #if OS == .WINDOWS {
-        if window == INVALID_WINDOW {
+        if window {
             if !wgl_create_compute_context(TARGET_MAJOR, TARGET_MINOR, DEBUG) return false;
         }
         else {
@@ -207,7 +207,9 @@ deinit :: () {
             eglDestroyContext(egl_display, gl_context);
         }
         #if OS == .LINUX {
-            XDestroyWindow(x_global_display, egl_child_window);
+            if egl_child_window {
+                XDestroyWindow(x_global_display, egl_child_window);
+            }
         }
     }
 }
@@ -322,7 +324,6 @@ unmap_buffer :: (buffer: *Buffer) {
         buffer.fence = 0;
     }
 }
-
 
 // This is actually here for api compatibility with D3D11.
 // The 'Texture' we have here is a pixel buffer object. So we assert that before doing anything.
@@ -858,6 +859,7 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
 
 destroy_render_target :: (render_target: *Render_Target) {
     glDeleteFramebuffers(1, *render_target.framebuffer);
+    render_target.color_view_count = 0;
 }
 
 resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Format.RGBA8, depth_format := Texture_Format.D24S8) -> render_target: Render_Target {
@@ -924,7 +926,7 @@ resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Forma
     _, _, window_width, window_height = get_dimensions(main_window);
 
     #if OS == .LINUX {
-        if egl_child_window != 0 {
+        if egl_child_window {
             XResizeWindow(x_global_display, egl_child_window, xx window_width, xx window_height);
         }
     }
@@ -2301,7 +2303,7 @@ egl_create_context :: (window: Window_Type, major: s32, minor: s32, debug: bool)
 
     target_window := cast(Window) window;
 
-    if window != INVALID_WINDOW {
+    if window {
         egl_visual_id: EGLint;
         eglGetConfigAttrib(egl_display, chosen_config, EGL_NATIVE_VISUAL_ID, *egl_visual_id);
 
@@ -2370,7 +2372,7 @@ egl_create_context :: (window: Window_Type, major: s32, minor: s32, debug: bool)
     }
 
     egl_surface = EGL_NO_SURFACE;
-    if window != INVALID_WINDOW {
+    if window {
         egl_surface = eglCreateWindowSurface(egl_display, chosen_config, cast(EGLNativeWindowType) target_window, null);
         if !egl_surface {
             log_error("[Gaco] Failed to create window egl_surface. Error: 0x%", formatInt(eglGetError(), 16));

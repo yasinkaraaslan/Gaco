@@ -5,12 +5,12 @@ cbuffer Vertex_CBuffer : register(b0) {
 
 struct Vertex_Input {
     float2 pos: POSITION;
-    float2 uv: TEXCOORD0;
+    float2 uv: TEXCOORD;
 };
 
 struct Fragment_Input {
     float4 pos: SV_Position;
-    float2 tex: TEXCOORD0;
+    float2 tex: TEXCOORD;
 };
 
 Fragment_Input vertex_main(Vertex_Input input) {
