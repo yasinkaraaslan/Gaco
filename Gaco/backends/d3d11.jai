@@ -147,9 +147,11 @@ init :: (window: Window_Type) -> bool {
     check_hr("IDXGIFactory.MakeWindowAssociation");
     safe_release(dxgi_factory);
 
+    backend_set_blend_state(.{});
+    backend_set_depth_stencil_state(.{});
+    backend_set_rasterizer_state(.{});
+
     set_primitive_type(.Triangle_List);
-    set_blend_state(.{});
-    set_depth_stencil_state(.{});
 
     // NOTE(Yasin): It's safe if this fails on older systems,
     hr = IUnknown_QueryInterface(device_context, *uid(ID3DUserDefinedAnnotation_UUID), xx *annotation);
@@ -414,7 +416,7 @@ compile_shader_to_bytecode :: (source: string, type: Shader_Type, file_name: str
 
         check_hr("D3DCompile", #code {
             free(bytecode);
-            log_error(errors);
+            gaco_error(errors, identifier=file_name);
             `return .{}, false;
         });
         return output;
@@ -656,7 +658,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
         misc_flags |= .TEXTURECUBE;
 
     if dxgi_format == .DXGI_FORMAT_UNKNOWN {
-        log_error("[Gaco] Error while creating texture: Format % is Unknown or unsupported.", format);
+        gaco_error("Error while creating texture: Format % is Unknown or unsupported.", format);
         return .{};
     }
 
@@ -690,7 +692,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
 
         expected_count := array_count * texture.mip_levels;
         if data.count < expected_count {
-            log_error("[Gaco] Error while creating texture: Incomplete data array. Expected count %, got %.", expected_count, data.count);
+            gaco_error("Error while creating texture: Incomplete data array. Expected count %, got %.", expected_count, data.count);
             return .{};
         }
 
@@ -712,7 +714,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
 
     if flags & .Is_3D {
         if flags & .Multisample {
-            log_error("[Gaco] Error while creating texture: .Multisample cannot be mixed with .Is_3D.");
+            gaco_error("Error while creating texture: .Multisample cannot be mixed with .Is_3D.");
             return .{};
         }
 

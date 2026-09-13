@@ -75,7 +75,7 @@ load_dds_from_memory :: (_content: string, name: string) -> bool, DDS_Data {
 
     format := dxgi_to_texture_format(optional_header.format);
     if format == .Unknown {
-        log_error("[dds] '%' has unsupported DXGI format % (only BC6/BC7 is supported).", name, optional_header.format);
+        log_error("[dds] '%' has unsupported DXGI format % (only BC6/BC7 are supported).", name, optional_header.format);
         return false, dds_data;
     }
 

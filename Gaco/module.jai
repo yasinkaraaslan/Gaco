@@ -877,6 +877,25 @@ compare_plain_old_data :: (d0: $T, d1: T) -> bool{
     return memcmp(*d0, *d1, size_of(T)) == 0;
 }
 
+gaco_error :: (format_message: string, args: ..Any, identifier := "", $should_break: bool = DEBUG) #expand {
+    name := identifier;
+    #if #exists(`debug_name) if !identifier
+        name = `debug_name;
+
+    builder: String_Builder;
+    builder.allocator = temp;
+
+    append(*builder, "[Gaco] ");
+
+    if name print_to_builder(*builder, "'%' - ", name);
+    print_to_builder(*builder, format_message, ..args);
+
+    error_message := builder_to_string(*builder,, temp);
+    log_error(error_message);
+
+    #if should_break debug_break();
+}
+
 TEXTURE_BYTES_PER_BLOCK :: u32.[
     0,  // Unknown
 

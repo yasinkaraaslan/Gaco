@@ -174,12 +174,13 @@ init :: (window: Window_Type) -> bool {
     glCreateVertexArrays(1, *empty_stupid_vao);
     glBindVertexArray(empty_stupid_vao);
 
-    set_depth_stencil_state(.{});
-    set_rasterizer_state(.{});
-    set_blend_state(.{});
-    set_primitive_type(.Triangle_List);
+    backend_set_blend_state(.{});
+    backend_set_depth_stencil_state(.{});
+    backend_set_rasterizer_state(.{});
 
+    set_primitive_type(.Triangle_List);
     set_swap_interval(0);
+
     _, _, window_width, window_height = get_dimensions(main_window);
 
     default_sampler = create_sampler();
@@ -219,20 +220,13 @@ create_buffer :: (data: *void, count: u32, stride: u32, $type: Buffer_Type, usag
     buffer.size = count * stride;
     buffer.stride = stride;
 
-    assert(buffer.size > 0, "[Gaco] Creating a buffer with 0 size is not permitted.");
+    if buffer.size == 0 {
+        gaco_error("Creating a buffer with size 0 is not permitted.");
+        return .{};
+    }
 
     #if type == .Constant if stride % 16 != 0 {
-        message: string;
-        if debug_name
-            message = tprint("[Gaco] Buffer creation failed ('%'): Constant buffers require 16-byte aligned size (got %).", debug_name, buffer.size);
-        else
-            message = tprint("[Gaco] Buffer creation failed: Constant buffers require 16-byte aligned size (got %).", buffer.size);
-
-        log_error(message);
-
-        #if DEBUG {
-            debug_break();
-        }
+        gaco_error("Buffer creation failed: Constant buffers must be 16-byte aligned (stride is %).", stride);
         return .{};
     }
 
@@ -583,12 +577,12 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type, debu
             if info_len > 0 {
                 info_log := alloc(info_len,, temp);
                 glGetShaderInfoLog(shader, cast(GLsizei)info_len, null, info_log);
-                log_error("[Gaco] Shader compilation failed: %", to_string(info_log));
+                gaco_error("Shader compilation failed: %", to_string(info_log));
             }
             else {
-                log_error("[Gaco] Shader compilation failed with no info log.");
+                gaco_error("Shader compilation failed with no info log.");
             }
-            log_error("[Gaco] Shader loading failed.");
+            gaco_error("Shader loading failed.");
             `return .{};
         }
 
@@ -603,9 +597,9 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type, debu
             if info_len > 0 {
                 info_log := alloc(info_len,, temp);
                 glGetProgramInfoLog(program, cast(GLsizei)info_len, null, info_log);
-                log_error("[Gaco] Shader linking failed: %",to_string(info_log));
+                gaco_error("Shader linking failed: %", to_string(info_log));
             } else {
-                log_error("[Gaco] Shader linking failed with no info log.");
+                gaco_error("Shader linking failed with no info log.");
             }
             glDeleteProgram(program);
             `return .{};
@@ -615,6 +609,7 @@ load_shader_from_bytecode :: (bytecode: Shader_Bytecode, type: Shader_Type, debu
 
     if type & .Vertex {
         shader.input_vao = get_input_vao_from_spv(bytecode.vs);
+        if debug_name gl_set_debug_name(shader.input_vao, GL_VERTEX_ARRAY, debug_name);
         shader.vs_program = load(GL_VERTEX_SHADER, bytecode.vs, VS_ENTRY_POINT);
     }
     if type & .Fragment {
@@ -653,8 +648,10 @@ clear :: inline (color: Vector4, depth := 1.0, stencil: u8 = 0, $flags: Clear_Fl
 
 clear :: (render_target: Render_Target, color: Vector4, depth := 1.0, stencil: u8 = 0, $flags: Clear_Flags = .Color | .Depth | .Stencil) {
     #if flags & .Color {
-        for 0..render_target.color_view_count - 1 {
-            glClearNamedFramebufferfv(render_target.framebuffer, GL_COLOR, cast(s32)it, color.component.data);
+        if render_target.color_view_count > 0 {
+            for 0..render_target.color_view_count - 1 {
+                glClearNamedFramebufferfv(render_target.framebuffer, GL_COLOR, cast(s32)it, color.component.data);
+            }
         }
     }
 
@@ -788,7 +785,7 @@ present :: (interval: u32 = 1) {
             0, 0, window_width, window_height,
             0, window_height, window_width, 0,
             GL_COLOR_BUFFER_BIT,
-            GL_NEAREST // msaa resolve must use nearest
+            ifx current_msaa == 1 then cast(u32)GL_LINEAR else GL_NEAREST
         );
     }
     else { // Slow path if you are rendering at a different resolution with msaa
@@ -828,7 +825,11 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
     glCreateFramebuffers(1, *render_target.framebuffer);
 
     for color_textures {
-        assert(it.flags & .Render_Target != 0, "[Gaco] Color texture used for creating a render target must have Render_Target flag.");
+        if !(it.flags & .Render_Target) {
+            gaco_error("Color texture used for creating a render target must have Render_Target flag.");
+            return .{};
+        }
+
         attachment := GL_COLOR_ATTACHMENT0 + cast(u32)it_index;
         glNamedFramebufferTexture(render_target.framebuffer, attachment, it.object, 0);
         draw_buffers[it_index] = attachment;
@@ -848,7 +849,7 @@ create_render_target :: (color_textures: []Texture, depth_stencil_texture: Textu
 
     status := glCheckNamedFramebufferStatus(render_target.framebuffer, GL_FRAMEBUFFER);
     if status != GL_FRAMEBUFFER_COMPLETE {
-        log_error("[Gaco] Unable to create render target! Status: 0x%", formatInt(status, 16));
+        gaco_error("Unable to create render target! Status: 0x%", formatInt(status, 16));
         return .{};
     }
 
@@ -941,7 +942,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
 
     gl_info := GL_TEXTURE_MAP_ARRAY[format];
     if gl_info.internal_format == 0 {
-        log_error("[Gaco] Couldn't create texture: Format % is Unknown or unsupported.", format);
+        gaco_error("Couldn't create texture: Format % is Unknown or unsupported.", format);
         return .{};
     }
 
@@ -1916,7 +1917,7 @@ flush_resource_bindings :: (mappings: []Texture_Sampler_Mapping, stage: Shader_T
 
         unit := it.mapped_index;
 
-        texture_object  := bound_textures[it.texture_index];
+        texture_object := bound_textures[it.texture_index];
 
         glBindTextureUnit(cast(GLuint)unit, texture_object);
 

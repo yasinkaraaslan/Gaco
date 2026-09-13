@@ -84,7 +84,7 @@ main :: () {
 
    vertex_buffer := Gaco.create_buffer(vertex_inputs, .Vertex);
    index_buffer := Gaco.create_buffer(indices, .Index);
-   transform_cb := Gaco.create_buffer(null, size_of(Transform_Buffer), 1, .Constant, .Dynamic);
+   transform_cb := Gaco.create_buffer(Transform_Buffer.{}, .Constant, .Dynamic);
 
    texture := Gaco.create_texture_from_file("jon.png");
 
