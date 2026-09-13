@@ -352,9 +352,9 @@ update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 
     gl_info := GL_TEXTURE_MAP_ARRAY[texture.format];
 
     if is_block_compression(texture.format) {
-        bw := (cast(u32)rect.width + 3) / 4;
-        bh := (cast(u32)rect.height + 3) / 4;
-        image_size := cast(u32)(bw * bh * texture.stride);
+        block_width  := (cast(u32)rect.width + 3) / 4;
+        block_height := (cast(u32)rect.height + 3) / 4;
+        image_size := cast(u32)(block_width * block_height * texture.stride);
 
         if is_layered {
             glCompressedTextureSubImage3D(texture.object, mip,
@@ -386,9 +386,9 @@ update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 
     gl_info := GL_TEXTURE_MAP_ARRAY[texture.format];
 
     if is_block_compression(texture.format) {
-        bw := (cast(u32)box.width + 3) / 4;
-        bh := (cast(u32)box.height + 3) / 4;
-        image_size := cast(u32)(bw * bh * texture.stride * cast(u32)box.depth);
+        block_width  := (cast(u32)box.width + 3) / 4;
+        block_height := (cast(u32)box.height + 3) / 4;
+        image_size   := cast(u32)(block_width * block_height * texture.stride * cast(u32)box.depth);
 
         glCompressedTextureSubImage3D(
             texture.object, cast(s32)subresource,
@@ -958,7 +958,8 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     };
 
     if flags & .Copy {
-        size := width * height * bytes_per_block * array_count_or_depth;
+        block_width, block_height := block_size(width, height, format);
+        size := block_width * block_height * bytes_per_block * array_count_or_depth;
         glCreateBuffers(1, *texture.object);
         glNamedBufferStorage(texture.object, size, null, GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_CLIENT_STORAGE_BIT);
         texture.pbo_size = size;
@@ -1040,9 +1041,9 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
                 depth_arg := ifx is_3d then mip_depth else 1;
 
                 if is_block_compression(format) {
-                    bw := (mip_width + 3) / 4;
-                    bh := (mip_height + 3) / 4;
-                    image_size := cast(u32)(bw * bh * bytes_per_block * mip_depth);
+                    block_width := (mip_width + 3) / 4;
+                    block_height := (mip_height + 3) / 4;
+                    image_size := cast(u32)(block_width * block_height * bytes_per_block * mip_depth);
 
                     if target == GL_TEXTURE_2D {
                         glCompressedTextureSubImage2D(texture.object, cast(s32)mip, 0, 0, mip_width, mip_height, gl_info.internal_format, image_size, pixels);
@@ -1130,12 +1131,22 @@ copy_texture :: (from: Texture, to: *Texture, source_rect: Rect, source_subresou
         glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
-        glGetTextureSubImage(from.object, source_mip,
-            source_rect.x, source_rect.y, source_layer,
-            cast(u32)source_rect.width, cast(u32)source_rect.height, 1,
-            gl_info.pixel_format, gl_info.pixel_type,
-            to.pbo_size, null
-        );
+        if is_block_compression(from.format) {
+            glGetCompressedTextureSubImage(
+                from.object, source_mip,
+                source_rect.x, source_rect.y, source_layer,
+                cast(u32)source_rect.width, cast(u32)source_rect.height, 1,
+                to.pbo_size, null
+            );
+        }
+        else {
+            glGetTextureSubImage(from.object, source_mip,
+                source_rect.x, source_rect.y, source_layer,
+                cast(u32)source_rect.width, cast(u32)source_rect.height, 1,
+                gl_info.pixel_format, gl_info.pixel_type,
+                to.pbo_size, null
+            );
+        }
 
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
         glPixelStorei(GL_PACK_ALIGNMENT, 4);
@@ -1159,13 +1170,23 @@ copy_texture :: (from: Texture, to: *Texture, source_box: Box, source_subresourc
         glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
-        glGetTextureSubImage(
-            from.object, cast(s32)source_subresource,
-            source_box.x, source_box.y, source_box.z,
-            cast(u32)source_box.width, cast(u32)source_box.height, cast(u32)source_box.depth,
-            gl_info.pixel_format, gl_info.pixel_type,
-            to.pbo_size, null
-        );
+        if is_block_compression(from.format) {
+            glGetCompressedTextureSubImage(
+                from.object, cast(s32)source_subresource,
+                source_box.x, source_box.y, source_box.z,
+                cast(u32)source_box.width, cast(u32)source_box.height, cast(u32)source_box.depth,
+                to.pbo_size, null
+            );
+        }
+        else {
+            glGetTextureSubImage(
+                from.object, cast(s32)source_subresource,
+                source_box.x, source_box.y, source_box.z,
+                cast(u32)source_box.width, cast(u32)source_box.height, cast(u32)source_box.depth,
+                gl_info.pixel_format, gl_info.pixel_type,
+                to.pbo_size, null
+            );
+        }
 
         glPixelStorei(GL_PACK_ALIGNMENT, 4);
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
@@ -2037,7 +2058,6 @@ GL_Format_Info :: struct {
     pixel_type     : u32;
 }
 
-
 #assert GL_TEXTURE_MAP_ARRAY.count == enum_count(Texture_Format);
 GL_TEXTURE_MAP_ARRAY :: GL_Format_Info.[
     .{ GL_NONE, 0, 0 }, // Unknown
@@ -2082,10 +2102,20 @@ GL_TEXTURE_MAP_ARRAY :: GL_Format_Info.[
     .{ GL_RGBA32UI, GL_RGBA_INTEGER, GL_UNSIGNED_INT },                 // RGBA32U
 
     // Block compression formats
-    .{ GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT, 0, 0 },                   // BC6U
-    .{ GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT,   0, 0 },                   // BC6S
-    .{ GL_COMPRESSED_RGBA_BPTC_UNORM,         0, 0 },                   // BC7
-    .{ GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM,   0, 0 },                   // BC7_SRGB
+    .{ GL_COMPRESSED_RGBA_S3TC_DXT1_EXT,         0, 0 },                // BC1
+    .{ GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT,   0, 0 },                // BC1_SRGB
+    .{ GL_COMPRESSED_RGBA_S3TC_DXT3_EXT,         0, 0 },                // BC2
+    .{ GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT,   0, 0 },                // BC2_SRGB
+    .{ GL_COMPRESSED_RGBA_S3TC_DXT5_EXT,         0, 0 },                // BC3
+    .{ GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT,   0, 0 },                // BC3_SRGB
+    .{ GL_COMPRESSED_RED_RGTC1,                  0, 0 },                // BC4U
+    .{ GL_COMPRESSED_SIGNED_RED_RGTC1,           0, 0 },                // BC4S
+    .{ GL_COMPRESSED_RG_RGTC2,                   0, 0 },                // BC5U
+    .{ GL_COMPRESSED_SIGNED_RG_RGTC2,            0, 0 },                // BC5S
+    .{ GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT,    0, 0 },                // BC6UF
+    .{ GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT,      0, 0 },                // BC6SF
+    .{ GL_COMPRESSED_RGBA_BPTC_UNORM,            0, 0 },                // BC7
+    .{ GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM,      0, 0 },                // BC7_SRGB
 
     // Depth formats
     .{ GL_DEPTH_COMPONENT16, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT },                // D16

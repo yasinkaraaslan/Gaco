@@ -37,7 +37,7 @@ main :: () {
         defer deinit(*dds);
 
         flags := Gaco.Texture_Flags.Sampled;
-        if dds.optional_header.misc_flags & .TEXTURECUBE || dds.header.caps2 & .Cubemap {
+        if (dds.optional_header && dds.optional_header.misc_flags & .TEXTURECUBE) || dds.header.caps2 & .Cubemap {
             flags |= .Cubemap;
         }
 

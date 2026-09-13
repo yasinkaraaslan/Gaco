@@ -122,8 +122,18 @@ Texture_Format :: enum u16 {
     RGBA32U;
 
     // Block compression formats.
-    BC6U; // Unsigned float16
-    BC6S; // Signed float16
+    BC1;
+    BC1_SRGB;
+    BC2;
+    BC2_SRGB;
+    BC3;
+    BC3_SRGB;
+    BC4U;
+    BC4S;
+    BC5U;
+    BC5S;
+    BC6UF; // Unsigned float16
+    BC6SF; // Signed float16
     BC7;
     BC7_SRGB;
 
@@ -663,6 +673,10 @@ debug_region :: (name: string) #expand {
     `defer end_debug_region();
 }
 
+get_bytes_per_block :: inline (format: Texture_Format) -> u32 {
+    return TEXTURE_BYTES_PER_BLOCK[format];
+}
+
 free :: (bytecode: Shader_Bytecode) {
     if bytecode.mappings array_free(bytecode.mappings);
     if bytecode.vs  free(bytecode.vs);
@@ -824,7 +838,7 @@ enum_count :: ($T: Type) -> s64 {
 }
 
 is_block_compression :: inline (format: Texture_Format) -> bool {
-    return format >= .BC6U && format <= .BC7_SRGB;
+    return format >= .BC1 && format <= .BC7_SRGB;
 }
 
 block_size :: inline (texture: Texture) -> block_width: u32, block_height: u32 {
@@ -896,6 +910,7 @@ gaco_error :: (format_message: string, args: ..Any, identifier := "", $should_br
     #if should_break debug_break();
 }
 
+#assert TEXTURE_BYTES_PER_BLOCK.count == enum_count(Texture_Format);
 TEXTURE_BYTES_PER_BLOCK :: u32.[
     0,  // Unknown
 
@@ -939,8 +954,18 @@ TEXTURE_BYTES_PER_BLOCK :: u32.[
     16, // RGBA32U
 
     // Block compression (Bytes per 4x4 block)
-    16, // BC6U
-    16, // BC6S
+    8,  // BC1
+    8,  // BC1_SRGB
+    16, // BC2
+    16, // BC2_SRGB
+    16, // BC3
+    16, // BC3_SRGB
+    8,  // BC4U
+    8,  // BC4S
+    16, // BC5U
+    16, // BC5S
+    16, // BC6UF
+    16, // BC6SF
     16, // BC7
     16, // BC7_SRGB
 

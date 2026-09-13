@@ -1,6 +1,6 @@
 // https://learn.microsoft.com/en-us/windows/win32/direct3ddds/dx-graphics-dds-reference
 //
-// Only BC6 and BC7 are supported because those are the only ones Gaco supports.
+// Supports BC1-BC7: DX10 DDS files, plus legacy FourCC (DXT1/DXT3/DXT5/ATI1/ATI2/etc.).
 
 load_dds :: (file_name: string) -> bool, DDS_Data {
     content, success := read_entire_file(file_name);
@@ -22,7 +22,13 @@ load_dds :: (file_name: string) -> bool, DDS_Data {
 load_dds_from_memory :: (_content: string, name: string) -> bool, DDS_Data {
     content := _content;
 
-    magic := (cast(*u32)content.data).*;
+    if content.count < size_of(u32) + size_of(DDS_Header) {
+        log_error("[dds] '%' is too small to even contain a header!", name);
+        return false, .{};
+    }
+
+
+    magic := content.data.(*u32).*;
     if magic != DDS_MAGIC {
         log_error("[dds] '%' has incorrect magic! Wanted 0x%, got 0x%.", name, formatInt(DDS_MAGIC, 16), formatInt(magic, 16));
         return false, .{};
@@ -30,24 +36,18 @@ load_dds_from_memory :: (_content: string, name: string) -> bool, DDS_Data {
 
     advance(*content, size_of(type_of(DDS_MAGIC)));
 
-    if content.count < size_of(DDS_Header) {
-        log_error("[dds] '%' is too small to even contain a header!", name);
-        return false, .{};
-    }
-
-    dds_data: DDS_Data;
-
     header := cast(*DDS_Header)content.data;
     if header.size != size_of(DDS_Header) {
         log_error("[dds] '%' has incorrect header size! Wanted %, got %.", name, size_of(DDS_Header), header.size);
-        return false, dds_data;
+        return false, .{};
     }
 
     if (header.flags & DDS_HEADER_REQUIRED_FLAGS) != DDS_HEADER_REQUIRED_FLAGS{
         log_error("[dds] '%' has header flags that are not valid! Required ones are %, got %.", name, DDS_HEADER_REQUIRED_FLAGS, header.flags);
-        return false, dds_data;
+        return false, .{};
     }
 
+    dds_data: DDS_Data;
     dds_data.header = header;
 
     advance(*content, size_of(DDS_Header));
@@ -58,33 +58,43 @@ load_dds_from_memory :: (_content: string, name: string) -> bool, DDS_Data {
         return false, dds_data;
     }
 
+    if !(pixel_format.flags & .Four_CC) {
+        log_error("[dds] '%' is not a compressed DDS (missing FourCC).", name);
+        return false, dds_data;
+    }
+
     array_size: u32 = 1;
+    format: Gaco.Texture_Format;
 
-    if !(pixel_format.flags & .Four_CC) || pixel_format.four_cc != DX10_CC {
-        log_error("[dds] '%' is not a DX10 DDS (FourCC: %). Only BC6/BC7 (DX10) are supported.", name, get_fourcc(pixel_format.four_cc));
-        return false, dds_data;
+    if pixel_format.four_cc == DX10_CC {
+        if content.count < size_of(DDS_Header_DXT) {
+            log_error("[dds] '%' is missing the DX10 header!", name);
+            return false, dds_data;
+        }
+
+        optional_header := cast(*DDS_Header_DXT)content.data;
+        array_size = cast(u32)max(1, optional_header.array_size);
+
+        format = dxgi_to_texture_format(optional_header.format);
+        if format == .Unknown {
+            log_error("[dds] '%' has unsupported DXGI format % (BC1-BC7 are supported).", name, optional_header.format);
+            return false, dds_data;
+        }
+
+        if optional_header.misc_flags & .TEXTURECUBE
+            array_size *= 6;
+
+        dds_data.optional_header = optional_header;
+        advance(*content, size_of(DDS_Header_DXT));
+    } else {
+        format = fourcc_to_texture_format(pixel_format.four_cc);
+        if format == .Unknown {
+            log_error("[dds] '%' has unsupported FourCC '0x%'. BC1-BC7 are supported.", name, formatInt(pixel_format.four_cc, 16));
+            return false, dds_data;
+        }
     }
-
-    if content.count < size_of(DDS_Header_DXT) {
-        log_error("[dds] '%' is missing the DX10 header!", name);
-        return false, dds_data;
-    }
-
-    optional_header := cast(*DDS_Header_DXT)content.data;
-    array_size = cast(u32)max(1, optional_header.array_size);
-
-    format := dxgi_to_texture_format(optional_header.format);
-    if format == .Unknown {
-        log_error("[dds] '%' has unsupported DXGI format % (only BC6/BC7 are supported).", name, optional_header.format);
-        return false, dds_data;
-    }
-
-    if optional_header.misc_flags & .TEXTURECUBE
-        array_size *= 6;
 
     dds_data.format = format;
-    dds_data.optional_header = optional_header;
-    advance(*content, size_of(DDS_Header_DXT));
 
     if header.caps2 & .Cubemap && array_size == 1
         array_size = 6;
@@ -93,6 +103,7 @@ load_dds_from_memory :: (_content: string, name: string) -> bool, DDS_Data {
 
     mipmap_count := cast(u32)max(1, header.mipmap_count);
     dds_data.image_data = NewArray(array_size * mipmap_count, *u8);
+    bytes_per_block := Gaco.get_bytes_per_block(format);
 
     for i: 0..array_size-1 {
         for j: 0..mipmap_count-1 {
@@ -103,8 +114,8 @@ load_dds_from_memory :: (_content: string, name: string) -> bool, DDS_Data {
 
             block_width  := (mip_width  + 3) / 4;
             block_height := (mip_height + 3) / 4;
-            block_depth  := (mip_depth  + 3) / 4;
-            size := block_width * block_height * block_depth * BC67_BYTES_PER_BLOCK;
+
+            size := block_width * block_height * mip_depth * bytes_per_block;
 
             if content.count < size {
                 log_error("[dds] '%' ran out of image data at mip % of array slice %.", name, j, i);
@@ -116,8 +127,9 @@ load_dds_from_memory :: (_content: string, name: string) -> bool, DDS_Data {
         }
     }
 
-    // We really did something wrong if this fires up.
-    assert(content.count == 0);
+    if content.count > 0 {
+        log("[dds] '%' has % trailing bytes.", name, content.count);
+    }
 
     return true, dds_data;
 }
@@ -129,11 +141,38 @@ deinit :: (using dds_data: *DDS_Data) {
 
 dxgi_to_texture_format :: (format: DXGI_Format) -> Gaco.Texture_Format {
     if format == {
-        case .BC6H_UF16;      return .BC6U;
-        case .BC6H_SF16;      return .BC6S;
+        case .BC1_UNORM;      return .BC1;
+        case .BC1_UNORM_SRGB; return .BC1_SRGB;
+        case .BC2_UNORM;      return .BC2;
+        case .BC2_UNORM_SRGB; return .BC2_SRGB;
+        case .BC3_UNORM;      return .BC3;
+        case .BC3_UNORM_SRGB; return .BC3_SRGB;
+        case .BC4_UNORM;      return .BC4U;
+        case .BC4_SNORM;      return .BC4S;
+        case .BC5_UNORM;      return .BC5U;
+        case .BC5_SNORM;      return .BC5S;
+        case .BC6H_UF16;      return .BC6UF;
+        case .BC6H_SF16;      return .BC6SF;
         case .BC7_UNORM;      return .BC7;
         case .BC7_UNORM_SRGB; return .BC7_SRGB;
         case;                 return .Unknown;
+    }
+}
+
+fourcc_to_texture_format :: (four_cc: u32) -> Gaco.Texture_Format {
+    if four_cc == {
+        case DXT1_CC; return .BC1;
+        case DXT2_CC; return .BC2;
+        case DXT3_CC; return .BC2;
+        case DXT4_CC; return .BC3;
+        case DXT5_CC; return .BC3;
+        case ATI1_CC; return .BC4U;
+        case BC4U_CC; return .BC4U;
+        case BC4S_CC; return .BC4S;
+        case ATI2_CC; return .BC5U;
+        case BC5U_CC; return .BC5U;
+        case BC5S_CC; return .BC5S;
+        case;         return .Unknown;
     }
 }
 
@@ -229,6 +268,21 @@ DDS_Pixel_Format :: struct {
 // DXGI_FORMAT values used by DDS_HEADER_DXT10
 DXGI_Format :: enum u32 {
     UNKNOWN          :: 0;
+    BC1_TYPELESS     :: 70;
+    BC1_UNORM;
+    BC1_UNORM_SRGB;
+    BC2_TYPELESS;
+    BC2_UNORM;
+    BC2_UNORM_SRGB;
+    BC3_TYPELESS;
+    BC3_UNORM;
+    BC3_UNORM_SRGB;
+    BC4_TYPELESS;
+    BC4_UNORM;
+    BC4_SNORM;
+    BC5_TYPELESS;
+    BC5_UNORM;
+    BC5_SNORM;
     BC6H_TYPELESS    :: 94;
     BC6H_UF16;
     BC6H_SF16;
@@ -251,19 +305,22 @@ DDS_Resource_Misc :: enum_flags u32 {
 
 #scope_file
 
-get_fourcc :: (n: u32) -> string {
-    s: string = ---;
-    s.data = (*n).(*u8);
-    s.count = 4;
-    return s;
-}
-
 make_magic4 :: (s: string) -> u32 {
     assert(s.count == 4);
     return (cast(*u32)s.data).*;
 }
 
 DX10_CC :: #run make_magic4("DX10");
+DXT1_CC :: #run make_magic4("DXT1");
+DXT2_CC :: #run make_magic4("DXT2");
+DXT3_CC :: #run make_magic4("DXT3");
+DXT4_CC :: #run make_magic4("DXT4");
+DXT5_CC :: #run make_magic4("DXT5");
+ATI1_CC :: #run make_magic4("ATI1");
+ATI2_CC :: #run make_magic4("ATI2");
+BC4U_CC :: #run make_magic4("BC4U");
+BC4S_CC :: #run make_magic4("BC4S");
+BC5U_CC :: #run make_magic4("BC5U");
+BC5S_CC :: #run make_magic4("BC5S");
 DDS_MAGIC :: #run make_magic4("DDS ");
 DDS_HEADER_REQUIRED_FLAGS : DDS_Header.Flags : .Caps | .Height | .Width | .Pixel_Format;
-BC67_BYTES_PER_BLOCK :: 16;

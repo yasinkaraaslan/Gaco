@@ -336,14 +336,14 @@ update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 
     block_width, block_height := block_size(xx box.width, xx box.height, texture.format);
 
     row := block_width * texture.stride;
-    ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture3d, subresource, *d_box, data, row, row * box.height.(u32));
+    ID3D11DeviceContext_UpdateSubresource(device_context, texture.texture3d, subresource, *d_box, data, row, row * block_height);
 
 }
 
 update_texture :: (using texture: *Texture, data: *void, subresource: u32 = 0) {
     block_width, block_height := block_size(texture);
     row := block_width * stride;
-    ID3D11DeviceContext_UpdateSubresource(device_context, texture2d, subresource, null, data, row, row * height);
+    ID3D11DeviceContext_UpdateSubresource(device_context, texture2d, subresource, null, data, row, row * block_height);
 }
 
 write_buffer :: (buffer: *Buffer, data: *void, size: int) {
@@ -701,8 +701,12 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
                 // D3D11CalcSubresource
                 index := j + i * texture.mip_levels;
 
-                block_width, block_height := block_size(width >> j, height >> j, format);
+                mip_width  := cast(u32)max(1, width >> j);
+                mip_height := cast(u32)max(1, height >> j);
+
+                block_width, block_height := block_size(mip_width, mip_height, format);
                 pitch := block_width * bytes_per_block;
+
                 init_data[index] = D3D11_SUBRESOURCE_DATA.{
                     pSysMem = data[index],
                     SysMemPitch = pitch,
@@ -1397,8 +1401,18 @@ DXGI_FORMAT_MAP :: DXGI_FORMAT.[
     .R32G32B32A32_UINT,     // RGBA32U
 
     // Block compression formats
-    .BC6H_UF16,             // BC6U
-    .BC6H_SF16,             // BC6S
+    .BC1_UNORM,             // BC1
+    .BC1_UNORM_SRGB,        // BC1_SRGB
+    .BC2_UNORM,             // BC2
+    .BC2_UNORM_SRGB,        // BC2_SRGB
+    .BC3_UNORM,             // BC3
+    .BC3_UNORM_SRGB,        // BC3_SRGB
+    .BC4_UNORM,             // BC4U
+    .BC4_SNORM,             // BC4S
+    .BC5_UNORM,             // BC5U
+    .BC5_SNORM,             // BC5S
+    .BC6H_UF16,             // BC6UF
+    .BC6H_SF16,             // BC6SF
     .BC7_UNORM,             // BC7
     .BC7_UNORM_SRGB,        // BC7_SRGB
 
