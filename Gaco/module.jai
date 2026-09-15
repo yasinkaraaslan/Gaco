@@ -470,6 +470,15 @@ create_texture_array_from_files :: (file_names: []string, mip_levels: u32 = 1, f
     }
 
     count := cast(u32)file_names.count;
+    if flags & .Cubemap {
+        if count == 0 || count % 6 != 0 {
+            log_error("[Gaco] Cubemaps require six images per cube. Got % images.", count);
+            return .{};
+        }
+        // create_texture takes a cube count for cubemaps; the input data still
+        // contains one image for every face.
+        count /= 6;
+    }
     return create_texture(data, texture_width, texture_height, count, mip_levels, format, flags);
 }
 

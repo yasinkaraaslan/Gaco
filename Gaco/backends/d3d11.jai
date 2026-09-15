@@ -308,14 +308,14 @@ unmap_buffer :: (buffer: *Buffer) {
 }
 
 // You can ignore 'busy' if you didn't specify .Non_Blocking
-map_texture :: (texture: *Texture, flags: Map_Flags) -> *void, busy: bool {
+map_texture :: (texture: *Texture, flags: Map_Flags, subresource: u32 = 0) -> *void, busy: bool {
     assert(texture.flags & .Copy != 0, "[Gaco] Only Copy textures can be mapped to read.");
-    data, busy := d3d11_map_resource(texture.texture2d, flags, true, 0);
+    data, busy := d3d11_map_resource(texture.texture2d, flags, true, subresource);
     return data, busy;
 }
 
-unmap_texture :: (texture: *Texture) {
-    ID3D11DeviceContext_Unmap(device_context, texture.texture2d, 0);
+unmap_texture :: (texture: *Texture, subresource: u32 = 0) {
+    ID3D11DeviceContext_Unmap(device_context, texture.texture2d, subresource);
 }
 
 update_buffer :: (buffer: *Buffer, data: *void) {
@@ -614,6 +614,8 @@ resize :: (width: int, height: int, msaa: u32 = 4, color_format := Texture_Forma
 // Data is an array for texture arrays and mipmapping.
 // Index = mip slice + (array slice * mip levels)
 // Image 0 mip data | Image 1 mip data | ...
+// For cubemaps, array_count_or_depth is a cube count (texture.depth is six
+// times that value, one layer per face).
 create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u32 = 1, mip_levels_or_msaa: u32 = 1, format := Texture_Format.RGBA8, flags := Texture_Flags.Sampled, debug_name := "") -> Texture {
     generate_mips := (flags & .Generate_Mips) && mip_levels_or_msaa != 1;
     depth_stencil := format >= .D16 && format <= .D32FS8;
@@ -666,12 +668,12 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
 
     // Create the thing
     texture := Texture.{
-        width=width,
-        height=height,
-        depth=array_count_or_depth,
-        stride=bytes_per_block,
-        format=format,
-        flags=flags
+        width  = width,
+        height = height,
+        depth  = ifx flags & .Cubemap array_count_or_depth * 6 else array_count_or_depth,
+        stride = bytes_per_block,
+        format = format,
+        flags  = flags,
     };
 
     msaa: u32 = 1;
@@ -681,14 +683,11 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
         texture.mip_levels = mip_levels_or_msaa;
     }
 
-    if flags & .Cubemap {
-        texture.depth /= 6;
-    }
 
     init_data: []D3D11_SUBRESOURCE_DATA;
     if data && !generate_mips {
         init_data = NewArray(data.count, D3D11_SUBRESOURCE_DATA,, temp);
-        array_count := ifx flags & .Is_3D 1 else array_count_or_depth;
+        array_count := ifx flags & .Is_3D 1 else texture.depth;
 
         expected_count := array_count * texture.mip_levels;
         if data.count < expected_count {
@@ -743,7 +742,7 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
             Height = height,
             SampleDesc.Count = msaa,
             MipLevels = texture.mip_levels,
-            ArraySize = array_count_or_depth,
+            ArraySize = texture.depth,
             Format = dxgi_format,
             BindFlags = bind_flags,
             MiscFlags = misc_flags,
@@ -780,10 +779,10 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
             srv_desc.Texture3D.MipLevels = 0xFFFF_FFFF; // All mips
             srv_desc.Texture3D.MostDetailedMip = 0;
         } else if flags & .Cubemap {
-            if array_count_or_depth > 6 {
+            if array_count_or_depth > 1 {
                 srv_desc.ViewDimension = .D3D11_SRV_DIMENSION_TEXTURECUBEARRAY;
                 srv_desc.TextureCubeArray.MipLevels = 0xFFFF_FFFF;
-                srv_desc.TextureCubeArray.NumCubes = texture.depth;
+                srv_desc.TextureCubeArray.NumCubes = array_count_or_depth;
             } else {
                 srv_desc.ViewDimension = .D3D11_SRV_DIMENSION_TEXTURECUBE;
                 srv_desc.TextureCube.MipLevels = 0xFFFF_FFFF;

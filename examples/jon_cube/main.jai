@@ -133,7 +133,7 @@ draw_cube :: (position: Vector3, buffer: *Gaco.Buffer, proj: Matrix4, indices_co
 
 
    rot_x, rot_y, rot_z : Quaternion;
-   MOUSE_DELTA_MULTIPLIER :: 0.0005;
+   MOUSE_DELTA_MULTIPLIER :: 0.001;
    delta_x := cast(float)mouse_delta_x;
    delta_y := cast(float)mouse_delta_y;
    RotX += delta_x * MOUSE_DELTA_MULTIPLIER;

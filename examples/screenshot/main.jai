@@ -16,7 +16,7 @@ WindowWidth, WindowHeight := 1280, 720;
 ControllingCamera := false;
 
 main :: () {
-    window := create_window(WindowWidth, WindowHeight, "Gacomera!");
+    window := create_window(WindowWidth, WindowHeight, "Press F12 to Screenshot!");
     Gaco.init(window);
     defer Gaco.deinit();
     shader := Gaco.load_shader("shaders/texture.gaco");

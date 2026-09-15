@@ -23,7 +23,7 @@ update_camera :: () {
 
 
     translate(*transform, movement * SPEED * speed_multiplier * FrameInfo.delta);
-    MOUSE_DELTA_MULTIPLIER :: 0.0005;
+    MOUSE_DELTA_MULTIPLIER :: 0.001;
     delta := Vector2.{xx mouse_delta_y, xx mouse_delta_x} * MOUSE_DELTA_MULTIPLIER;
     if delta != .{0, 0} {
         rotation += -delta;

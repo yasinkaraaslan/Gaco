@@ -169,6 +169,8 @@ init :: (window: Window_Type) -> bool {
     glDisable(GL_DITHER);
 
     glProvokingVertex(GL_FIRST_VERTEX_CONVENTION);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
     // So we can bind vertex buffers without setting a shader.
     glCreateVertexArrays(1, *empty_stupid_vao);
@@ -322,13 +324,15 @@ unmap_buffer :: (buffer: *Buffer) {
 // This is actually here for api compatibility with D3D11.
 // The 'Texture' we have here is a pixel buffer object. So we assert that before doing anything.
 // You can ignore 'busy' if you didn't specify .Non_Blocking
-map_texture :: (texture: *Texture, flags: Map_Flags) -> *void, busy: bool {
+map_texture :: (texture: *Texture, flags: Map_Flags, subresource: u32 = 0) -> *void, busy: bool {
     assert(texture.flags & .Copy != 0, "[Gaco] Only copy textures can be mapped to read.");
-    data, busy := gl_map_buffer(texture.object, texture.pbo_size, flags, true, texture.fence);
+    offset := gl_pbo_subresource_offset(texture, subresource);
+    mip, _ := unpack_subresource(subresource, texture.mip_levels);
+    data, busy := gl_map_buffer(texture.object, gl_pbo_mip_size(texture, cast(u32)mip), flags, true, texture.fence, offset);
     return data, busy;
 }
 
-unmap_texture :: (texture: *Texture) {
+unmap_texture :: (texture: *Texture, subresource: u32 = 0) {
     assert(texture.flags & .Copy != 0);
     if glUnmapNamedBuffer(texture.object) == GL_FALSE {
         log_error("[Gaco] Couldn't unmap texture!");
@@ -345,10 +349,9 @@ update_buffer :: (buffer: *Buffer, data: *void) {
 }
 
 update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 = 0) {
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    mip, layer := gl_unpack_subresource(subresource, texture.mip_levels);
+    mip, layer := unpack_subresource(subresource, texture.mip_levels);
 
-    is_layered := is_target_layered(texture.target);
+    is_layered := texture.flags & .Is_3D || texture.flags & .Cubemap || texture.depth > 1;
     gl_info := GL_TEXTURE_MAP_ARRAY[texture.format];
 
     if is_block_compression(texture.format) {
@@ -377,12 +380,9 @@ update_texture :: (texture: *Texture, data: *void, rect: Rect, subresource: u32 
                 gl_info.pixel_format, gl_info.pixel_type, data);
         }
     }
-
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 }
 
 update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 0) {
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     gl_info := GL_TEXTURE_MAP_ARRAY[texture.format];
 
     if is_block_compression(texture.format) {
@@ -405,8 +405,6 @@ update_texture :: (texture: *Texture, data: *void, box: Box, subresource: u32 = 
             gl_info.pixel_format, gl_info.pixel_type, data
         );
     }
-
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 }
 
 update_texture :: inline (using texture: *Texture, data: *void, subresource: u32 = 0) {
@@ -949,17 +947,26 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
     bytes_per_block := TEXTURE_BYTES_PER_BLOCK[format];
 
     texture := Texture.{
-        width = width,
+        width  = width,
         height = height,
+        depth  = ifx flags & .Cubemap array_count_or_depth * 6 else array_count_or_depth,
         stride = bytes_per_block,
-        depth = array_count_or_depth,
-        flags = flags,
         format = format,
+        flags  = flags,
     };
 
+    mip_levels := ifx flags & .Multisample 1 else mip_levels_or_msaa;
+    if mip_levels == 0 && generate_mips
+        mip_levels = max_mip_levels(width, height);
+    texture.mip_levels = mip_levels;
+
     if flags & .Copy {
-        block_width, block_height := block_size(width, height, format);
-        size := block_width * block_height * bytes_per_block * array_count_or_depth;
+        layers := ifx flags & .Is_3D 1 else texture.depth;
+        size: u32 = 0;
+        for 0..layers - 1 {
+            for mip: 0..mip_levels - 1
+                size += gl_pbo_mip_size(texture, mip);
+        }
         glCreateBuffers(1, *texture.object);
         glNamedBufferStorage(texture.object, size, null, GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_CLIENT_STORAGE_BIT);
         texture.pbo_size = size;
@@ -968,48 +975,38 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
 
     target: GLenum = GL_TEXTURE_2D;
 
-    is_cube  := (flags & .Cubemap) != 0;
-    if is_cube texture.depth /= 6;
+    is_array := ifx flags & .Cubemap  texture.depth > 6 else texture.depth > 1;
 
-    is_array := texture.depth > 1;
-    is_3d    := (flags & .Is_3D) != 0;
-    is_msaa  := (flags & .Multisample) != 0;
-
-    if is_3d {
-        assert(!is_msaa, "[Gaco] MSAA 3D textures are not supported.");
+    if flags & .Is_3D {
+        assert(!flags & .Multisample, "[Gaco] MSAA 3D textures are not supported.");
         target = GL_TEXTURE_3D;
     }
-    else if is_cube {
+    else if flags & .Cubemap {
         if is_array target = GL_TEXTURE_CUBE_MAP_ARRAY;
         else        target = GL_TEXTURE_CUBE_MAP;
     }
     else if is_array {
-        if is_msaa target = GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
+        if flags & .Multisample target = GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
         else       target = GL_TEXTURE_2D_ARRAY;
     }
     else {
-        if is_msaa target = GL_TEXTURE_2D_MULTISAMPLE;
+        if flags & .Multisample target = GL_TEXTURE_2D_MULTISAMPLE;
         else       target = GL_TEXTURE_2D;
     }
 
-    mip_levels := ifx is_msaa 1 else mip_levels_or_msaa;
-    if mip_levels == 0 && generate_mips
-        mip_levels = max_mip_levels(width, height);
-
-    texture.mip_levels = mip_levels;
     texture.target = target;
     glCreateTextures(target, 1, *texture.object);
 
-    if is_msaa {
+    if flags & .Multisample {
         if is_array {
-            glTextureStorage3DMultisample(texture.object, mip_levels_or_msaa, gl_info.internal_format, width, height, array_count_or_depth, GL_TRUE);
+            glTextureStorage3DMultisample(texture.object, mip_levels_or_msaa, gl_info.internal_format, width, height, texture.depth, GL_TRUE);
         } else {
             glTextureStorage2DMultisample(texture.object, mip_levels_or_msaa, gl_info.internal_format, width, height, GL_TRUE);
         }
     }
     else {
         if target == GL_TEXTURE_3D || target == GL_TEXTURE_2D_ARRAY || target == GL_TEXTURE_CUBE_MAP_ARRAY {
-            glTextureStorage3D(texture.object, mip_levels, gl_info.internal_format, width, height, array_count_or_depth);
+            glTextureStorage3D(texture.object, mip_levels, gl_info.internal_format, width, height, texture.depth);
         }
         else {
             // GL_TEXTURE_2D, GL_TEXTURE_1D, and GL_TEXTURE_CUBE_MAP use 2D storage
@@ -1017,9 +1014,9 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
         }
     }
 
-    if data && !is_msaa {
+    if data && !flags & .Multisample {
         mips_to_upload := ifx generate_mips 1 else mip_levels;
-        array_count    := ifx is_3d 1 else array_count_or_depth;
+        array_count    := ifx flags & .Is_3D 1 else texture.depth;
 
         expected_count := array_count * mips_to_upload;
         if data.count < expected_count {
@@ -1033,12 +1030,12 @@ create_texture :: (data: []*u8, width: u32, height: u32, array_count_or_depth: u
                 pixels := data[data_index];
                 if !pixels continue;
 
-                mip_width  := cast(u32)max(1, width >> mip);
-                mip_height := cast(u32)max(1, height >> mip);
-                mip_depth  := ifx is_3d cast(u32)max(1, array_count_or_depth >> mip) else 1;
+                mip_width  := mip_size(width, mip);
+                mip_height := mip_size(height, mip);
+                mip_depth  := ifx flags & .Is_3D mip_size(texture.depth, mip) else 1;
 
-                zoffset   := ifx is_3d then 0 else it;
-                depth_arg := ifx is_3d then mip_depth else 1;
+                zoffset   := ifx flags & .Is_3D then 0 else it;
+                depth_arg := ifx flags & .Is_3D then mip_depth else 1;
 
                 if is_block_compression(format) {
                     block_width := (mip_width + 3) / 4;
@@ -1079,7 +1076,8 @@ bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
     if texture.flags & .Compute_RW {
         // Compute UAVs don't use samplers so no need to map
         gl_info := GL_TEXTURE_MAP_ARRAY[texture.format];
-        glBindImageTexture(slot, texture.object, 0, xx is_target_layered(texture.target), 0, GL_READ_WRITE, gl_info.internal_format);
+        is_layered := texture.flags & .Is_3D || texture.flags & .Cubemap || texture.depth > 1;
+        glBindImageTexture(slot, texture.object, 0, is_layered, 0, GL_READ_WRITE, gl_info.internal_format);
         return;
     }
 
@@ -1091,45 +1089,111 @@ bind_texture :: (texture: Texture, slot: u32, bind_to := Shader_Type.Fragment) {
 }
 
 
-// @Incomplete: Compressed textures
 copy_texture :: (from: Texture, to: *Texture) {
     assert(from.width == to.width && from.height == to.height && from.depth == to.depth);
+    assert(from.format == to.format && from.mip_levels == to.mip_levels);
 
-    // Copy textures are single mip most of the time
-    // (We don't even support creating multi-mip PBOs for GL, should we?)
-    if to.flags & .Copy {
-        box := Box.{
-            0, 0, 0,
-            xx from.width, xx from.height, xx from.depth
-        };
-        inline copy_texture(from, to, box, 0);
+    from_pbo := (from.flags & .Copy) != 0;
+    to_pbo := (to.flags & .Copy) != 0;
+
+    if from_pbo && to_pbo {
+        glCopyNamedBufferSubData(from.object, to.object, 0, 0, from.pbo_size);
+    }
+    else if to_pbo {
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
+        layers := ifx from.flags & .Is_3D 1 else from.depth;
+        for layer: 0..layers - 1 {
+            for mip: 0..from.mip_levels - 1 {
+                width  := mip_size(from.width, mip);
+                height := mip_size(from.height, mip);
+                depth  := ifx from.flags & .Is_3D mip_size(from.depth, mip) else 1;
+                subresource := mip + layer * from.mip_levels;
+                offset := gl_pbo_subresource_offset(to, subresource);
+                gl_info := GL_TEXTURE_MAP_ARRAY[from.format];
+
+                if is_block_compression(from.format) {
+                    glGetCompressedTextureSubImage(from.object, xx mip, 0, 0, xx layer, width, height, depth,
+                        gl_pbo_mip_size(from, mip), cast(*void)offset);
+                } else {
+                    glGetTextureSubImage(from.object, xx mip, 0, 0, xx layer, width, height, depth,
+                        gl_info.pixel_format, gl_info.pixel_type, gl_pbo_mip_size(from, mip), cast(*void)offset);
+                }
+            }
+        }
+    }
+    else if from_pbo {
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, from.object);
+        layers := ifx to.flags & .Is_3D 1 else to.depth;
+        for layer: 0..layers - 1 {
+            for mip: 0..to.mip_levels - 1 {
+                width  := mip_size(to.width, mip);
+                height := mip_size(to.height, mip);
+                depth  := ifx to.flags & .Is_3D mip_size(to.depth, mip) else 1;
+
+                subresource := mip + layer * to.mip_levels;
+                offset := gl_pbo_subresource_offset(from, subresource);
+                gl_info := GL_TEXTURE_MAP_ARRAY[to.format];
+                layered := to.flags & .Is_3D || to.flags & .Cubemap || to.depth > 1;
+
+                if is_block_compression(to.format) {
+                    if layered {
+                        glCompressedTextureSubImage3D(to.object, xx mip, 0, 0, xx layer, width, height, depth,
+                            gl_info.internal_format, gl_pbo_mip_size(to, mip), cast(*void)offset);
+                    } else {
+                        glCompressedTextureSubImage2D(to.object, xx mip, 0, 0, width, height,
+                            gl_info.internal_format, gl_pbo_mip_size(to, mip), cast(*void)offset);
+                    }
+                } else {
+                    if layered {
+                        glTextureSubImage3D(to.object, xx mip, 0, 0, xx layer, width, height, depth,
+                            gl_info.pixel_format, gl_info.pixel_type, cast(*void)offset);
+                    } else {
+                        glTextureSubImage2D(to.object, xx mip, 0, 0, width, height,
+                            gl_info.pixel_format, gl_info.pixel_type, cast(*void)offset);
+                    }
+                }
+            }
+        }
     }
     else {
-        assert(from.mip_levels == to.mip_levels);
         for mip: 0..from.mip_levels - 1 {
-            mip_width := max(1, cast(u32)(from.width  >> mip)).(u32);
-            mip_height := max(1, cast(u32)(from.height >> mip)).(u32);
+            mip_width  := mip_size(from.width, mip);
+            mip_height := mip_size(from.height, mip);
+            mip_depth  := ifx from.flags & .Is_3D mip_size(from.depth, mip) else from.depth;
 
-            // For 3D textures, depth halves with mips.
-            // For array textures (2D Array, Cubemap), depth is array_size/slices and remains constant.
-            mip_depth := ifx from.flags & .Is_3D max(1, cast(u32)(from.depth >> mip)).(u32) else from.depth.(u32);
-
-            glCopyImageSubData(
-                from.object, from.target, cast(s32)mip, 0, 0, 0,
-                to.object,   to.target,   cast(s32)mip, 0, 0, 0,
-                mip_width, mip_height, mip_depth
-            );
+            glCopyImageSubData(from.object, from.target, cast(s32)mip, 0, 0, 0,
+                to.object, to.target, cast(s32)mip, 0, 0, 0, mip_width, mip_height, mip_depth);
         }
+    }
+
+    if to_pbo {
+        if to.fence glDeleteSync(to.fence);
+        to.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     }
 }
 
 copy_texture :: (from: Texture, to: *Texture, source_rect: Rect, source_subresource: u32 = 0) {
-    source_mip, source_layer := gl_unpack_subresource(source_subresource, from.mip_levels);
+    if from.flags & .Copy {
+        assert(from.format == to.format);
+        block_width, block_height := block_size(cast(u32)source_rect.width, cast(u32)source_rect.height, from.format);
+        size := block_width * block_height * from.stride;
+        if to.flags & .Copy {
+            assert(size <= from.pbo_size && size <= to.pbo_size);
+            glCopyNamedBufferSubData(from.object, to.object, 0, 0, size);
+            if to.fence glDeleteSync(to.fence);
+            to.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        } else {
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, from.object);
+            update_texture(to, null, Rect.{0, 0, source_rect.width, source_rect.height});
+        }
+        return;
+    }
+
+    source_mip, source_layer := unpack_subresource(source_subresource, from.mip_levels);
     if to.flags & .Copy {
         gl_info := GL_TEXTURE_MAP_ARRAY[from.format];
 
         glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
-        glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
         if is_block_compression(from.format) {
             glGetCompressedTextureSubImage(
@@ -1148,9 +1212,6 @@ copy_texture :: (from: Texture, to: *Texture, source_rect: Rect, source_subresou
             );
         }
 
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-        glPixelStorei(GL_PACK_ALIGNMENT, 4);
-
         if to.fence glDeleteSync(to.fence);
         to.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     }
@@ -1164,11 +1225,26 @@ copy_texture :: (from: Texture, to: *Texture, source_rect: Rect, source_subresou
 }
 
 copy_texture :: (from: Texture, to: *Texture, source_box: Box, source_subresource: u32 = 0) {
+    if from.flags & .Copy {
+        assert(from.format == to.format);
+        block_width, block_height := block_size(cast(u32)source_box.width, cast(u32)source_box.height, from.format);
+        size := block_width * block_height * cast(u32)source_box.depth * from.stride;
+        if to.flags & .Copy {
+            assert(size <= from.pbo_size && size <= to.pbo_size);
+            glCopyNamedBufferSubData(from.object, to.object, 0, 0, size);
+            if to.fence glDeleteSync(to.fence);
+            to.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        } else {
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, from.object);
+            update_texture(to, null, Box.{0, 0, 0, source_box.width, source_box.height, source_box.depth});
+        }
+        return;
+    }
+
     if to.flags & .Copy {
         gl_info := GL_TEXTURE_MAP_ARRAY[from.format];
 
         glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
-        glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
         if is_block_compression(from.format) {
             glGetCompressedTextureSubImage(
@@ -1187,9 +1263,6 @@ copy_texture :: (from: Texture, to: *Texture, source_box: Box, source_subresourc
                 to.pbo_size, null
             );
         }
-
-        glPixelStorei(GL_PACK_ALIGNMENT, 4);
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
         if to.fence glDeleteSync(to.fence);
         to.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
@@ -1250,9 +1323,7 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
 
     if to.flags & .Copy {
         gl_info := GL_TEXTURE_MAP_ARRAY[to.format];
-
         glBindBuffer(GL_PIXEL_PACK_BUFFER, to.object);
-        glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
         glGetTextureSubImage(
             final_tex, 0,
@@ -1261,9 +1332,6 @@ copy_from_render_target :: (render_target: Render_Target, to: *Texture, index: u
             gl_info.pixel_format, gl_info.pixel_type,
             to.pbo_size, null
         );
-
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-        glPixelStorei(GL_PACK_ALIGNMENT, 4);
 
         if to.fence glDeleteSync(to.fence);
         to.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
@@ -1561,6 +1629,46 @@ backend_set_render_target :: (render_target: Render_Target) {
 }
 
 #scope_file
+
+// PBOs use the D3D11 subresource order: every mip of layer 0,
+// followed by every mip of layer 1. A 3D texture has one layer and its depth
+// shrinks with each mip.
+gl_pbo_mip_size :: inline (texture: Texture, mip: u32) -> u32 {
+    width  := mip_size(texture.width, mip);
+    height := mip_size(texture.height, mip);
+    depth  := ifx texture.flags & .Is_3D mip_size(texture.depth, mip) else 1;
+
+    block_width, block_height := block_size(width, height, texture.format);
+    return block_width * block_height * depth * texture.stride;
+}
+
+gl_pbo_subresource_offset :: inline (texture: Texture, subresource: u32) -> u32 {
+    mip, layer := unpack_subresource(subresource, texture.mip_levels);
+
+    offset: u32 = 0;
+    if layer > 0 && (!texture.flags & .Is_3D) {
+        for 0..cast(u32)layer - 1 {
+            for level: 0..texture.mip_levels - 1
+                offset += gl_pbo_mip_size(texture, level);
+        }
+    }
+    if mip > 0 {
+        for level: 0..cast(u32)mip - 1
+            offset += gl_pbo_mip_size(texture, level);
+    }
+    return offset;
+}
+
+mip_size :: inline (size: u32, mip: u32) -> u32 {
+    return max(1, size >> mip).(u32);
+}
+
+unpack_subresource :: inline (subresource: u32, mip_levels: u32) -> (mip: s32, layer: s32) {
+    if mip_levels <= 1 return 0, cast(s32)subresource;
+    mip   := cast(s32)(subresource % mip_levels);
+    layer := cast(s32)(subresource / mip_levels);
+    return mip, layer;
+}
 
 set_swap_interval :: (interval: s32) {
     #if OS == .WINDOWS {
@@ -1964,7 +2072,7 @@ flush_compute_bindings :: () {
     if cs_mappings flush_resource_bindings(cs_mappings, .Compute);
 }
 
-gl_map_buffer :: inline (object: GLuint, size: u32, flags: Map_Flags, $copy: bool, fence: GLsync) -> *void, busy: bool {
+gl_map_buffer :: inline (object: GLuint, size: u32, flags: Map_Flags, $copy: bool, fence: GLsync, offset: u32 = 0) -> *void, busy: bool {
     if flags & .Non_Blocking && fence {
         status := glClientWaitSync(fence, 0, 0);
         if status == GL_TIMEOUT_EXPIRED {
@@ -1984,21 +2092,13 @@ gl_map_buffer :: inline (object: GLuint, size: u32, flags: Map_Flags, $copy: boo
         #if !copy access |= GL_MAP_INVALIDATE_BUFFER_BIT;
     }
 
-    ptr := glMapNamedBufferRange(object, 0, size, access);
+    ptr := glMapNamedBufferRange(object, offset, size, access);
     if !ptr {
         log_error("[Gaco] Couldn't map object!");
         return null, false;
     }
 
     return ptr, false;
-}
-
-is_target_layered :: (target: GLenum) -> bool {
-    return target == GL_TEXTURE_2D_ARRAY
-        || target == GL_TEXTURE_3D
-        || target == GL_TEXTURE_CUBE_MAP
-        || target == GL_TEXTURE_CUBE_MAP_ARRAY
-        || target == GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
 }
 
 MAX_SLOTS :: 96;
@@ -2202,13 +2302,6 @@ gl_debug_callback :: (source: GLenum, type: GLenum, id: GLuint, severity: GLenum
     }
 }
 
-}
-
-gl_unpack_subresource :: inline (subresource: u32, mip_levels: u32) -> (mip: s32, layer: s32) {
-    if mip_levels <= 1 return 0, cast(s32)subresource;
-    mip   := cast(s32)(subresource % mip_levels);
-    layer := cast(s32)(subresource / mip_levels);
-    return mip, layer;
 }
 
 gl_set_debug_name :: inline (id: GLuint, type: GLenum, name: string) {
